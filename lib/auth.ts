@@ -3,7 +3,6 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "@/db"; // your Drizzle schema
 import resend from "./resend";
 import ResetPasswordEmail from "@/app/components/reset-password-email";
-import React from "react";
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
@@ -20,7 +19,7 @@ export const auth = betterAuth({
         from: "Golden Hive <onboarding@resend.dev>",
         to: user.email,
         subject: "Reset your password",
-        react: React.createElement(ResetPasswordEmail, { url }),
+        react: ResetPasswordEmail({ url }),
       });
     },
     onPasswordReset: async ({ user }) => {
