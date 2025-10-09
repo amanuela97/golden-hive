@@ -1,0 +1,6 @@
+- in (auth) folder create forgot-password/page.tsx and reset-password/page.tsx
+- create the form UI for the pages inside the /components folder so it is reusable
+- use the exported requestPasswordReset and resetPassword functions i have defined in /lib/auth-client.ts
+- for any of the forms always use the useActionState hook from react
+- make sure to display errors or success toast messages
+- use shadcn UI components, and ask me first for any installation if necessary.
