@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
@@ -13,33 +13,38 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { resetPasswordAction, initialState } from "@/app/actions/auth";
-import { ActionResponse } from "@/lib/types";
+import { resetPasswordAction } from "@/app/actions/auth";
+import { ActionResponse, initialState } from "@/lib/types";
 
 export default function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const [state, formAction, isPending] = useActionState<
     ActionResponse,
     FormData
-  >(async (_prevState: ActionResponse, formData: FormData) => {
-    try {
-      const result = await resetPasswordAction(formData, token as string);
-      if (result.success) {
-        toast.success("Password reset successfully!");
-        router.push("/login");
-      }
-      return result;
-    } catch (err) {
-      return {
-        success: false,
-        message: (err as Error).message || "An error occurred",
-        error: undefined,
-      };
-    }
+  >(async (_prevState, formData) => {
+    return await resetPasswordAction(formData, token as string);
   }, initialState);
+
+  useEffect(() => {
+    if (state.success) {
+      toast.success(state.message ?? "Password reset successfully!");
+      setPassword("");
+      setConfirmPassword("");
+      router.push("/login");
+    } else if (state.error) {
+      if (state?.payload) {
+        setPassword((state.payload.get("password") as string) || "");
+        setConfirmPassword(
+          (state.payload.get("confirmPassword") as string) || ""
+        );
+      }
+    }
+  }, [state, router]);
 
   if (!token) {
     return (
@@ -77,6 +82,9 @@ export default function ResetPasswordForm() {
               id="password"
               name="password"
               required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={isPending}
               className={state.error ? "border-red-500" : ""}
               placeholder="Enter your new password"
             />
@@ -89,6 +97,9 @@ export default function ResetPasswordForm() {
               id="confirmPassword"
               name="confirmPassword"
               required
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              disabled={isPending}
               className={state.error ? "border-red-500" : ""}
               placeholder="Confirm your new password"
             />

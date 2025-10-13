@@ -1,37 +1,46 @@
-import { useActionState } from "react";
+"use client";
+import { useActionState, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
-import { ActionResponse } from "@/lib/types";
+import { ActionResponse, initialState } from "@/lib/types";
 import { useRouter } from "next/navigation";
-import { registerAction, initialState } from "../actions/auth";
+import { registerAction } from "../actions/auth";
 export default function RegisterForm() {
   const router = useRouter();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const [state, formAction, isPending] = useActionState<
     ActionResponse,
     FormData
-  >(
-    async (
-      _prevState: ActionResponse,
-      formData: FormData
-    ): Promise<ActionResponse> => {
-      try {
-        const result = await registerAction(formData);
-        if (result.success) {
-          toast.success("Account created successfully");
-          router.push("/dashboard");
+  >(registerAction, initialState);
+
+  useEffect(() => {
+    if (state.success) {
+      toast.success(
+        "Account created successfully! Please check your email for verification.",
+        {
+          duration: 8000,
         }
-        return result;
-      } catch (err) {
-        return {
-          success: false,
-          error: (err as Error).message || "An error occurred",
-          payload: formData,
-        };
+      );
+      setName("");
+      setEmail("");
+      setPassword("");
+      setConfirmPassword("");
+      router.push("/login");
+    } else if (state.error) {
+      if (state?.payload) {
+        setName((state.payload.get("name") as string) || "");
+        setEmail((state.payload.get("email") as string) || "");
+        setPassword((state.payload.get("password") as string) || "");
+        setConfirmPassword(
+          (state.payload.get("confirmPassword") as string) || ""
+        );
       }
-    },
-    initialState
-  );
+    }
+  }, [state, router]);
 
   return (
     <div className="w-full max-w-md mx-auto">
@@ -52,7 +61,9 @@ export default function RegisterForm() {
               state.error ? "border-red-300" : "border-gray-300"
             }`}
             placeholder="Enter your full name"
-            defaultValue={(state.payload?.get("name") || "") as string}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={isPending}
           />
         </div>
 
@@ -72,7 +83,9 @@ export default function RegisterForm() {
               state.error ? "border-red-300" : "border-gray-300"
             }`}
             placeholder="Enter your email"
-            defaultValue={(state.payload?.get("email") || "") as string}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={isPending}
           />
         </div>
 
@@ -92,7 +105,9 @@ export default function RegisterForm() {
               state.error ? "border-red-300" : "border-gray-300"
             }`}
             placeholder="Enter your password"
-            defaultValue={(state.payload?.get("password") || "") as string}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={isPending}
           />
         </div>
 
@@ -112,9 +127,9 @@ export default function RegisterForm() {
               state.error ? "border-red-300" : "border-gray-300"
             }`}
             placeholder="Confirm your password"
-            defaultValue={
-              (state.payload?.get("confirmPassword") || "") as string
-            }
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            disabled={isPending}
           />
         </div>
 

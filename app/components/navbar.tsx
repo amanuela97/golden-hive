@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-
-const navItems = [
-  { name: "Products", href: "/products" },
-  { name: "About", href: "/about" },
-];
+import { useSession } from "@/lib/auth-client";
 
 export function Navbar() {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const navItems = [
+    { name: "Products", href: "/products" },
+    { name: "About", href: "/about" },
+    ...(session?.user ? [{ name: "Dashboard", href: "/dashboard" }] : []),
+  ];
 
   return (
     <nav className="sticky top-0 z-50 w-full bg-background shadow-sm">

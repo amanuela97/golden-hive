@@ -1,7 +1,7 @@
 import ResetPasswordForm from "@/app/components/reset-password-form";
 import Link from "next/link";
 
-export default function ResetPasswordPage() {
+export default async function ResetPasswordPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">

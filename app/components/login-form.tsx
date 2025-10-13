@@ -1,36 +1,37 @@
-import { useActionState } from "react";
-import { initialState, loginAction } from "@/app/actions/auth";
+"use client";
+import { useActionState, useEffect, useState } from "react";
+import { loginAction } from "@/app/actions/auth";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { ActionResponse } from "@/lib/types";
+import { ActionResponse, initialState } from "@/lib/types";
+import { GoogleSignInButton } from "./google-sign-in-button";
 
 export default function LoginForm() {
   const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   const [state, formAction, isPending] = useActionState<
     ActionResponse,
     FormData
-  >(async (_prevState: ActionResponse, formData: FormData) => {
-    try {
-      const result = await loginAction(formData);
+  >(loginAction, initialState);
 
-      // Handle successful submission
-      if (result.success) {
-        toast.success("Signed in successfully!");
-        router.push("/dashboard");
+  useEffect(() => {
+    if (state.success) {
+      toast.success(state.message ?? "Signed in successfully!");
+      setEmail("");
+      setPassword("");
+      router.push("/dashboard");
+    } else if (state.error) {
+      // Restore payload values from failed attempt
+      if (state?.payload) {
+        setEmail((state.payload.get("email") as string) || "");
+        setPassword((state.payload.get("password") as string) || "");
       }
-
-      return result;
-    } catch (err) {
-      return {
-        success: false,
-        message: (err as Error).message || "An error occurred",
-        error: undefined,
-      };
     }
-  }, initialState);
+  }, [router, state]);
 
   return (
     <div className="w-full max-w-md mx-auto">
@@ -51,7 +52,9 @@ export default function LoginForm() {
               state.error ? "border-red-300" : "border-gray-300"
             }`}
             placeholder="Enter your email"
-            defaultValue={(state.payload?.get("email") || "") as string}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={isPending}
           />
         </div>
 
@@ -71,7 +74,9 @@ export default function LoginForm() {
               state.error ? "border-red-300" : "border-gray-300"
             }`}
             placeholder="Enter your password"
-            defaultValue={(state.payload?.get("password") || "") as string}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={isPending}
           />
         </div>
 
@@ -93,6 +98,11 @@ export default function LoginForm() {
         <Button type="submit" disabled={isPending} className="w-full">
           {isPending ? "Signing in..." : "Sign In"}
         </Button>
+        <div className="w-full max-w-md space-y-8">
+          <div className="rounded-lg border border-border bg-card p-2 shadow-sm">
+            <GoogleSignInButton />
+          </div>
+        </div>
       </form>
     </div>
   );

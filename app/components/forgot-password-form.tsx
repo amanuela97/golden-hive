@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,28 +12,24 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { requestPasswordResetAction, initialState } from "@/app/actions/auth";
-import { ActionResponse } from "@/lib/types";
+import { requestPasswordResetAction } from "@/app/actions/auth";
+import { ActionResponse, initialState } from "@/lib/types";
 
 export default function ForgotPasswordForm() {
+  const [email, setEmail] = useState("");
   const [state, formAction, isPending] = useActionState<
     ActionResponse,
     FormData
-  >(async (_prevState: ActionResponse, formData: FormData) => {
-    try {
-      const result = await requestPasswordResetAction(formData);
-      if (result.success) {
-        toast.success("Password reset email sent! Check your inbox.");
-      }
-      return result;
-    } catch (err) {
-      return {
-        success: false,
-        message: (err as Error).message || "An error occurred",
-        error: undefined,
-      };
+  >(requestPasswordResetAction, initialState);
+
+  useEffect(() => {
+    if (state.success) {
+      toast.success(
+        state.message ?? "Password reset email sent! Check your inbox."
+      );
+      setEmail("");
     }
-  }, initialState);
+  }, [state]);
 
   return (
     <Card className="w-full max-w-md mx-auto">
@@ -55,6 +51,9 @@ export default function ForgotPasswordForm() {
               required
               className={state.error ? "border-red-500" : ""}
               placeholder="Enter your email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={isPending}
             />
           </div>
 

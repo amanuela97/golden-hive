@@ -1,36 +1,38 @@
-"use client";
-
 import { User } from "better-auth";
-import DashboardContent from "../components/dashboardContent";
-import { useSession } from "@/lib/auth-client";
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import DashboardContent from "@/app/components/dashboardContent";
+import AdminDashboardContent from "@/app/dashboard/components/AdminDashboardContent";
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { getListingsByProducer } from "@/lib/listing";
+import { listUserAccounts } from "@/lib/auth";
 
-export default function Dashboard() {
-  const { data: session, isPending } = useSession();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!session && !isPending) {
-      router.push("/login");
-    }
-  }, [session, router, isPending]);
-
-  if (isPending) {
-    return (
-      <div className="flex justify-center items-center h-screen">
-        <div className="text-2xl font-bold">Loading...</div>
-      </div>
-    );
-  }
+export default async function Dashboard() {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+  const accounts = await listUserAccounts({
+    headers: await headers(),
+  });
+  const isCredential = accounts?.[0]?.providerId === "credential";
 
   if (!session) {
-    return (
-      <div className="flex justify-center items-center h-screen">
-        <div className="text-2xl font-bold">redirecting to login...</div>
-      </div>
-    );
+    redirect("/login");
   }
 
-  return <DashboardContent user={session?.user as User} />;
+  // Check if user is admin and redirect to admin dashboard
+  if (session.user.isAdmin) {
+    return <AdminDashboardContent user={session.user} />;
+  }
+
+  // Fetch products server-side for regular users
+  const products = await getListingsByProducer(session.user.id);
+
+  return (
+    <DashboardContent
+      user={session?.user as User}
+      products={products}
+      isCredential={isCredential}
+    />
+  );
 }

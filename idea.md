@@ -65,3 +65,7 @@ nordmel.ee
 → A polished honey business site from Spain.
 
 Future goal → Similar to Wolt/Uber Eats style platform, but for local products & services.
+
+- feedback from users
+- make categories broader
+- language feature
