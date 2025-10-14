@@ -1,17 +1,11 @@
 "use server";
 
-import {
-  requestPasswordReset,
-  resetPassword,
-  signInEmail,
-  signUpEmail,
-} from "@/lib/auth";
 import { ActionResponse } from "@/lib/types";
 import { APIError } from "better-auth";
 import { headers } from "next/headers";
 import { z } from "zod";
 import { db } from "@/db";
-import { user } from "@/db/schema";
+import { user, roles, userRoles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -81,19 +75,18 @@ export async function resetPasswordAction(
     }
 
     // Reset password
-    const result = await resetPassword({
+    const result = await auth.api.resetPassword({
       body: {
         newPassword: validatedData.data.password,
         token,
       },
       headers: await headers(),
-      asResponse: true,
     });
 
-    if (!result.ok) {
+    if (!result) {
       return {
         success: false,
-        error: (await result.json())?.message || "Failed to reset password",
+        error: "Failed to reset password",
         payload: formData,
       };
     }
@@ -132,18 +125,18 @@ export async function requestPasswordResetAction(
     }
 
     // Request password reset
-    const result = await requestPasswordReset({
+    const result = await auth.api.forgetPassword({
       body: {
         email: validatedData.data.email,
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/reset-password`,
       },
       headers: await headers(),
-      asResponse: true,
     });
 
-    if (!result.ok) {
+    if (!result) {
       return {
         success: false,
-        error: (await result.json())?.message || "Failed to send reset email",
+        error: "Failed to send reset email",
         payload: formData,
       };
     }
@@ -187,17 +180,16 @@ export async function loginAction(
       };
     }
 
-    const result = await signInEmail({
+    const result = await auth.api.signInEmail({
       body: {
         email: validatedData.data.email,
         password: validatedData.data.password,
       },
       headers: await headers(),
-      asResponse: true,
     });
 
-    if (!result.ok) {
-      let error_message = (await result.json())?.message;
+    if (!result) {
+      let error_message = "Invalid email or password";
       if (error_message === "Email not verified") {
         error_message =
           "Email not verified. Please check your email for verification.";
@@ -207,6 +199,50 @@ export async function loginAction(
         error: error_message || "Invalid email or password",
         payload: formData,
       };
+    }
+
+    // Check if this is an admin email and assign admin role if needed
+    const isAdminEmail = process.env.ADMIN_LIST?.split(",").includes(
+      validatedData.data.email
+    );
+    if (isAdminEmail) {
+      // Check if user already has admin role
+      const existingRole = await db
+        .select()
+        .from(userRoles)
+        .innerJoin(roles, eq(userRoles.roleId, roles.id))
+        .where(eq(userRoles.userId, result.user.id))
+        .limit(1);
+
+      if (existingRole.length === 0) {
+        // Ensure Admin role exists and assign it
+        const adminRole = await db
+          .select()
+          .from(roles)
+          .where(eq(roles.name, "Admin"))
+          .limit(1);
+
+        if (adminRole.length === 0) {
+          // Create Admin role if it doesn't exist
+          const newAdminRole = await db
+            .insert(roles)
+            .values({
+              name: "Admin",
+              description: "Full system access and user management",
+            })
+            .returning();
+
+          await db.insert(userRoles).values({
+            userId: result.user.id,
+            roleId: newAdminRole[0].id,
+          });
+        } else {
+          await db.insert(userRoles).values({
+            userId: result.user.id,
+            roleId: adminRole[0].id,
+          });
+        }
+      }
     }
 
     return {
@@ -252,30 +288,76 @@ export async function registerAction(
       };
     }
 
-    // Attempt to create user using Stack auth
-    const response = await signUpEmail({
+    // Check if this is an admin email
+    const isAdminEmail = process.env.ADMIN_LIST?.split(",").includes(
+      validatedData.data.email
+    );
+
+    // Attempt to create user using better-auth
+    const response = await auth.api.signUpEmail({
       body: {
         email: validatedData.data.email,
         password: validatedData.data.password,
         name: validatedData.data.name,
-        isAdmin:
-          process.env.ADMIN_LIST?.split(",").includes(
-            validatedData.data.email
-          ) || false,
+        status: "pending", // Default status, will be updated based on email verification
         callbackURL: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
       },
       headers: await headers(),
-      asResponse: true,
     });
 
-    if (!response.ok) {
+    if (!response) {
       return {
         success: false,
-        error:
-          (await response.json())?.message ||
-          "Failed to create account. Please try again.",
+        error: "Failed to create account. Please try again.",
         payload: formData,
       };
+    }
+
+    // Set user status based on email verification
+    // If email verification is required, status should be "pending"
+    // If not, status should be "active"
+    const userStatus = response.user.emailVerified ? "active" : "pending";
+
+    // Update user status in database
+    await db
+      .update(user)
+      .set({
+        status: userStatus,
+        updatedAt: new Date(),
+      })
+      .where(eq(user.id, response.user.id));
+
+    // If this is an admin email, assign admin role
+    if (isAdminEmail) {
+      // Ensure Admin role exists
+      const adminRole = await db
+        .select()
+        .from(roles)
+        .where(eq(roles.name, "Admin"))
+        .limit(1);
+
+      if (adminRole.length === 0) {
+        // Create Admin role if it doesn't exist
+        const newAdminRole = await db
+          .insert(roles)
+          .values({
+            name: "Admin",
+            description: "Full system access and user management",
+          })
+          .returning();
+
+        // Assign admin role to user
+        await db.insert(userRoles).values({
+          userId: response.user.id,
+          roleId: newAdminRole[0].id,
+        });
+      } else {
+        // Assign existing admin role to user
+        await db.insert(userRoles).values({
+          userId: response.user.id,
+          roleId: adminRole[0].id,
+        });
+      }
     }
     return {
       success: true,

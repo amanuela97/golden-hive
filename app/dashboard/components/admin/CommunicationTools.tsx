@@ -424,7 +424,7 @@ function CreateAnnouncementForm({
   const [formData, setFormData] = useState({
     title: "",
     content: "",
-    targetAudience: "all" as const,
+    targetAudience: "all" as "all" | "admins" | "sellers" | "customers" | "custom",
     customEmails: "",
     scheduledAt: "",
     status: "draft" as const,
@@ -520,7 +520,7 @@ function CreateAnnouncementForm({
         <Select
           value={formData.targetAudience}
           onValueChange={(value) =>
-            setFormData((prev) => ({ ...prev, targetAudience: value as any }))
+            setFormData((prev) => ({ ...prev, targetAudience: value as "all" | "admins" | "sellers" | "customers" | "custom" }))
           }
         >
           <SelectTrigger>

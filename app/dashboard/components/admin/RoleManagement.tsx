@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,130 +20,94 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Shield, Plus, Edit, Trash2, Users, Eye } from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Shield,
-  Plus,
-  Edit,
-  Trash2,
-  Users,
-  Settings,
-  Eye,
-  BarChart3,
-} from "lucide-react";
+  getAllRoles,
+  createRole,
+  updateRole,
+  deleteRole,
+  getAllPermissions,
+  getRoleWithPermissions,
+} from "@/app/actions/admin";
 import toast from "react-hot-toast";
-
 interface Role {
-  id: string;
+  id: number;
   name: string;
-  description: string;
-  permissions: string[];
+  description: string | null;
   userCount: number;
-  createdAt: string;
+  permissions: Permission[];
+  createdAt: Date | null;
+  updatedAt: Date;
+}
+
+interface RoleFromDB {
+  id: number;
+  name: string;
+  description: string | null;
+  userCount: number;
+  createdAt: Date | null;
+  updatedAt: Date;
 }
 
 interface Permission {
   id: string;
   name: string;
-  description: string;
-  category: string;
+  description: string | null;
+  category: string | null;
+  createdAt: Date | null;
+  updatedAt: Date;
 }
 
-export default function RoleManagement() {
-  const [roles, setRoles] = useState<Role[]>([
-    {
-      id: "1",
-      name: "Admin",
-      description: "Full system access and user management",
-      permissions: [
-        "manage_users",
-        "manage_products",
-        "view_analytics",
-        "manage_roles",
-      ],
-      userCount: 2,
-      createdAt: "2024-01-01",
-    },
-    {
-      id: "2",
-      name: "Seller",
-      description: "Can manage their own products and view basic analytics",
-      permissions: ["manage_own_products", "view_basic_analytics"],
-      userCount: 15,
-      createdAt: "2024-01-01",
-    },
-    {
-      id: "3",
-      name: "Customer",
-      description: "Can browse and purchase products",
-      permissions: ["browse_products", "make_purchases"],
-      userCount: 150,
-      createdAt: "2024-01-01",
-    },
-  ]);
+interface RoleManagementProps {
+  initialRoles: RoleFromDB[] | null;
+  initialPermissions: Permission[] | null;
+}
 
-  const [permissions] = useState<Permission[]>([
-    {
-      id: "manage_users",
-      name: "Manage Users",
-      description: "Create, edit, and delete user accounts",
-      category: "User Management",
-    },
-    {
-      id: "manage_products",
-      name: "Manage All Products",
-      description: "Create, edit, and delete any product",
-      category: "Product Management",
-    },
-    {
-      id: "manage_own_products",
-      name: "Manage Own Products",
-      description: "Create, edit, and delete own products",
-      category: "Product Management",
-    },
-    {
-      id: "view_analytics",
-      name: "View Analytics",
-      description: "Access to detailed system analytics",
-      category: "Analytics",
-    },
-    {
-      id: "view_basic_analytics",
-      name: "View Basic Analytics",
-      description: "Access to basic analytics for own data",
-      category: "Analytics",
-    },
-    {
-      id: "manage_roles",
-      name: "Manage Roles",
-      description: "Create, edit, and assign user roles",
-      category: "Role Management",
-    },
-    {
-      id: "browse_products",
-      name: "Browse Products",
-      description: "View and search products",
-      category: "Product Access",
-    },
-    {
-      id: "make_purchases",
-      name: "Make Purchases",
-      description: "Purchase products and manage orders",
-      category: "Commerce",
-    },
-    {
-      id: "send_announcements",
-      name: "Send Announcements",
-      description: "Send system-wide announcements",
-      category: "Communication",
-    },
-  ]);
+export default function RoleManagement({
+  initialRoles,
+  initialPermissions,
+}: RoleManagementProps) {
+  const [roles, setRoles] = useState<RoleFromDB[]>(initialRoles || []);
+  const [permissions, setPermissions] = useState<Permission[]>(
+    initialPermissions || []
+  );
+  const [loading, setLoading] = useState(false); // No loading on initial render
+
+  // Fetch roles and permissions from database only if we don't have initial data
+  useEffect(() => {
+    // Skip fetch if we have initial data
+    if (initialRoles && initialPermissions) {
+      return;
+    }
+
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const [rolesResult, permissionsResult] = await Promise.all([
+          getAllRoles(),
+          getAllPermissions(),
+        ]);
+
+        if (rolesResult.success && rolesResult.result) {
+          setRoles(rolesResult.result as RoleFromDB[]);
+        } else {
+          toast.error(rolesResult.error || "Failed to fetch roles");
+        }
+
+        if (permissionsResult.success && permissionsResult.result) {
+          setPermissions(permissionsResult.result as Permission[]);
+        } else {
+          toast.error(permissionsResult.error || "Failed to fetch permissions");
+        }
+      } catch (error) {
+        console.error("Error fetching data:", error);
+        toast.error("Failed to fetch data");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, [initialRoles, initialPermissions]);
 
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -151,41 +115,58 @@ export default function RoleManagement() {
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
 
   const handleCreateRole = async (
-    roleData: Omit<Role, "id" | "userCount" | "createdAt">
+    roleData: Omit<Role, "id" | "userCount" | "createdAt" | "updatedAt">
   ) => {
     try {
-      const newRole: Role = {
-        id: Date.now().toString(),
+      const result = await createRole({
         name: roleData.name,
-        description: roleData.description,
-        permissions: roleData.permissions,
-        userCount: 0,
-        createdAt: new Date().toISOString().split("T")[0],
-      };
+        description: roleData.description || undefined,
+        permissions: roleData.permissions.map((p) => p.id),
+      });
 
-      setRoles((prev) => [...prev, newRole]);
-      toast.success("Role created successfully");
-      setIsCreateDialogOpen(false);
+      if (result.success) {
+        toast.success("Role created successfully");
+        setIsCreateDialogOpen(false);
+        // Refresh roles list
+        const rolesResult = await getAllRoles();
+        if (rolesResult.success && rolesResult.result) {
+          setRoles(rolesResult.result as RoleFromDB[]);
+        }
+      } else {
+        toast.error(result.error || "Failed to create role");
+      }
     } catch (error) {
+      console.error("Error creating role:", error);
       toast.error("Failed to create role");
     }
   };
 
-  const handleEditRole = async (roleId: string, roleData: Partial<Role>) => {
+  const handleEditRole = async (roleId: number, roleData: Partial<Role>) => {
     try {
-      setRoles((prev) =>
-        prev.map((role) =>
-          role.id === roleId ? { ...role, ...roleData } : role
-        )
-      );
-      toast.success("Role updated successfully");
-      setIsEditDialogOpen(false);
+      const result = await updateRole(roleId, {
+        name: roleData.name,
+        description: roleData.description || undefined,
+        permissions: roleData.permissions?.map((p) => p.id) || [],
+      });
+
+      if (result.success) {
+        toast.success("Role updated successfully");
+        setIsEditDialogOpen(false);
+        // Refresh roles list
+        const rolesResult = await getAllRoles();
+        if (rolesResult.success && rolesResult.result) {
+          setRoles(rolesResult.result as RoleFromDB[]);
+        }
+      } else {
+        toast.error(result.error || "Failed to update role");
+      }
     } catch (error) {
+      console.error("Error updating role:", error);
       toast.error("Failed to update role");
     }
   };
 
-  const handleDeleteRole = async (roleId: string) => {
+  const handleDeleteRole = async (roleId: number) => {
     if (
       !confirm(
         "Are you sure you want to delete this role? Users with this role will need to be reassigned."
@@ -195,23 +176,38 @@ export default function RoleManagement() {
     }
 
     try {
-      setRoles((prev) => prev.filter((role) => role.id !== roleId));
-      toast.success("Role deleted successfully");
+      const result = await deleteRole(roleId);
+      if (result.success) {
+        toast.success("Role deleted successfully");
+        // Refresh roles list
+        const rolesResult = await getAllRoles();
+        if (rolesResult.success && rolesResult.result) {
+          setRoles(rolesResult.result as RoleFromDB[]);
+        }
+      } else {
+        toast.error(result.error || "Failed to delete role");
+      }
     } catch (error) {
+      console.error("Error deleting role:", error);
       toast.error("Failed to delete role");
     }
   };
 
   const groupedPermissions = permissions.reduce(
     (acc, permission) => {
-      if (!acc[permission.category]) {
-        acc[permission.category] = [];
+      const category = permission.category || "Other";
+      if (!acc[category]) {
+        acc[category] = [];
       }
-      acc[permission.category].push(permission);
+      acc[category].push(permission);
       return acc;
     },
     {} as Record<string, Permission[]>
   );
+
+  if (loading) {
+    return <div className="flex justify-center p-8">Loading roles...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -268,9 +264,7 @@ export default function RoleManagement() {
                   </TableCell>
                   <TableCell>{role.description}</TableCell>
                   <TableCell>
-                    <span className="text-sm text-gray-600">
-                      {role.permissions.length} permissions
-                    </span>
+                    <span className="text-sm text-gray-600">- permissions</span>
                   </TableCell>
                   <TableCell>
                     <span className="flex items-center gap-1">
@@ -278,15 +272,36 @@ export default function RoleManagement() {
                       {role.userCount}
                     </span>
                   </TableCell>
-                  <TableCell>{role.createdAt}</TableCell>
+                  <TableCell>
+                    <span className="text-sm text-gray-600">
+                      {role.createdAt?.toLocaleDateString() || "N/A"}
+                    </span>
+                  </TableCell>
                   <TableCell>
                     <div className="flex gap-2">
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => {
-                          setSelectedRole(role);
-                          setIsViewDialogOpen(true);
+                        onClick={async () => {
+                          try {
+                            const result = await getRoleWithPermissions(
+                              role.id
+                            );
+                            if (result.success && result.result) {
+                              setSelectedRole(result.result as Role);
+                              setIsViewDialogOpen(true);
+                            } else {
+                              toast.error(
+                                result.error || "Failed to fetch role details"
+                              );
+                            }
+                          } catch (error) {
+                            console.error(
+                              "Error fetching role details:",
+                              error
+                            );
+                            toast.error("Failed to fetch role details");
+                          }
                         }}
                       >
                         <Eye className="w-4 h-4" />
@@ -294,9 +309,26 @@ export default function RoleManagement() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => {
-                          setSelectedRole(role);
-                          setIsEditDialogOpen(true);
+                        onClick={async () => {
+                          try {
+                            const result = await getRoleWithPermissions(
+                              role.id
+                            );
+                            if (result.success && result.result) {
+                              setSelectedRole(result.result as Role);
+                              setIsEditDialogOpen(true);
+                            } else {
+                              toast.error(
+                                result.error || "Failed to fetch role details"
+                              );
+                            }
+                          } catch (error) {
+                            console.error(
+                              "Error fetching role details:",
+                              error
+                            );
+                            toast.error("Failed to fetch role details");
+                          }
                         }}
                       >
                         <Edit className="w-4 h-4" />
@@ -356,26 +388,26 @@ export default function RoleManagement() {
                 <p className="text-gray-700">{selectedRole.description}</p>
               </div>
               <div>
-                <Label>Permissions ({selectedRole.permissions.length})</Label>
+                <Label>
+                  Permissions ({selectedRole.permissions?.length || 0})
+                </Label>
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                  {selectedRole.permissions.map((permissionId) => {
-                    const permission = permissions.find(
-                      (p) => p.id === permissionId
-                    );
-                    return (
-                      <div
-                        key={permissionId}
-                        className="bg-gray-50 p-2 rounded text-sm"
-                      >
-                        {permission?.name || permissionId}
-                      </div>
-                    );
-                  })}
+                  {selectedRole.permissions?.map((permission) => (
+                    <div
+                      key={permission.id}
+                      className="bg-gray-50 p-2 rounded text-sm"
+                    >
+                      {permission.name}
+                    </div>
+                  )) || []}
                 </div>
               </div>
               <div className="flex justify-between text-sm text-gray-600">
                 <span>Users with this role: {selectedRole.userCount}</span>
-                <span>Created: {selectedRole.createdAt}</span>
+                <span>
+                  Created:{" "}
+                  {selectedRole.createdAt?.toLocaleDateString() || "N/A"}
+                </span>
               </div>
             </div>
           )}
@@ -409,13 +441,15 @@ function CreateRoleForm({
   onCancel,
 }: {
   permissions: Permission[];
-  onSubmit: (data: Omit<Role, "id" | "userCount" | "createdAt">) => void;
+  onSubmit: (
+    data: Omit<Role, "id" | "userCount" | "createdAt" | "updatedAt">
+  ) => void;
   onCancel: () => void;
 }) {
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    permissions: [] as string[],
+    permissions: [] as Permission[],
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -423,21 +457,22 @@ function CreateRoleForm({
     onSubmit(formData);
   };
 
-  const togglePermission = (permissionId: string) => {
+  const togglePermission = (permission: Permission) => {
     setFormData((prev) => ({
       ...prev,
-      permissions: prev.permissions.includes(permissionId)
-        ? prev.permissions.filter((id) => id !== permissionId)
-        : [...prev.permissions, permissionId],
+      permissions: prev.permissions.some((p) => p.id === permission.id)
+        ? prev.permissions.filter((p) => p.id !== permission.id)
+        : [...prev.permissions, permission],
     }));
   };
 
   const groupedPermissions = permissions.reduce(
     (acc, permission) => {
-      if (!acc[permission.category]) {
-        acc[permission.category] = [];
+      const category = permission.category || "Other";
+      if (!acc[category]) {
+        acc[category] = [];
       }
-      acc[permission.category].push(permission);
+      acc[category].push(permission);
       return acc;
     },
     {} as Record<string, Permission[]>
@@ -460,7 +495,7 @@ function CreateRoleForm({
         <Label htmlFor="description">Description</Label>
         <Input
           id="description"
-          value={formData.description}
+          value={formData.description || ""}
           onChange={(e) =>
             setFormData((prev) => ({ ...prev, description: e.target.value }))
           }
@@ -482,8 +517,10 @@ function CreateRoleForm({
                     >
                       <input
                         type="checkbox"
-                        checked={formData.permissions.includes(permission.id)}
-                        onChange={() => togglePermission(permission.id)}
+                        checked={formData.permissions.some(
+                          (p) => p.id === permission.id
+                        )}
+                        onChange={() => togglePermission(permission)}
                         className="mt-1"
                       />
                       <div>
@@ -527,7 +564,7 @@ function EditRoleForm({
   const [formData, setFormData] = useState({
     name: role.name,
     description: role.description,
-    permissions: role.permissions,
+    permissions: role.permissions || [],
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -535,21 +572,22 @@ function EditRoleForm({
     onSubmit(formData);
   };
 
-  const togglePermission = (permissionId: string) => {
+  const togglePermission = (permission: Permission) => {
     setFormData((prev) => ({
       ...prev,
-      permissions: prev.permissions.includes(permissionId)
-        ? prev.permissions.filter((id) => id !== permissionId)
-        : [...prev.permissions, permissionId],
+      permissions: prev.permissions.some((p) => p.id === permission.id)
+        ? prev.permissions.filter((p) => p.id !== permission.id)
+        : [...prev.permissions, permission],
     }));
   };
 
   const groupedPermissions = permissions.reduce(
     (acc, permission) => {
-      if (!acc[permission.category]) {
-        acc[permission.category] = [];
+      const category = permission.category || "Other";
+      if (!acc[category]) {
+        acc[category] = [];
       }
-      acc[permission.category].push(permission);
+      acc[category].push(permission);
       return acc;
     },
     {} as Record<string, Permission[]>
@@ -572,7 +610,7 @@ function EditRoleForm({
         <Label htmlFor="description">Description</Label>
         <Input
           id="description"
-          value={formData.description}
+          value={formData.description || ""}
           onChange={(e) =>
             setFormData((prev) => ({ ...prev, description: e.target.value }))
           }
@@ -594,8 +632,10 @@ function EditRoleForm({
                     >
                       <input
                         type="checkbox"
-                        checked={formData.permissions.includes(permission.id)}
-                        onChange={() => togglePermission(permission.id)}
+                        checked={formData.permissions.some(
+                          (p) => p.id === permission.id
+                        )}
+                        onChange={() => togglePermission(permission)}
                         className="mt-1"
                       />
                       <div>

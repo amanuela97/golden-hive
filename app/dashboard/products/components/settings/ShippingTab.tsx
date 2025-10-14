@@ -25,7 +25,7 @@ export default function ShippingTab() {
             </h4>
             <p className="text-gray-600 max-w-md mx-auto">
               Shipping and delivery management features are currently under
-              development. You'll be able to configure shipping zones, set
+              development. You&apos;ll be able to configure shipping zones, set
               delivery rates, and manage shipping preferences here.
             </p>
           </div>

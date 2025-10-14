@@ -25,8 +25,8 @@ export default function PaymentsTab() {
             </h4>
             <p className="text-gray-600 max-w-md mx-auto">
               Payment and payout management features are currently under
-              development. You'll be able to manage your payment methods, view
-              transaction history, and configure payout settings here.
+              development. You&apos;ll be able to manage your payment methods,
+              view transaction history, and configure payout settings here.
             </p>
           </div>
         </div>

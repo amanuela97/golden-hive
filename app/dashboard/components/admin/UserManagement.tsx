@@ -27,44 +27,48 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Search, Eye, Edit, Ban, Trash2, Key } from "lucide-react";
-// import { updateUser, suspendUser, deleteUser } from "@/app/actions/admin";
-import { User } from "better-auth";
+import {
+  getAllUsers,
+  updateUser,
+  suspendUser,
+  deleteUser,
+  sendPasswordResetToUser,
+} from "@/app/actions/admin";
 import toast from "react-hot-toast";
 
-// Mock functions - replace with real API calls
-const updateUser = async (
-  _userId: string,
-  _userData: Record<string, unknown>
-) => {
-  // Mock implementation
-  return Promise.resolve();
-};
-
-const suspendUser = async (_userId: string) => {
-  // Mock implementation
-  return Promise.resolve();
-};
-
-const deleteUser = async (_userId: string) => {
-  // Mock implementation
-  return Promise.resolve();
-};
-
-interface UserWithStats extends User {
-  lastLogin?: string;
-  listingsCount?: number;
+interface UserWithStats {
+  id: string;
+  name: string;
+  email: string;
+  emailVerified: boolean;
   status: "active" | "suspended" | "pending";
-  phone?: string;
-  address?: string;
-  city?: string;
-  country?: string;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  image: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  roleName: string | null;
+  roleId: number | null;
+  listingsCount: number;
   isAdmin: boolean;
 }
 
-export default function UserManagement() {
-  const [users, setUsers] = useState<UserWithStats[]>([]);
-  const [filteredUsers, setFilteredUsers] = useState<UserWithStats[]>([]);
-  const [loading, setLoading] = useState(true);
+interface UserManagementProps {
+  initialData: {
+    users: UserWithStats[];
+    totalPages: number;
+    totalCount: number;
+  } | null;
+}
+
+export default function UserManagement({ initialData }: UserManagementProps) {
+  const [, setUsers] = useState<UserWithStats[]>(initialData?.users || []);
+  const [filteredUsers, setFilteredUsers] = useState<UserWithStats[]>(
+    initialData?.users || []
+  );
+  const [loading, setLoading] = useState(false); // No loading on initial render
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -73,121 +77,143 @@ export default function UserManagement() {
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
+  const [totalPages, setTotalPages] = useState(initialData?.totalPages || 1);
+  const [totalCount, setTotalCount] = useState(initialData?.totalCount || 0);
 
-  // Mock data for now - will be replaced with real API calls
+  // Fetch users from database when filters change (not on initial load)
   useEffect(() => {
-    const mockUsers: UserWithStats[] = [
-      {
-        id: "1",
-        name: "John Doe",
-        email: "john@example.com",
-        emailVerified: true,
-        isAdmin: false,
-        phone: "+1234567890",
-        address: "123 Main St",
-        city: "New York",
-        country: "USA",
-        createdAt: new Date("2024-01-15"),
-        updatedAt: new Date("2024-01-15"),
-        lastLogin: "2024-01-20",
-        listingsCount: 5,
-        status: "active",
-      },
-      {
-        id: "2",
-        name: "Jane Smith",
-        email: "jane@example.com",
-        emailVerified: true,
-        isAdmin: true,
-        phone: "+1234567891",
-        address: "456 Oak Ave",
-        city: "Los Angeles",
-        country: "USA",
-        createdAt: new Date("2024-01-10"),
-        updatedAt: new Date("2024-01-10"),
-        lastLogin: "2024-01-19",
-        listingsCount: 12,
-        status: "active",
-      },
-      {
-        id: "3",
-        name: "Bob Johnson",
-        email: "bob@example.com",
-        emailVerified: false,
-        isAdmin: false,
-        phone: "+1234567892",
-        address: "789 Pine St",
-        city: "Chicago",
-        country: "USA",
-        createdAt: new Date("2024-01-18"),
-        updatedAt: new Date("2024-01-18"),
-        lastLogin: "2024-01-18",
-        listingsCount: 0,
-        status: "pending",
-      },
-    ];
+    // Skip initial fetch if we have initial data and no filters are applied
+    if (
+      initialData &&
+      searchTerm === "" &&
+      roleFilter === "all" &&
+      statusFilter === "all" &&
+      currentPage === 1
+    ) {
+      return;
+    }
 
-    setUsers(mockUsers);
-    setFilteredUsers(mockUsers);
-    setLoading(false);
-  }, []);
+    const fetchUsers = async () => {
+      setLoading(true);
+      try {
+        const result = await getAllUsers(
+          currentPage,
+          itemsPerPage,
+          searchTerm || undefined,
+          roleFilter !== "all" ? roleFilter : undefined,
+          statusFilter !== "all" ? statusFilter : undefined
+        );
 
-  // Filter users based on search and filters
+        if (result.success && result.result) {
+          const data = result.result as {
+            users: UserWithStats[];
+            totalPages: number;
+            totalCount: number;
+          };
+          setUsers(data.users);
+          setFilteredUsers(data.users);
+          setTotalPages(data.totalPages);
+          setTotalCount(data.totalCount);
+        } else {
+          toast.error(result.error || "Failed to fetch users");
+        }
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        toast.error("Failed to fetch users");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchUsers();
+  }, [
+    currentPage,
+    itemsPerPage,
+    searchTerm,
+    roleFilter,
+    statusFilter,
+    initialData,
+  ]);
+
+  // Reset to first page when filters change
   useEffect(() => {
-    let filtered = users;
-
-    // Search filter
-    if (searchTerm) {
-      filtered = filtered.filter(
-        (user) =>
-          user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          user.email.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
-
-    // Role filter
-    if (roleFilter !== "all") {
-      filtered = filtered.filter((user) =>
-        roleFilter === "admin" ? user.isAdmin : !user.isAdmin
-      );
-    }
-
-    // Status filter
-    if (statusFilter !== "all") {
-      filtered = filtered.filter((user) => user.status === statusFilter);
-    }
-
-    setFilteredUsers(filtered);
     setCurrentPage(1);
-  }, [users, searchTerm, roleFilter, statusFilter]);
+  }, [searchTerm, roleFilter, statusFilter]);
 
   // Pagination
-  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
-  const paginatedUsers = filteredUsers.slice(
-    startIndex,
-    startIndex + itemsPerPage
-  );
+  const paginatedUsers = filteredUsers; // Already paginated from server
 
   const handleEditUser = async (userData: Partial<UserWithStats>) => {
     if (!selectedUser) return;
 
     try {
-      await updateUser(selectedUser.id, userData);
-      toast.success("User updated successfully");
-      setIsEditDialogOpen(false);
-      // Refresh users list
-    } catch {
+      const result = await updateUser(selectedUser.id, {
+        name: userData.name,
+        email: userData.email,
+        phone: userData.phone || undefined,
+        address: userData.address || undefined,
+        city: userData.city || undefined,
+        country: userData.country || undefined,
+        status: userData.status,
+        roleId: userData.roleId || undefined,
+      });
+
+      if (result.success) {
+        toast.success("User updated successfully");
+        setIsEditDialogOpen(false);
+        // Refresh users list
+        const fetchResult = await getAllUsers(
+          currentPage,
+          itemsPerPage,
+          searchTerm || undefined,
+          roleFilter !== "all" ? roleFilter : undefined,
+          statusFilter !== "all" ? statusFilter : undefined
+        );
+        if (fetchResult.success && fetchResult.result) {
+          const data = fetchResult.result as {
+            users: UserWithStats[];
+            totalPages: number;
+            totalCount: number;
+          };
+          setUsers(data.users);
+          setFilteredUsers(data.users);
+        }
+      } else {
+        toast.error(result.error || "Failed to update user");
+      }
+    } catch (error) {
+      console.error("Error updating user:", error);
       toast.error("Failed to update user");
     }
   };
 
   const handleSuspendUser = async (userId: string) => {
     try {
-      await suspendUser(userId);
-      toast.success("User suspended successfully");
-      // Refresh users list
-    } catch {
+      const result = await suspendUser(userId);
+      if (result.success) {
+        toast.success("User suspended successfully");
+        // Refresh users list
+        const fetchResult = await getAllUsers(
+          currentPage,
+          itemsPerPage,
+          searchTerm || undefined,
+          roleFilter !== "all" ? roleFilter : undefined,
+          statusFilter !== "all" ? statusFilter : undefined
+        );
+        if (fetchResult.success && fetchResult.result) {
+          const data = fetchResult.result as {
+            users: UserWithStats[];
+            totalPages: number;
+            totalCount: number;
+          };
+          setUsers(data.users);
+          setFilteredUsers(data.users);
+        }
+      } else {
+        toast.error(result.error || "Failed to suspend user");
+      }
+    } catch (error) {
+      console.error("Error suspending user:", error);
       toast.error("Failed to suspend user");
     }
   };
@@ -202,19 +228,45 @@ export default function UserManagement() {
     }
 
     try {
-      await deleteUser(userId);
-      toast.success("User deleted successfully");
-      // Refresh users list
-    } catch {
+      const result = await deleteUser(userId);
+      if (result.success) {
+        toast.success("User deleted successfully");
+        // Refresh users list
+        const fetchResult = await getAllUsers(
+          currentPage,
+          itemsPerPage,
+          searchTerm || undefined,
+          roleFilter !== "all" ? roleFilter : undefined,
+          statusFilter !== "all" ? statusFilter : undefined
+        );
+        if (fetchResult.success && fetchResult.result) {
+          const data = fetchResult.result as {
+            users: UserWithStats[];
+            totalPages: number;
+            totalCount: number;
+          };
+          setUsers(data.users);
+          setFilteredUsers(data.users);
+        }
+      } else {
+        toast.error(result.error || "Failed to delete user");
+      }
+    } catch (error) {
+      console.error("Error deleting user:", error);
       toast.error("Failed to delete user");
     }
   };
 
-  const handleSendPasswordReset = async () => {
+  const handleSendPasswordReset = async (userId: string) => {
     try {
-      // Implement password reset functionality
-      toast.success("Password reset email sent");
-    } catch {
+      const result = await sendPasswordResetToUser(userId);
+      if (result.success) {
+        toast.success("Password reset email sent");
+      } else {
+        toast.error(result.error || "Failed to send password reset email");
+      }
+    } catch (error) {
+      console.error("Error sending password reset:", error);
       toast.error("Failed to send password reset email");
     }
   };
@@ -320,7 +372,7 @@ export default function UserManagement() {
                       {user.status}
                     </span>
                   </TableCell>
-                  <TableCell>{user.lastLogin || "Never"}</TableCell>
+                  <TableCell>N/A</TableCell>
                   <TableCell>{user.listingsCount || 0}</TableCell>
                   <TableCell>
                     <div className="flex gap-2">
@@ -347,7 +399,7 @@ export default function UserManagement() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={handleSendPasswordReset}
+                        onClick={() => handleSendPasswordReset(user.id)}
                       >
                         <Key className="w-4 h-4" />
                       </Button>
@@ -378,8 +430,8 @@ export default function UserManagement() {
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-600">
           Showing {startIndex + 1} to{" "}
-          {Math.min(startIndex + itemsPerPage, filteredUsers.length)} of{" "}
-          {filteredUsers.length} users
+          {Math.min(startIndex + itemsPerPage, totalCount)} of {totalCount}{" "}
+          users
         </p>
         <div className="flex gap-2">
           <Button
@@ -396,7 +448,7 @@ export default function UserManagement() {
             onClick={() =>
               setCurrentPage((prev) => Math.min(prev + 1, totalPages))
             }
-            disabled={currentPage === totalPages}
+            disabled={currentPage >= totalPages}
           >
             Next
           </Button>
@@ -452,9 +504,7 @@ export default function UserManagement() {
                 </div>
                 <div>
                   <Label>Last Login</Label>
-                  <p className="font-medium">
-                    {selectedUser.lastLogin || "Never"}
-                  </p>
+                  <p className="font-medium">N/A</p>
                 </div>
               </div>
               <div>

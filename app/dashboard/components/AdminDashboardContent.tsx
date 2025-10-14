@@ -16,20 +16,53 @@ import {
   Package,
 } from "lucide-react";
 import Link from "next/link";
-import UserManagement from "@/app/dashboard/components/admin/UserManagement";
-import RoleManagement from "@/app/dashboard/components/admin/RoleManagement";
-import Analytics from "@/app/dashboard/components/admin/Analytics";
-import ActivityLogs from "@/app/dashboard/components/admin/ActivityLogs";
-import CommunicationTools from "@/app/dashboard/components/admin/CommunicationTools";
+import UserManagement from "./admin/UserManagement";
+import RoleManagement from "./admin/RoleManagement";
+import { GetAllUsersResponse, GetUserStatsResponse } from "@/lib/types";
+
+interface RoleFromDB {
+  id: number;
+  name: string;
+  description: string | null;
+  userCount: number;
+  createdAt: Date | null;
+  updatedAt: Date;
+}
+
+interface Permission {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  createdAt: Date | null;
+  updatedAt: Date;
+}
 
 interface AdminDashboardContentProps {
   user: User;
+  initialStats: GetUserStatsResponse | null;
+  initialUsers: GetAllUsersResponse | null;
+  initialRoles: RoleFromDB[] | null;
+  initialPermissions: Permission[] | null;
 }
 
 export default function AdminDashboardContent({
-  user,
+  user: _user,
+  initialStats,
+  initialUsers,
+  initialRoles,
+  initialPermissions,
 }: AdminDashboardContentProps) {
   const [activeTab, setActiveTab] = useState("users");
+
+  // Use initial data from props
+  const stats = initialStats || {
+    totalUsers: 0,
+    adminUsers: 0,
+    verifiedUsers: 0,
+    activeUsers: 0,
+    recentSignups: 0,
+  };
 
   return (
     <div className="h-screen space-y-6 py-4 px-6">
@@ -66,7 +99,9 @@ export default function AdminDashboardContent({
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Users</p>
-              <p className="text-2xl font-bold text-gray-900">-</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.totalUsers}
+              </p>
             </div>
           </div>
         </Card>
@@ -78,7 +113,9 @@ export default function AdminDashboardContent({
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Active Users</p>
-              <p className="text-2xl font-bold text-gray-900">-</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.activeUsers}
+              </p>
             </div>
           </div>
         </Card>
@@ -90,7 +127,9 @@ export default function AdminDashboardContent({
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Admins</p>
-              <p className="text-2xl font-bold text-gray-900">-</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.adminUsers}
+              </p>
             </div>
           </div>
         </Card>
@@ -102,9 +141,11 @@ export default function AdminDashboardContent({
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">
-                Today&apos;s Activity
+                Recent Signups
               </p>
-              <p className="text-2xl font-bold text-gray-900">-</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.recentSignups}
+              </p>
             </div>
           </div>
         </Card>
@@ -139,14 +180,17 @@ export default function AdminDashboardContent({
         </TabsList>
 
         <TabsContent value="users" className="mt-6">
-          <UserManagement />
+          <UserManagement initialData={initialUsers} />
         </TabsContent>
 
-        {/*<TabsContent value="roles" className="mt-6">
-          <RoleManagement />
+        <TabsContent value="roles" className="mt-6">
+          <RoleManagement
+            initialRoles={initialRoles}
+            initialPermissions={initialPermissions}
+          />
         </TabsContent>
 
-        <TabsContent value="analytics" className="mt-6">
+        {/*<TabsContent value="analytics" className="mt-6">
           <Analytics />
         </TabsContent>
 

@@ -14,8 +14,8 @@ export const auth = betterAuth({
       phone: { type: "string", required: false },
       city: { type: "string", required: false },
       address: { type: "string", required: false },
-      isAdmin: { type: "boolean", default: false },
       country: { type: "string", required: false },
+      status: { type: "string", required: false },
     },
     deleteUser: {
       enabled: true,
