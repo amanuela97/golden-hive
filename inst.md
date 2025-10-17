@@ -1,4 +1,0 @@
-- /dashboard/admin/page.tsx is not needed since the admin dashboard should be rendered in /dashboard/page.tsx conditionally by checking the users role
-- i have the list of admin emails stored in env.local under like so ADMIN_LIST="email@gmail.com, email2@gmail.com"
-- use ADMIN_LIST to set the user role in the database when login in and registering in auth.ts
-- if you encounter type issues while trying to set a field in actions/auth.ts you might need to add it in /lib/auth.ts first

@@ -14,6 +14,8 @@ import { Upload, X, Save, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import toast from "react-hot-toast";
+import { useCategories } from "@/app/hooks/useCategoryQueries";
+import { InputTags } from "@/app/components/input-tags";
 
 interface ProductFormProps {
   mode: "create" | "edit";
@@ -28,6 +30,11 @@ export default function ProductForm({
   onSubmit,
   isLoading = false,
 }: ProductFormProps) {
+  // Fetch categories using react-query
+  const { data: categoriesData, isLoading: categoriesLoading } =
+    useCategories();
+  const categories = categoriesData?.result || [];
+
   const [formData, setFormData] = useState({
     name: initialData?.name || "",
     description: initialData?.description || "",
@@ -42,7 +49,10 @@ export default function ProductForm({
     harvestDate: initialData?.harvestDate
       ? new Date(initialData.harvestDate).toISOString().split("T")[0]
       : "",
+    tags: initialData?.tags || [],
   });
+
+  const [tags, setTags] = useState<string[]>(initialData?.tags || []);
 
   const [mainImage, setMainImage] = useState<File | null>(null);
   const [galleryFiles, setGalleryFiles] = useState<File[]>([]);
@@ -114,6 +124,7 @@ export default function ProductForm({
     try {
       const baseData = {
         ...formData,
+        tags,
         harvestDate: formData.harvestDate
           ? new Date(formData.harvestDate)
           : undefined,
@@ -205,13 +216,20 @@ export default function ProductForm({
                     value={formData.category}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={categoriesLoading}
                   >
                     <option value="">Select Category</option>
-                    <option value="Domestic Honey">Domestic Honey</option>
-                    <option value="Mad Honey">Mad Honey</option>
-                    <option value="Wild Honey">Wild Honey</option>
-                    <option value="Organic Honey">Organic Honey</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
                   </select>
+                  {categoriesLoading && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      Loading categories...
+                    </p>
+                  )}
                 </div>
                 <div>
                   <Label htmlFor="originVillage">Origin Village</Label>
@@ -222,6 +240,17 @@ export default function ProductForm({
                     onChange={handleInputChange}
                     placeholder="e.g., Manang"
                   />
+                </div>
+                <div className="md:col-span-2">
+                  <Label htmlFor="tags">Tags</Label>
+                  <InputTags
+                    value={tags}
+                    onChange={setTags}
+                    placeholder="Add tags (press Enter or comma to add)"
+                  />
+                  <p className="text-sm text-gray-500 mt-1">
+                    Add relevant tags to help customers find your product
+                  </p>
                 </div>
               </div>
             </Card>

@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState } from "react";
-import { User } from "better-auth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,11 +13,16 @@ import {
   Mail,
   Plus,
   Package,
+  Key,
+  Tag,
 } from "lucide-react";
 import Link from "next/link";
 import UserManagement from "./admin/UserManagement";
 import RoleManagement from "./admin/RoleManagement";
+import PermissionsManagement from "./admin/PermissionsManagement";
 import { GetAllUsersResponse, GetUserStatsResponse } from "@/lib/types";
+import LogoutButton from "@/app/components/LogoutButton";
+import { User } from "better-auth";
 
 interface RoleFromDB {
   id: number;
@@ -27,6 +31,7 @@ interface RoleFromDB {
   userCount: number;
   createdAt: Date | null;
   updatedAt: Date;
+  permissions: Permission[];
 }
 
 interface Permission {
@@ -47,7 +52,7 @@ interface AdminDashboardContentProps {
 }
 
 export default function AdminDashboardContent({
-  user: _user,
+  user,
   initialStats,
   initialUsers,
   initialRoles,
@@ -72,6 +77,9 @@ export default function AdminDashboardContent({
           <h1 className="text-3xl font-bold">Admin Dashboard</h1>
           <p className="text-gray-600 mt-2">
             Manage users, roles, and system analytics
+            {user && (
+              <span className="font-bold text-sm ml-1">({user.email})</span>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -87,6 +95,19 @@ export default function AdminDashboardContent({
               Manage Products
             </Button>
           </Link>
+          <Link href="/dashboard/categories/new">
+            <Button variant="outline" className="flex items-center gap-2">
+              <Tag className="w-4 h-4" />
+              Add Category
+            </Button>
+          </Link>
+          <Link href="/dashboard/categories">
+            <Button variant="outline" className="flex items-center gap-2">
+              <Tag className="w-4 h-4" />
+              Manage Categories
+            </Button>
+          </Link>
+          <LogoutButton />
         </div>
       </div>
 
@@ -153,23 +174,20 @@ export default function AdminDashboardContent({
 
       {/* Main Content */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="users" className="flex items-center gap-2">
             <Users className="w-4 h-4" />
             User Management
           </TabsTrigger>
           <TabsTrigger value="roles" className="flex items-center gap-2">
             <Shield className="w-4 h-4" />
-            Roles & Permissions
+            Roles
           </TabsTrigger>
-          <TabsTrigger value="analytics" className="flex items-center gap-2">
-            <BarChart3 className="w-4 h-4" />
-            Analytics
+          <TabsTrigger value="permissions" className="flex items-center gap-2">
+            <Key className="w-4 h-4" />
+            Permissions
           </TabsTrigger>
-          <TabsTrigger value="logs" className="flex items-center gap-2">
-            <Activity className="w-4 h-4" />
-            Activity Logs
-          </TabsTrigger>
+
           <TabsTrigger
             value="communication"
             className="flex items-center gap-2"
@@ -188,6 +206,10 @@ export default function AdminDashboardContent({
             initialRoles={initialRoles}
             initialPermissions={initialPermissions}
           />
+        </TabsContent>
+
+        <TabsContent value="permissions" className="mt-6">
+          <PermissionsManagement initialPermissions={initialPermissions} />
         </TabsContent>
 
         {/*<TabsContent value="analytics" className="mt-6">

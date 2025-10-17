@@ -33,6 +33,7 @@ import {
 import Link from "next/link";
 import Image from "next/image";
 import toast from "react-hot-toast";
+import { useCategories } from "@/app/hooks/useCategoryQueries";
 
 interface ProductTableProps {
   products: Listing[];
@@ -58,6 +59,9 @@ export default function ProductTable({
   const [globalFilter, setGlobalFilter] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const { data: categoriesData, isLoading: categoriesLoading } =
+    useCategories();
+  const categories = categoriesData?.result || [];
 
   const columns = useMemo<ColumnDef<Listing>[]>(
     () => [
@@ -331,12 +335,18 @@ export default function ProductTable({
               }
               className="px-3 py-2 border border-gray-300 rounded-md text-sm"
             >
-              <option value="">All Categories</option>
-              <option value="Domestic Honey">Domestic Honey</option>
-              <option value="Mad Honey">Mad Honey</option>
-              <option value="Wild Honey">Wild Honey</option>
-              <option value="Organic Honey">Organic Honey</option>
+              <option value="">Select Category</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
             </select>
+            {categoriesLoading && (
+              <p className="text-sm text-gray-500 mt-1">
+                Loading categories...
+              </p>
+            )}
           </div>
         </div>
         <Link href="/dashboard/products/new">

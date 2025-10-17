@@ -1,22 +1,12 @@
 "use client";
-import { useRouter } from "next/navigation";
-import toast from "react-hot-toast";
-import { signOut } from "@/lib/auth-client";
 import { User } from "better-auth";
 import { Listing } from "@/db/schema";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Package,
-  TrendingUp,
-  Eye,
-  Star,
-  Plus,
-  LogOut,
-  Settings,
-} from "lucide-react";
+import { Package, TrendingUp, Eye, Star, Plus, Settings } from "lucide-react";
 import Link from "next/link";
 import SettingsModal from "../dashboard/products/components/SettingsModal";
+import LogoutButton from "./LogoutButton";
 import { useState, useCallback } from "react";
 
 interface DashboardContentProps {
@@ -30,24 +20,7 @@ export default function DashboardContent({
   user,
   isCredential,
 }: DashboardContentProps) {
-  const router = useRouter();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-
-  const handleLogout = async () => {
-    try {
-      await signOut({
-        fetchOptions: {
-          onSuccess: () => {
-            toast.success("Logged out successfully!");
-            router.push("/login");
-          },
-        },
-      });
-    } catch (error) {
-      console.error("Logout error:", error);
-      toast.error("Failed to logout. Please try again.");
-    }
-  };
 
   const handleSettingsOpen = useCallback(() => {
     setIsSettingsOpen(true);
@@ -89,14 +62,7 @@ export default function DashboardContent({
                 Welcome back, {user?.name || user?.email}
               </p>
             </div>
-            <Button
-              onClick={handleLogout}
-              variant="outline"
-              className="text-red-600 hover:text-red-700"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Logout
-            </Button>
+            <LogoutButton />
           </div>
         </div>
       </div>

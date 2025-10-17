@@ -92,12 +92,13 @@ export interface UserUpdateData {
 export interface RoleUpdateData {
   name?: string;
   description?: string;
-  updatedAt: Date;
+  permissions?: string[];
+  updatedAt?: Date;
 }
 
 export interface PermissionUpdateData {
   name?: string;
   description?: string;
   category?: string;
-  updatedAt: Date;
+  updatedAt?: Date;
 }

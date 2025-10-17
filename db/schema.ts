@@ -130,6 +130,15 @@ export const verification = pgTable("verification", {
     .notNull(),
 });
 
+// 1️⃣ Categories table
+export const category = pgTable("category", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull().unique(), // e.g. "Mad Honey", "Organic Honey"
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const listing = pgTable("listing", {
   id: uuid("id").primaryKey(), // unique listing ID
   producerId: text("producer_id") // link to users table (producer)
@@ -139,9 +148,12 @@ export const listing = pgTable("listing", {
   // Basic product info
   name: text("name").notNull(), // e.g., "Himalayan Mad Honey"
   description: text("description"), // longer description
-  category: text("category"), // e.g., "Domestic Honey", "Mad Honey"
+  category: uuid("category_id").references(() => category.id, {
+    onDelete: "set null",
+  }), // e.g., "Domestic Honey", "Mad Honey"
   imageUrl: text("image_url"), // main product image
   gallery: text("gallery").array(), // optional additional images
+  tags: text("tags").array(),
 
   // Pricing & inventory
   price: numeric("price", { precision: 10, scale: 2 }).notNull(), // price per unit

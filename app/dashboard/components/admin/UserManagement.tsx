@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,12 +28,12 @@ import {
 } from "@/components/ui/select";
 import { Search, Eye, Edit, Ban, Trash2, Key } from "lucide-react";
 import {
-  getAllUsers,
-  updateUser,
-  suspendUser,
-  deleteUser,
-  sendPasswordResetToUser,
-} from "@/app/actions/admin";
+  useUsers,
+  useUpdateUser,
+  useSuspendUser,
+  useDeleteUser,
+} from "@/app/hooks/useAdminQueries";
+import { sendPasswordResetToUser } from "@/app/actions/admin";
 import toast from "react-hot-toast";
 
 interface UserWithStats {
@@ -64,11 +64,6 @@ interface UserManagementProps {
 }
 
 export default function UserManagement({ initialData }: UserManagementProps) {
-  const [, setUsers] = useState<UserWithStats[]>(initialData?.users || []);
-  const [filteredUsers, setFilteredUsers] = useState<UserWithStats[]>(
-    initialData?.users || []
-  );
-  const [loading, setLoading] = useState(false); // No loading on initial render
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -77,61 +72,64 @@ export default function UserManagement({ initialData }: UserManagementProps) {
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
-  const [totalPages, setTotalPages] = useState(initialData?.totalPages || 1);
-  const [totalCount, setTotalCount] = useState(initialData?.totalCount || 0);
 
-  // Fetch users from database when filters change (not on initial load)
-  useEffect(() => {
-    // Skip initial fetch if we have initial data and no filters are applied
-    if (
-      initialData &&
-      searchTerm === "" &&
-      roleFilter === "all" &&
-      statusFilter === "all" &&
-      currentPage === 1
-    ) {
-      return;
+  // Use react-query to fetch all users (no pagination on server side for filtering)
+  const { data: usersData, isLoading, error } = useUsers(1, 1000); // Fetch all users for client-side filtering
+
+  // React Query mutations
+  const updateUserMutation = useUpdateUser();
+  const suspendUserMutation = useSuspendUser();
+  const deleteUserMutation = useDeleteUser();
+
+  // Client-side filtering and pagination
+  const filteredAndPaginatedUsers = useMemo(() => {
+    if (!usersData?.result?.users)
+      return { users: [], totalPages: 0, totalCount: 0 };
+
+    let filtered = usersData.result.users;
+
+    // Apply search filter
+    if (searchTerm) {
+      filtered = filtered.filter(
+        (user) =>
+          user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          user.email.toLowerCase().includes(searchTerm.toLowerCase())
+      );
     }
 
-    const fetchUsers = async () => {
-      setLoading(true);
-      try {
-        const result = await getAllUsers(
-          currentPage,
-          itemsPerPage,
-          searchTerm || undefined,
-          roleFilter !== "all" ? roleFilter : undefined,
-          statusFilter !== "all" ? statusFilter : undefined
-        );
+    // Apply role filter
+    if (roleFilter !== "all") {
+      filtered = filtered.filter((user) => {
+        if (roleFilter === "admin") return user.roleName === "Admin";
+        if (roleFilter === "seller") return user.roleName === "Seller";
+        if (roleFilter === "customer") return user.roleName === "Customer";
+        return false;
+      });
+    }
 
-        if (result.success && result.result) {
-          const data = result.result as {
-            users: UserWithStats[];
-            totalPages: number;
-            totalCount: number;
-          };
-          setUsers(data.users);
-          setFilteredUsers(data.users);
-          setTotalPages(data.totalPages);
-          setTotalCount(data.totalCount);
-        } else {
-          toast.error(result.error || "Failed to fetch users");
-        }
-      } catch (error) {
-        console.error("Error fetching users:", error);
-        toast.error("Failed to fetch users");
-      } finally {
-        setLoading(false);
-      }
+    // Apply status filter
+    if (statusFilter !== "all") {
+      filtered = filtered.filter((user) => user.status === statusFilter);
+    }
+
+    // Apply pagination
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    const paginatedUsers = filtered.slice(startIndex, endIndex);
+    const totalPages = Math.ceil(filtered.length / itemsPerPage);
+
+    return {
+      users: paginatedUsers,
+      totalPages,
+      totalCount: filtered.length,
     };
-    fetchUsers();
   }, [
-    currentPage,
-    itemsPerPage,
+    usersData?.result?.users,
     searchTerm,
     roleFilter,
     statusFilter,
-    initialData,
+    currentPage,
+    itemsPerPage,
   ]);
 
   // Reset to first page when filters change
@@ -139,83 +137,46 @@ export default function UserManagement({ initialData }: UserManagementProps) {
     setCurrentPage(1);
   }, [searchTerm, roleFilter, statusFilter]);
 
-  // Pagination
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const paginatedUsers = filteredUsers; // Already paginated from server
+  // Handle loading and error states
+  if (isLoading) {
+    return <div className="flex justify-center p-8">Loading users...</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="flex justify-center p-8 text-red-600">
+        Error loading users
+      </div>
+    );
+  }
 
   const handleEditUser = async (userData: Partial<UserWithStats>) => {
     if (!selectedUser) return;
 
-    try {
-      const result = await updateUser(selectedUser.id, {
-        name: userData.name,
-        email: userData.email,
-        phone: userData.phone || undefined,
-        address: userData.address || undefined,
-        city: userData.city || undefined,
-        country: userData.country || undefined,
-        status: userData.status,
-        roleId: userData.roleId || undefined,
-      });
-
-      if (result.success) {
-        toast.success("User updated successfully");
-        setIsEditDialogOpen(false);
-        // Refresh users list
-        const fetchResult = await getAllUsers(
-          currentPage,
-          itemsPerPage,
-          searchTerm || undefined,
-          roleFilter !== "all" ? roleFilter : undefined,
-          statusFilter !== "all" ? statusFilter : undefined
-        );
-        if (fetchResult.success && fetchResult.result) {
-          const data = fetchResult.result as {
-            users: UserWithStats[];
-            totalPages: number;
-            totalCount: number;
-          };
-          setUsers(data.users);
-          setFilteredUsers(data.users);
-        }
-      } else {
-        toast.error(result.error || "Failed to update user");
+    updateUserMutation.mutate(
+      {
+        userId: selectedUser.id,
+        userData: {
+          name: userData.name,
+          email: userData.email,
+          phone: userData.phone || undefined,
+          address: userData.address || undefined,
+          city: userData.city || undefined,
+          country: userData.country || undefined,
+          status: userData.status,
+          roleId: userData.roleId || undefined,
+        },
+      },
+      {
+        onSuccess: () => {
+          setIsEditDialogOpen(false);
+        },
       }
-    } catch (error) {
-      console.error("Error updating user:", error);
-      toast.error("Failed to update user");
-    }
+    );
   };
 
   const handleSuspendUser = async (userId: string) => {
-    try {
-      const result = await suspendUser(userId);
-      if (result.success) {
-        toast.success("User suspended successfully");
-        // Refresh users list
-        const fetchResult = await getAllUsers(
-          currentPage,
-          itemsPerPage,
-          searchTerm || undefined,
-          roleFilter !== "all" ? roleFilter : undefined,
-          statusFilter !== "all" ? statusFilter : undefined
-        );
-        if (fetchResult.success && fetchResult.result) {
-          const data = fetchResult.result as {
-            users: UserWithStats[];
-            totalPages: number;
-            totalCount: number;
-          };
-          setUsers(data.users);
-          setFilteredUsers(data.users);
-        }
-      } else {
-        toast.error(result.error || "Failed to suspend user");
-      }
-    } catch (error) {
-      console.error("Error suspending user:", error);
-      toast.error("Failed to suspend user");
-    }
+    suspendUserMutation.mutate(userId);
   };
 
   const handleDeleteUser = async (userId: string) => {
@@ -227,34 +188,7 @@ export default function UserManagement({ initialData }: UserManagementProps) {
       return;
     }
 
-    try {
-      const result = await deleteUser(userId);
-      if (result.success) {
-        toast.success("User deleted successfully");
-        // Refresh users list
-        const fetchResult = await getAllUsers(
-          currentPage,
-          itemsPerPage,
-          searchTerm || undefined,
-          roleFilter !== "all" ? roleFilter : undefined,
-          statusFilter !== "all" ? statusFilter : undefined
-        );
-        if (fetchResult.success && fetchResult.result) {
-          const data = fetchResult.result as {
-            users: UserWithStats[];
-            totalPages: number;
-            totalCount: number;
-          };
-          setUsers(data.users);
-          setFilteredUsers(data.users);
-        }
-      } else {
-        toast.error(result.error || "Failed to delete user");
-      }
-    } catch (error) {
-      console.error("Error deleting user:", error);
-      toast.error("Failed to delete user");
-    }
+    deleteUserMutation.mutate(userId);
   };
 
   const handleSendPasswordReset = async (userId: string) => {
@@ -270,10 +204,6 @@ export default function UserManagement({ initialData }: UserManagementProps) {
       toast.error("Failed to send password reset email");
     }
   };
-
-  if (loading) {
-    return <div className="flex justify-center p-8">Loading users...</div>;
-  }
 
   return (
     <div className="space-y-6">
@@ -306,7 +236,8 @@ export default function UserManagement({ initialData }: UserManagementProps) {
                 <SelectContent>
                   <SelectItem value="all">All Roles</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="user">User</SelectItem>
+                  <SelectItem value="seller">Seller</SelectItem>
+                  <SelectItem value="customer">Customer</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -344,19 +275,21 @@ export default function UserManagement({ initialData }: UserManagementProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {paginatedUsers.map((user) => (
+              {filteredAndPaginatedUsers.users.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell className="font-medium">{user.name}</TableCell>
                   <TableCell>{user.email}</TableCell>
                   <TableCell>
                     <span
                       className={`px-2 py-1 text-xs rounded-full ${
-                        user.isAdmin
+                        user.roleName === "Admin"
                           ? "bg-purple-100 text-purple-800"
-                          : "bg-gray-100 text-gray-800"
+                          : user.roleName
+                            ? "bg-blue-100 text-blue-800"
+                            : "bg-gray-100 text-gray-800"
                       }`}
                     >
-                      {user.isAdmin ? "Admin" : "User"}
+                      {user.roleName || "No Role"}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -429,9 +362,12 @@ export default function UserManagement({ initialData }: UserManagementProps) {
       {/* Pagination */}
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-600">
-          Showing {startIndex + 1} to{" "}
-          {Math.min(startIndex + itemsPerPage, totalCount)} of {totalCount}{" "}
-          users
+          Showing {(currentPage - 1) * itemsPerPage + 1} to{" "}
+          {Math.min(
+            currentPage * itemsPerPage,
+            filteredAndPaginatedUsers.totalCount
+          )}{" "}
+          of {filteredAndPaginatedUsers.totalCount} users
         </p>
         <div className="flex gap-2">
           <Button
@@ -446,9 +382,11 @@ export default function UserManagement({ initialData }: UserManagementProps) {
             variant="outline"
             size="sm"
             onClick={() =>
-              setCurrentPage((prev) => Math.min(prev + 1, totalPages))
+              setCurrentPage((prev) =>
+                Math.min(prev + 1, filteredAndPaginatedUsers.totalPages)
+              )
             }
-            disabled={currentPage >= totalPages}
+            disabled={currentPage >= filteredAndPaginatedUsers.totalPages}
           >
             Next
           </Button>
@@ -481,7 +419,7 @@ export default function UserManagement({ initialData }: UserManagementProps) {
                 <div>
                   <Label>Role</Label>
                   <p className="font-medium">
-                    {selectedUser.isAdmin ? "Admin" : "User"}
+                    {selectedUser.roleName || "No Role"}
                   </p>
                 </div>
                 <div>
@@ -556,7 +494,7 @@ function EditUserForm({
     address: user.address || "",
     city: user.city || "",
     country: user.country || "",
-    isAdmin: user.isAdmin,
+    roleId: user.roleId,
     status: user.status,
   });
 
@@ -652,17 +590,27 @@ function EditUserForm({
             }
           />
         </div>
-        <div className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            id="isAdmin"
-            checked={formData.isAdmin}
-            onChange={(e) =>
-              setFormData((prev) => ({ ...prev, isAdmin: e.target.checked }))
+        <div>
+          <Label htmlFor="role">Role</Label>
+          <Select
+            value={formData.roleId?.toString() || "none"}
+            onValueChange={(value) =>
+              setFormData((prev) => ({
+                ...prev,
+                roleId: value === "none" ? null : parseInt(value),
+              }))
             }
-            className="rounded"
-          />
-          <Label htmlFor="isAdmin">Admin Role</Label>
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select a role" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No Role</SelectItem>
+              <SelectItem value="1">Admin</SelectItem>
+              <SelectItem value="2">Seller</SelectItem>
+              <SelectItem value="3">Customer</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
       <div className="flex justify-end gap-2">

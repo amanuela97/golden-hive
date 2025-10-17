@@ -19,6 +19,7 @@ export type CreateListingData = {
   producerId: string;
   imageUrl?: string;
   gallery?: string[];
+  tags?: string[];
   isActive?: boolean;
   isFeatured?: boolean;
   originVillage?: string;
@@ -68,7 +69,7 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
         id: uuidv4(),
         name: data.name,
         description: data.description,
-        category: data.category,
+        category: data.category || null, // Convert empty string to null for UUID field
         price: data.price.toString(),
         currency: data.currency || "NPR",
         stockQuantity: data.stockQuantity || 0,
@@ -76,6 +77,7 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
         producerId: data.producerId,
         imageUrl,
         gallery,
+        tags: data.tags || [],
         isActive: data.isActive ?? true,
         isFeatured: data.isFeatured ?? false,
         originVillage: data.originVillage,
@@ -187,8 +189,10 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
       .update(listing)
       .set({
         ...updateData,
+        category: updateData.category || null, // Convert empty string to null for UUID field
         imageUrl: imageUrl || undefined,
         gallery,
+        tags: updateData.tags || [],
         updatedAt: new Date(),
         price: updateData.price ? String(updateData.price) : undefined,
       })

@@ -6,6 +6,7 @@ import {
   getAllPermissions,
 } from "@/app/actions/admin";
 import AdminDashboardContent from "./AdminDashboardContent";
+import { GetUserStatsResponse } from "@/lib/types";
 
 interface AdminDashboardServerProps {
   user: User;
@@ -25,9 +26,7 @@ export default async function AdminDashboardServer({
 
   // Extract data from results
   const stats = statsResult.success
-    ? statsResult.result !== undefined
-      ? statsResult.result
-      : null
+    ? (statsResult.data as GetUserStatsResponse)
     : null;
   const initialUsers = usersResult.success
     ? usersResult.result !== undefined

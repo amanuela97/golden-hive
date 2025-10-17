@@ -22,7 +22,7 @@ import {
   PermissionUpdateData,
 } from "@/lib/types";
 // Helper function to get current user and verify admin status
-async function getCurrentAdmin() {
+export async function getCurrentAdmin() {
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -240,14 +240,33 @@ export async function updateUser(
 
     // Update user role if provided
     if (userData.roleId !== undefined) {
-      // Remove existing roles
-      await db.delete(userRoles).where(eq(userRoles.userId, userId));
+      // If roleId is null, just remove existing roles
+      if (userData.roleId === null) {
+        await db.delete(userRoles).where(eq(userRoles.userId, userId));
+      } else {
+        // Validate that the role exists
+        const roleExists = await db
+          .select({ id: roles.id })
+          .from(roles)
+          .where(eq(roles.id, userData.roleId))
+          .limit(1);
 
-      // Add new role
-      await db.insert(userRoles).values({
-        userId,
-        roleId: userData.roleId,
-      });
+        if (roleExists.length === 0) {
+          return {
+            success: false,
+            error: `Role with ID ${userData.roleId} does not exist`,
+          };
+        }
+
+        // Remove existing roles
+        await db.delete(userRoles).where(eq(userRoles.userId, userId));
+
+        // Add new role
+        await db.insert(userRoles).values({
+          userId,
+          roleId: userData.roleId,
+        });
+      }
     }
 
     return {
@@ -452,7 +471,7 @@ export async function getUserStats(): Promise<
 
 // ===== ROLE MANAGEMENT FUNCTIONS =====
 
-// Get all roles
+// Get all roles with their permissions
 export async function getAllRoles(): Promise<
   ActionResponse & {
     result?: Array<{
@@ -460,6 +479,14 @@ export async function getAllRoles(): Promise<
       name: string;
       description: string | null;
       userCount: number;
+      permissions: Array<{
+        id: string;
+        name: string;
+        description: string | null;
+        category: string | null;
+        createdAt: Date | null;
+        updatedAt: Date;
+      }>;
       createdAt: Date | null;
       updatedAt: Date;
     }>;
@@ -470,24 +497,43 @@ export async function getAllRoles(): Promise<
 
     const rolesList = await db.select().from(roles).orderBy(asc(roles.name));
 
-    // Get user count for each role
-    const rolesWithCounts = await Promise.all(
+    // Get user count and permissions for each role
+    const rolesWithCountsAndPermissions = await Promise.all(
       rolesList.map(async (role) => {
+        // Get user count
         const userCount = await db
           .select({ count: sql<number>`count(*)` })
           .from(userRoles)
           .where(eq(userRoles.roleId, role.id));
 
+        // Get role permissions
+        const rolePermissionsList = await db
+          .select({
+            id: permissions.id,
+            name: permissions.name,
+            description: permissions.description,
+            category: permissions.category,
+            createdAt: permissions.createdAt,
+            updatedAt: permissions.updatedAt,
+          })
+          .from(rolePermissions)
+          .innerJoin(
+            permissions,
+            eq(rolePermissions.permissionId, permissions.id)
+          )
+          .where(eq(rolePermissions.roleId, role.id));
+
         return {
           ...role,
           userCount: userCount[0]?.count || 0,
+          permissions: rolePermissionsList,
         };
       })
     );
 
     return {
       success: true,
-      result: rolesWithCounts,
+      result: rolesWithCountsAndPermissions,
     };
   } catch (error) {
     console.error("Error fetching roles:", error);
@@ -738,7 +784,6 @@ export async function getAllPermissions(): Promise<
 
 // Create a new permission
 export async function createPermission(permissionData: {
-  id: string;
   name: string;
   description?: string;
   category?: string;
@@ -746,25 +791,15 @@ export async function createPermission(permissionData: {
   try {
     await getCurrentAdmin();
 
-    // Check if permission ID already exists
-    const existingPermission = await db
-      .select()
-      .from(permissions)
-      .where(eq(permissions.id, permissionData.id))
-      .limit(1);
-
-    if (existingPermission.length > 0) {
-      return {
-        success: false,
-        error: "Permission with this ID already exists",
-      };
-    }
+    // Generate a unique random ID
+    const randomString = await import("random-string-generator");
+    const permissionId = randomString.default(12);
 
     // Create the permission
     const newPermission = await db
       .insert(permissions)
       .values({
-        id: permissionData.id,
+        id: permissionId,
         name: permissionData.name,
         description: permissionData.description,
         category: permissionData.category,

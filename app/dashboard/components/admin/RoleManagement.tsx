@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import React, { useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,14 +22,15 @@ import {
 } from "@/components/ui/dialog";
 import { Shield, Plus, Edit, Trash2, Users, Eye } from "lucide-react";
 import {
-  getAllRoles,
-  createRole,
-  updateRole,
-  deleteRole,
-  getAllPermissions,
-  getRoleWithPermissions,
-} from "@/app/actions/admin";
+  useRoles,
+  useCreateRole,
+  useUpdateRole,
+  useDeleteRole,
+  useRoleWithPermissions,
+  usePermissions,
+} from "@/app/hooks/useAdminQueries";
 import toast from "react-hot-toast";
+import { getRoleWithPermissions } from "@/app/actions/admin";
 interface Role {
   id: number;
   name: string;
@@ -45,6 +46,7 @@ interface RoleFromDB {
   name: string;
   description: string | null;
   userCount: number;
+  permissions: Permission[];
   createdAt: Date | null;
   updatedAt: Date;
 }
@@ -67,47 +69,20 @@ export default function RoleManagement({
   initialRoles,
   initialPermissions,
 }: RoleManagementProps) {
-  const [roles, setRoles] = useState<RoleFromDB[]>(initialRoles || []);
-  const [permissions, setPermissions] = useState<Permission[]>(
-    initialPermissions || []
-  );
-  const [loading, setLoading] = useState(false); // No loading on initial render
+  // Use react-query to fetch roles and permissions
+  const { data: rolesData, isLoading: rolesLoading } = useRoles();
+  const { data: permissionsData, isLoading: permissionsLoading } =
+    usePermissions();
 
-  // Fetch roles and permissions from database only if we don't have initial data
-  useEffect(() => {
-    // Skip fetch if we have initial data
-    if (initialRoles && initialPermissions) {
-      return;
-    }
+  // React Query mutations
+  const createRoleMutation = useCreateRole();
+  const updateRoleMutation = useUpdateRole();
+  const deleteRoleMutation = useDeleteRole();
 
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const [rolesResult, permissionsResult] = await Promise.all([
-          getAllRoles(),
-          getAllPermissions(),
-        ]);
-
-        if (rolesResult.success && rolesResult.result) {
-          setRoles(rolesResult.result as RoleFromDB[]);
-        } else {
-          toast.error(rolesResult.error || "Failed to fetch roles");
-        }
-
-        if (permissionsResult.success && permissionsResult.result) {
-          setPermissions(permissionsResult.result as Permission[]);
-        } else {
-          toast.error(permissionsResult.error || "Failed to fetch permissions");
-        }
-      } catch (error) {
-        console.error("Error fetching data:", error);
-        toast.error("Failed to fetch data");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-  }, [initialRoles, initialPermissions]);
+  // Extract data from queries
+  const roles = rolesData?.result || initialRoles || [];
+  const permissions = permissionsData?.result || initialPermissions || [];
+  const loading = rolesLoading || permissionsLoading;
 
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -117,53 +92,36 @@ export default function RoleManagement({
   const handleCreateRole = async (
     roleData: Omit<Role, "id" | "userCount" | "createdAt" | "updatedAt">
   ) => {
-    try {
-      const result = await createRole({
+    createRoleMutation.mutate(
+      {
         name: roleData.name,
         description: roleData.description || undefined,
         permissions: roleData.permissions.map((p) => p.id),
-      });
-
-      if (result.success) {
-        toast.success("Role created successfully");
-        setIsCreateDialogOpen(false);
-        // Refresh roles list
-        const rolesResult = await getAllRoles();
-        if (rolesResult.success && rolesResult.result) {
-          setRoles(rolesResult.result as RoleFromDB[]);
-        }
-      } else {
-        toast.error(result.error || "Failed to create role");
+      },
+      {
+        onSuccess: () => {
+          setIsCreateDialogOpen(false);
+        },
       }
-    } catch (error) {
-      console.error("Error creating role:", error);
-      toast.error("Failed to create role");
-    }
+    );
   };
 
   const handleEditRole = async (roleId: number, roleData: Partial<Role>) => {
-    try {
-      const result = await updateRole(roleId, {
-        name: roleData.name,
-        description: roleData.description || undefined,
-        permissions: roleData.permissions?.map((p) => p.id) || [],
-      });
-
-      if (result.success) {
-        toast.success("Role updated successfully");
-        setIsEditDialogOpen(false);
-        // Refresh roles list
-        const rolesResult = await getAllRoles();
-        if (rolesResult.success && rolesResult.result) {
-          setRoles(rolesResult.result as RoleFromDB[]);
-        }
-      } else {
-        toast.error(result.error || "Failed to update role");
+    updateRoleMutation.mutate(
+      {
+        roleId,
+        roleData: {
+          name: roleData.name,
+          description: roleData.description || undefined,
+          permissions: roleData.permissions?.map((p) => p.id) || [],
+        },
+      },
+      {
+        onSuccess: () => {
+          setIsEditDialogOpen(false);
+        },
       }
-    } catch (error) {
-      console.error("Error updating role:", error);
-      toast.error("Failed to update role");
-    }
+    );
   };
 
   const handleDeleteRole = async (roleId: number) => {
@@ -175,35 +133,8 @@ export default function RoleManagement({
       return;
     }
 
-    try {
-      const result = await deleteRole(roleId);
-      if (result.success) {
-        toast.success("Role deleted successfully");
-        // Refresh roles list
-        const rolesResult = await getAllRoles();
-        if (rolesResult.success && rolesResult.result) {
-          setRoles(rolesResult.result as RoleFromDB[]);
-        }
-      } else {
-        toast.error(result.error || "Failed to delete role");
-      }
-    } catch (error) {
-      console.error("Error deleting role:", error);
-      toast.error("Failed to delete role");
-    }
+    deleteRoleMutation.mutate(roleId);
   };
-
-  const groupedPermissions = permissions.reduce(
-    (acc, permission) => {
-      const category = permission.category || "Other";
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(permission);
-      return acc;
-    },
-    {} as Record<string, Permission[]>
-  );
 
   if (loading) {
     return <div className="flex justify-center p-8">Loading roles...</div>;
@@ -214,11 +145,12 @@ export default function RoleManagement({
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold">Role & Permission Management</h2>
-          <p className="text-gray-600">
-            Manage user roles and their permissions
-          </p>
+          <h2 className="text-2xl font-bold">Role Management</h2>
+          <p className="text-gray-600">Manage user roles</p>
         </div>
+      </div>
+
+      <div className="flex justify-end">
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
             <Button className="flex items-center gap-2">
@@ -254,7 +186,7 @@ export default function RoleManagement({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {roles.map((role) => (
+              {roles.map((role: RoleFromDB) => (
                 <TableRow key={role.id}>
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
@@ -264,7 +196,9 @@ export default function RoleManagement({
                   </TableCell>
                   <TableCell>{role.description}</TableCell>
                   <TableCell>
-                    <span className="text-sm text-gray-600">- permissions</span>
+                    <span className="text-sm text-gray-600">
+                      {role.permissions?.length || 0} permissions
+                    </span>
                   </TableCell>
                   <TableCell>
                     <span className="flex items-center gap-1">
@@ -349,31 +283,6 @@ export default function RoleManagement({
           </Table>
         </CardContent>
       </Card>
-
-      {/* Permission Categories */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {Object.entries(groupedPermissions).map(
-          ([category, categoryPermissions]) => (
-            <Card key={category}>
-              <CardHeader>
-                <CardTitle className="text-lg">{category}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {categoryPermissions.map((permission) => (
-                    <div key={permission.id} className="border rounded-lg p-3">
-                      <h4 className="font-medium text-sm">{permission.name}</h4>
-                      <p className="text-xs text-gray-600 mt-1">
-                        {permission.description}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )
-        )}
-      </div>
 
       {/* View Role Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
