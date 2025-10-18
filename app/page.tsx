@@ -28,6 +28,8 @@ export const metadata: Metadata = {
   },
 };
 
+export const dynamic = "force-dynamic";
+
 export default async function HomePage() {
   // Fetch all homepage data in parallel
   const [heroResult, aboutResult, benefitsResult] = await Promise.all([
