@@ -18,10 +18,32 @@ export async function uploadFile(
   folder: string
 ): Promise<string> {
   try {
+    // Validate Cloudinary configuration
+    if (
+      !process.env.CLOUDINARY_CLOUD_NAME ||
+      !process.env.CLOUDINARY_API_KEY ||
+      !process.env.CLOUDINARY_API_SECRET
+    ) {
+      throw new Error(
+        "Cloudinary configuration is missing. Please check your environment variables."
+      );
+    }
+
+    // Validate file
+    if (!file || file.size === 0) {
+      throw new Error("Invalid file provided");
+    }
+    const fileName = (file as File).name || "unnamed";
+    console.log(
+      `Uploading file: ${fileName}, size: ${file.size}, type: ${file.type}`
+    );
+
     // Convert File/Blob to buffer
     const buffer = await file.arrayBuffer();
     const base64 = Buffer.from(buffer).toString("base64");
     const dataURI = `data:${file.type};base64,${base64}`;
+
+    console.log(`Uploading to folder: golden-hive/${folder}`);
 
     // Upload to Cloudinary
     const result = await cloudinary.uploader.upload(dataURI, {
@@ -31,9 +53,19 @@ export async function uploadFile(
       fetch_format: "auto",
     });
 
+    console.log(`Upload successful: ${result.secure_url}`);
     return result.secure_url;
   } catch (error) {
     console.error("Error uploading file to Cloudinary:", error);
+    console.error("Error details:", {
+      message: error instanceof Error ? error.message : "Unknown error",
+      stack: error instanceof Error ? error.stack : undefined,
+      cloudinaryConfig: {
+        cloudName: process.env.CLOUDINARY_CLOUD_NAME ? "set" : "missing",
+        apiKey: process.env.CLOUDINARY_API_KEY ? "set" : "missing",
+        apiSecret: process.env.CLOUDINARY_API_SECRET ? "set" : "missing",
+      },
+    });
     throw new Error(
       `Failed to upload file: ${error instanceof Error ? error.message : "Unknown error"}`
     );
@@ -65,6 +97,7 @@ export async function uploadFiles(
 /**
  * Delete a file from Cloudinary by URL
  * @param url - Cloudinary URL to delete
+ * @param folder - Cloudinary folder path
  * @returns Promise<boolean> - Success status
  */
 export async function deleteFile(

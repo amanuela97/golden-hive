@@ -4,7 +4,7 @@ import CategoryManagement from "../components/admin/CategoryManagement";
 export default async function CategoriesPage() {
   const categoriesResult = await getAllCategories();
   const initialCategories = categoriesResult.success
-    ? categoriesResult.result
+    ? categoriesResult.result || null
     : null;
 
   return (

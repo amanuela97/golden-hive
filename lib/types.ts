@@ -86,6 +86,7 @@ export interface UserUpdateData {
   city?: string;
   country?: string;
   status?: "active" | "pending" | "suspended";
+  roleId?: number;
   updatedAt: Date;
 }
 

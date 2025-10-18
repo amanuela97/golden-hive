@@ -8,19 +8,21 @@ import {
   Users,
   UserCheck,
   Shield,
-  BarChart3,
   Activity,
   Mail,
   Plus,
   Package,
   Key,
   Tag,
+  Image as ImageIcon,
+  Star,
+  Info,
 } from "lucide-react";
 import Link from "next/link";
 import UserManagement from "./admin/UserManagement";
 import RoleManagement from "./admin/RoleManagement";
 import PermissionsManagement from "./admin/PermissionsManagement";
-import { GetAllUsersResponse, GetUserStatsResponse } from "@/lib/types";
+import { GetUserStatsResponse } from "@/lib/types";
 import LogoutButton from "@/app/components/LogoutButton";
 import { User } from "better-auth";
 
@@ -46,7 +48,6 @@ interface Permission {
 interface AdminDashboardContentProps {
   user: User;
   initialStats: GetUserStatsResponse | null;
-  initialUsers: GetAllUsersResponse | null;
   initialRoles: RoleFromDB[] | null;
   initialPermissions: Permission[] | null;
 }
@@ -54,7 +55,6 @@ interface AdminDashboardContentProps {
 export default function AdminDashboardContent({
   user,
   initialStats,
-  initialUsers,
   initialRoles,
   initialPermissions,
 }: AdminDashboardContentProps) {
@@ -82,7 +82,8 @@ export default function AdminDashboardContent({
             )}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {/* Product Management */}
           <Link href="/dashboard/products/new">
             <Button className="flex items-center gap-2">
               <Plus className="w-4 h-4" />
@@ -95,6 +96,8 @@ export default function AdminDashboardContent({
               Manage Products
             </Button>
           </Link>
+
+          {/* Category Management */}
           <Link href="/dashboard/categories/new">
             <Button variant="outline" className="flex items-center gap-2">
               <Tag className="w-4 h-4" />
@@ -107,6 +110,18 @@ export default function AdminDashboardContent({
               Manage Categories
             </Button>
           </Link>
+
+          {/* Content Management */}
+          <Link href="/dashboard/admin/content">
+            <Button
+              variant="outline"
+              className="flex items-center gap-2 bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+            >
+              <ImageIcon className="w-4 h-4" />
+              Content Management
+            </Button>
+          </Link>
+
           <LogoutButton />
         </div>
       </div>
@@ -174,7 +189,7 @@ export default function AdminDashboardContent({
 
       {/* Main Content */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="users" className="flex items-center gap-2">
             <Users className="w-4 h-4" />
             User Management
@@ -187,7 +202,10 @@ export default function AdminDashboardContent({
             <Key className="w-4 h-4" />
             Permissions
           </TabsTrigger>
-
+          <TabsTrigger value="content" className="flex items-center gap-2">
+            <ImageIcon className="w-4 h-4" />
+            Content
+          </TabsTrigger>
           <TabsTrigger
             value="communication"
             className="flex items-center gap-2"
@@ -198,7 +216,7 @@ export default function AdminDashboardContent({
         </TabsList>
 
         <TabsContent value="users" className="mt-6">
-          <UserManagement initialData={initialUsers} />
+          <UserManagement />
         </TabsContent>
 
         <TabsContent value="roles" className="mt-6">
@@ -210,6 +228,86 @@ export default function AdminDashboardContent({
 
         <TabsContent value="permissions" className="mt-6">
           <PermissionsManagement initialPermissions={initialPermissions} />
+        </TabsContent>
+
+        <TabsContent value="content" className="mt-6">
+          <div className="space-y-6">
+            <div className="text-center py-8">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">
+                Homepage Content Management
+              </h2>
+              <p className="text-gray-600 mb-8">
+                Manage your homepage content including hero slides, benefits,
+                about section, and gallery.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 max-w-4xl mx-auto">
+                <Link href="/dashboard/admin/content">
+                  <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer">
+                    <div className="text-center">
+                      <div className="p-3 bg-blue-100 rounded-full w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+                        <ImageIcon className="w-8 h-8 text-blue-600" />
+                      </div>
+                      <h3 className="font-semibold text-gray-900 mb-2">
+                        Overview
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        View all content sections
+                      </p>
+                    </div>
+                  </Card>
+                </Link>
+
+                <Link href="/dashboard/admin/content/homepage-hero">
+                  <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer">
+                    <div className="text-center">
+                      <div className="p-3 bg-green-100 rounded-full w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+                        <ImageIcon className="w-8 h-8 text-green-600" />
+                      </div>
+                      <h3 className="font-semibold text-gray-900 mb-2">
+                        Hero Slides
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        Manage hero section
+                      </p>
+                    </div>
+                  </Card>
+                </Link>
+
+                <Link href="/dashboard/admin/content/benefits">
+                  <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer">
+                    <div className="text-center">
+                      <div className="p-3 bg-purple-100 rounded-full w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+                        <Star className="w-8 h-8 text-purple-600" />
+                      </div>
+                      <h3 className="font-semibold text-gray-900 mb-2">
+                        Benefits
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        Manage benefit cards
+                      </p>
+                    </div>
+                  </Card>
+                </Link>
+
+                <Link href="/dashboard/admin/content/about">
+                  <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer">
+                    <div className="text-center">
+                      <div className="p-3 bg-orange-100 rounded-full w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+                        <Info className="w-8 h-8 text-orange-600" />
+                      </div>
+                      <h3 className="font-semibold text-gray-900 mb-2">
+                        About Section
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        Manage about content
+                      </p>
+                    </div>
+                  </Card>
+                </Link>
+              </div>
+            </div>
+          </div>
         </TabsContent>
 
         {/*<TabsContent value="analytics" className="mt-6">

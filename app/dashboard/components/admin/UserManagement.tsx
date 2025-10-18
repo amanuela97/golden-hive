@@ -55,15 +55,7 @@ interface UserWithStats {
   isAdmin: boolean;
 }
 
-interface UserManagementProps {
-  initialData: {
-    users: UserWithStats[];
-    totalPages: number;
-    totalCount: number;
-  } | null;
-}
-
-export default function UserManagement({ initialData }: UserManagementProps) {
+export default function UserManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -165,6 +157,7 @@ export default function UserManagement({ initialData }: UserManagementProps) {
           country: userData.country || undefined,
           status: userData.status,
           roleId: userData.roleId || undefined,
+          updatedAt: new Date(),
         },
       },
       {

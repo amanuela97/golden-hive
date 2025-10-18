@@ -4,7 +4,7 @@ import NewCategoryForm from "./NewCategoryForm";
 export default async function NewCategoryPage() {
   const categoriesResult = await getAllCategories();
   const initialCategories = categoriesResult.success
-    ? categoriesResult.result
+    ? categoriesResult.result || null
     : null;
 
   return (

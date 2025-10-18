@@ -10,6 +10,8 @@ import {
   serial,
   primaryKey,
   pgEnum,
+  jsonb,
+  unique,
 } from "drizzle-orm/pg-core";
 
 export const userStatusEnum = pgEnum("user_status", [
@@ -177,6 +179,41 @@ export const listing = pgTable("listing", {
   salesCount: integer("sales_count").default(0), // total sold units
   originVillage: text("origin_village"), // optional metadata
   harvestDate: timestamp("harvest_date"), // when honey was harvested
+});
+
+// 🧁 Hero Slider
+export const homepageHero = pgTable(
+  "homepage_hero",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    imageUrl: text("image_url").notNull(),
+    title: text("title"),
+    subtitle: text("subtitle"),
+    ctaLabel: text("cta_label"),
+    ctaLink: text("cta_link"),
+    order: integer("order").default(0), // for ordering slides
+    isActive: boolean("is_active").default(true),
+  },
+  (table) => [unique().on(table.order)]
+);
+
+// 🍯 About Section
+export const homepageAbout = pgTable("homepage_about", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  title: text("title").default("Our Story"),
+  content: text("content"),
+  assetUrl: text("asset_url"),
+  isActive: boolean("is_active").default(true),
+});
+
+// 🌻 Benefits Section
+export const homepageBenefits = pgTable("homepage_benefits", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  title: text("title").default("Why Choose Golden Hive?"),
+  items: jsonb("items")
+    .$type<{ icon: string; title: string; description: string }[]>()
+    .default([]),
+  isActive: boolean("is_active").default(true),
 });
 
 export type User = InferSelectModel<typeof user>;
