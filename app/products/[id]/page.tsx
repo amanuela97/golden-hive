@@ -4,7 +4,7 @@ import { use } from "react";
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { Minus, Plus } from "lucide-react";
+import { Minus, Plus, MapPin, Globe } from "lucide-react";
 import { ProductCard } from "@/app/components/product-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProduct, useRelatedProducts } from "@/app/hooks/useProductQueries";
@@ -113,6 +113,27 @@ export default function ProductDetailPage({
                   </span>
                 </p>
               )}
+              {product.marketType && (
+                <p className="text-sm">
+                  <span className="font-medium text-foreground">
+                    Market Type:
+                  </span>{" "}
+                  <span
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                      product.marketType === "local"
+                        ? "bg-blue-100 text-blue-800"
+                        : "bg-green-100 text-green-800"
+                    }`}
+                  >
+                    {product.marketType === "local" ? (
+                      <MapPin className="w-3 h-3" />
+                    ) : (
+                      <Globe className="w-3 h-3" />
+                    )}
+                    {product.marketType === "local" ? "Local" : "International"}
+                  </span>
+                </p>
+              )}
               {product.tags && product.tags.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   <span className="font-medium text-foreground text-sm">
@@ -162,49 +183,7 @@ export default function ProductDetailPage({
                   Product Description
                 </h3>
                 <div className="text-muted-foreground leading-relaxed space-y-4">
-                  <p>
-                    Mad honey, collected in the spring from the elevated regions
-                    of Nepal, provides a distinctive experience with its sweet
-                    yet intense fragrance, reminiscent of a lovely bouquet of
-                    rhododendron flowers. Its remarkable taste is characterized
-                    by a floral sweetness, a delicate herbal sensation and a
-                    mild burn on the tongue. The traditional hand-squeezing
-                    technique produces a golden red honey, while its elevated
-                    moisture content leads to light fermentation. This honey
-                    undergoes minimal processing, remaining raw and
-                    unpasteurized, with only external particles being filtered
-                    out. The honey is derived from the nectar of white
-                    rhododendron species, this exceptional honey represents the
-                    pure essence of nature&apos;s offerings.
-                  </p>
-                  <h4 className="text-lg font-semibold mt-6 mb-3 text-foreground">
-                    Potential Benefits
-                  </h4>
-                  <p>
-                    Clinical Mad Honey is not only effective for various issues
-                    like anxiety, hypertension, diabetes, and depression, but it
-                    also offers additional well-known for its stimulating
-                    effects. Just a small amount can create a sense of euphoria
-                    that enhances feelings of happiness and relaxation. For
-                    centuries, villagers in the remote mountains of Nepal have
-                    consumed mad honey typically for its health benefits and for
-                    a delightful boost that sustains them throughout the day.
-                  </p>
-                  <h4 className="text-lg font-semibold mt-6 mb-3 text-foreground">
-                    Usage
-                  </h4>
-                  <p>
-                    The recommended serving size for mad honey is 1-8 grams,
-                    providing 10 servings per container. This size container is
-                    intended more for trial use rather than regular consumption,
-                    as it lasts only 10 days with daily use. We recommend to
-                    start 1 teaspoon before you eat. Taking it on a cool, dry
-                    location and consume it within 12 months after opening.
-                    Taking it for 2 hours before bedtime potentially improves
-                    your sleep quality and consider that this product is not
-                    advisable for those on prescription medications. The product
-                    is also not advisable for pregnant and nursing women.
-                  </p>
+                  <p>{product.description}</p>
                 </div>
               </div>
             </TabsContent>

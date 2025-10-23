@@ -23,7 +23,9 @@ export default function LoginForm() {
       toast.success(state.message ?? "Signed in successfully!");
       setEmail("");
       setPassword("");
-      router.push("/dashboard");
+      // Use redirectTo from response, fallback to /dashboard
+      const redirectPath = (state as ActionResponse & { redirectTo?: string }).redirectTo || "/dashboard";
+      router.push(redirectPath);
     } else if (state.error) {
       // Restore payload values from failed attempt
       if (state?.payload) {

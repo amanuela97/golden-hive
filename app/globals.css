@@ -3,6 +3,21 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Prevent layout shifts */
+html,
+body {
+  min-height: 100vh;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+main {
+  flex: 1;
+}
+
 :root {
   --background: oklch(0.99 0.005 85);
   --foreground: oklch(0.25 0.02 60);

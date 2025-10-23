@@ -22,6 +22,7 @@ export type CreateListingData = {
   tags?: string[];
   isActive?: boolean;
   isFeatured?: boolean;
+  marketType?: "local" | "international";
   originVillage?: string;
   harvestDate?: Date;
   // Media files for upload
@@ -80,6 +81,7 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
         tags: data.tags || [],
         isActive: data.isActive ?? true,
         isFeatured: data.isFeatured ?? false,
+        marketType: data.marketType || "local",
         originVillage: data.originVillage,
         harvestDate: data.harvestDate,
       })

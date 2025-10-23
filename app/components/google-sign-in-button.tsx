@@ -12,7 +12,7 @@ export function GoogleSignInButton() {
     try {
       await signIn.social({
         provider: "google",
-        callbackURL: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+        callbackURL: `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/google-callback`,
       });
     } catch (error) {
       console.error("Google sign in failed:", error);

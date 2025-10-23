@@ -34,6 +34,18 @@ export const auth = betterAuth({
           message: "Admin accounts can't be deleted",
         });
       }
+
+      // Delete seller documents when account is removed
+      try {
+        const { deleteSellerDocumentsOnAccountRemoval } = await import(
+          "@/app/actions/documentation"
+        );
+        await deleteSellerDocumentsOnAccountRemoval(user.id);
+        console.log(`Deleted documents for user: ${user.email}`);
+      } catch (error) {
+        console.error("Error deleting seller documents:", error);
+        // Don't throw error to prevent account deletion failure
+      }
     },
   },
   emailAndPassword: {

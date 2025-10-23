@@ -16,11 +16,32 @@ import {
   PublicProduct,
 } from "@/app/actions/public-products";
 
+// Skeleton component for loading state
+function ProductSkeleton() {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="animate-pulse">
+          <div className="bg-gray-200 rounded-lg h-64 mb-4"></div>
+          <div className="space-y-2">
+            <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+            <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+            <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ProductsPage() {
   const [filters, setFilters] = useState<ProductFiltersType>({});
   const [sortBy, setSortBy] = useState<string>("default");
 
   const { data: productsData, isLoading, error } = useProducts();
+
+  // Show loading state if we don't have data yet or if explicitly loading
+  const showLoading = isLoading || !productsData;
 
   // Client-side filtering and sorting
   const filteredAndSortedProducts = useMemo(() => {
@@ -118,15 +139,31 @@ export default function ProductsPage() {
     setFilters(newFilters);
   }, []);
 
-  if (isLoading) {
+  if (showLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <div className="container mx-auto px-4 py-12">
-          <div className="flex justify-center items-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-              <p className="text-muted-foreground">Loading products...</p>
+      <div className="bg-background">
+        <div className="container mx-auto px-12 py-12">
+          <div className="flex flex-col lg:flex-row gap-12">
+            {/* Main content - left side on desktop */}
+            <div className="flex-1 order-2 lg:order-1">
+              <div className="flex items-center justify-between mb-8">
+                <div className="h-4 bg-gray-200 rounded w-32 animate-pulse"></div>
+                <div className="h-10 bg-gray-200 rounded w-[200px] animate-pulse"></div>
+              </div>
+              <ProductSkeleton />
             </div>
+
+            {/* Filters - right side on desktop */}
+            <aside className="w-full lg:w-80 order-1 lg:order-2">
+              <div className="space-y-6">
+                <div className="h-6 bg-gray-200 rounded w-24 animate-pulse"></div>
+                <div className="space-y-4">
+                  <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
+                  <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
+                  <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
+                </div>
+              </div>
+            </aside>
           </div>
         </div>
       </div>
@@ -135,7 +172,7 @@ export default function ProductsPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="bg-background">
         <div className="container mx-auto px-4 py-12">
           <div className="flex justify-center items-center h-64">
             <div className="text-center">
@@ -151,7 +188,7 @@ export default function ProductsPage() {
   const products = filteredAndSortedProducts;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="bg-background">
       <div className="container mx-auto px-12 py-12">
         <div className="flex flex-col lg:flex-row gap-12">
           {/* Main content - left side on desktop */}
@@ -174,7 +211,7 @@ export default function ProductsPage() {
             </div>
 
             {products.length === 0 ? (
-              <div className="text-center py-12">
+              <div className="text-center py-12 min-h-[400px] flex flex-col justify-center">
                 <p className="text-muted-foreground text-lg">
                   No products found
                 </p>

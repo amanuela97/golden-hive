@@ -5,6 +5,7 @@ export type ActionResponse = {
   payload?: FormData;
   result?: unknown;
   data?: unknown;
+  redirectTo?: string;
 };
 
 export const initialState: ActionResponse = {

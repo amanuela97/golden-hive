@@ -1,9 +1,10 @@
 "use server";
 
 import { db } from "@/db";
-import { category } from "@/db/schema";
+import { category, categoryDocumentation } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getCurrentAdmin } from "./admin";
+import { revalidatePath } from "next/cache";
 
 export interface Category {
   id: string;
@@ -16,6 +17,9 @@ export interface Category {
 export interface CreateCategoryData {
   name: string;
   description?: string;
+  requiresDocumentation?: boolean;
+  documentationDescription?: string;
+  documentationTypeIds?: string[];
 }
 
 export interface UpdateCategoryData {
@@ -114,8 +118,26 @@ export async function createCategory(
       .values({
         name: categoryData.name,
         description: categoryData.description || null,
+        requiresDocumentation: categoryData.requiresDocumentation || false,
+        documentationDescription: categoryData.documentationDescription || null,
       })
       .returning();
+
+    // Link documentation types if provided
+    if (
+      categoryData.documentationTypeIds &&
+      categoryData.documentationTypeIds.length > 0
+    ) {
+      const links = categoryData.documentationTypeIds.map((docTypeId) => ({
+        categoryId: newCategory[0].id,
+        documentationTypeId: docTypeId,
+      }));
+
+      await db.insert(categoryDocumentation).values(links);
+    }
+
+    revalidatePath("/dashboard/admin/categories");
+    revalidatePath("/dashboard/admin/documentation");
 
     return {
       success: true,

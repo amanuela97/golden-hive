@@ -30,6 +30,7 @@ export interface PublicProduct {
   unit: string | null;
   isActive: boolean | null;
   isFeatured: boolean | null;
+  marketType: "local" | "international" | null;
   originVillage: string | null;
   harvestDate: Date | null;
   ratingAverage: string | null;
@@ -81,6 +82,7 @@ export async function getPublicProducts(): Promise<
         unit: listing.unit,
         isActive: listing.isActive,
         isFeatured: listing.isFeatured,
+        marketType: listing.marketType,
         originVillage: listing.originVillage,
         harvestDate: listing.harvestDate,
         ratingAverage: listing.ratingAverage,
@@ -131,6 +133,7 @@ export async function getPublicProductById(
         unit: listing.unit,
         isActive: listing.isActive,
         isFeatured: listing.isFeatured,
+        marketType: listing.marketType,
         originVillage: listing.originVillage,
         harvestDate: listing.harvestDate,
         ratingAverage: listing.ratingAverage,
@@ -194,6 +197,7 @@ export async function getRelatedProducts(
         unit: listing.unit,
         isActive: listing.isActive,
         isFeatured: listing.isFeatured,
+        marketType: listing.marketType,
         originVillage: listing.originVillage,
         harvestDate: listing.harvestDate,
         ratingAverage: listing.ratingAverage,
@@ -252,6 +256,7 @@ export async function getFeaturedProducts(
         unit: listing.unit,
         isActive: listing.isActive,
         isFeatured: listing.isFeatured,
+        marketType: listing.marketType,
         originVillage: listing.originVillage,
         harvestDate: listing.harvestDate,
         ratingAverage: listing.ratingAverage,

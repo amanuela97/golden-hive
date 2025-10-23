@@ -20,6 +20,8 @@ export const userStatusEnum = pgEnum("user_status", [
   "suspended",
 ]);
 
+export const marketTypeEnum = pgEnum("market_type", ["local", "international"]);
+
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -137,6 +139,10 @@ export const category = pgTable("category", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull().unique(), // e.g. "Mad Honey", "Organic Honey"
   description: text("description"),
+  requiresDocumentation: boolean("requires_documentation")
+    .default(false)
+    .notNull(),
+  documentationDescription: text("documentation_description"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -164,8 +170,9 @@ export const listing = pgTable("listing", {
   unit: text("unit").default("kg"), // e.g., kg, g, bottle
 
   // Status & visibility
-  isActive: boolean("is_active").default(true), // hide if false
+  isActive: boolean("is_active").default(false), // hide if false
   isFeatured: boolean("is_featured").default(false), // for homepage promotions
+  marketType: marketTypeEnum("market_type").default("local"), // local or international
 
   // Timestamps
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -216,8 +223,57 @@ export const homepageBenefits = pgTable("homepage_benefits", {
   isActive: boolean("is_active").default(true),
 });
 
+// Documentation tables
+export const documentationType = pgTable("documentation_type", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(), // e.g., "Food Safety License"
+  description: text("description"),
+  exampleUrl: text("example_url"), // optional sample file for reference
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const categoryDocumentation = pgTable("category_documentation", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  categoryId: uuid("category_id")
+    .notNull()
+    .references(() => category.id, { onDelete: "cascade" }),
+  documentationTypeId: uuid("documentation_type_id")
+    .notNull()
+    .references(() => documentationType.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const sellerDocumentation = pgTable(
+  "seller_documentation",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sellerId: text("seller_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    documentationTypeId: uuid("documentation_type_id")
+      .notNull()
+      .references(() => documentationType.id, { onDelete: "cascade" }),
+    documentUrl: text("document_url").notNull(),
+    cloudinaryPublicId: text("cloudinary_public_id").notNull(),
+    status: text("status").default("pending"), // pending | approved | rejected
+    submittedAt: timestamp("submitted_at").defaultNow(),
+    reviewedAt: timestamp("reviewed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    unique("unique_seller_doc").on(table.sellerId, table.documentationTypeId),
+  ]
+);
+
 export type User = InferSelectModel<typeof user>;
 export type Session = InferSelectModel<typeof session>;
 export type Account = InferSelectModel<typeof account>;
 export type Verification = InferSelectModel<typeof verification>;
 export type Listing = InferSelectModel<typeof listing>;
+export type DocumentationType = InferSelectModel<typeof documentationType>;
+export type CategoryDocumentation = InferSelectModel<
+  typeof categoryDocumentation
+>;
+export type SellerDocumentation = InferSelectModel<typeof sellerDocumentation>;

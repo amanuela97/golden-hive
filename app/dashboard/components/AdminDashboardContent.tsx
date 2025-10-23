@@ -17,6 +17,7 @@ import {
   Image as ImageIcon,
   Star,
   Info,
+  FileText,
 } from "lucide-react";
 import Link from "next/link";
 import UserManagement from "./admin/UserManagement";
@@ -84,13 +85,13 @@ export default function AdminDashboardContent({
         </div>
         <div className="flex gap-2 flex-wrap">
           {/* Product Management */}
-          <Link href="/dashboard/products/new">
+          <Link href="/dashboard/admin/products/new">
             <Button className="flex items-center gap-2">
               <Plus className="w-4 h-4" />
               Add Product
             </Button>
           </Link>
-          <Link href="/dashboard/products">
+          <Link href="/dashboard/admin/products">
             <Button variant="outline" className="flex items-center gap-2">
               <Package className="w-4 h-4" />
               Manage Products
@@ -98,13 +99,13 @@ export default function AdminDashboardContent({
           </Link>
 
           {/* Category Management */}
-          <Link href="/dashboard/categories/new">
+          <Link href="/dashboard/admin/categories/new">
             <Button variant="outline" className="flex items-center gap-2">
               <Tag className="w-4 h-4" />
               Add Category
             </Button>
           </Link>
-          <Link href="/dashboard/categories">
+          <Link href="/dashboard/admin/categories">
             <Button variant="outline" className="flex items-center gap-2">
               <Tag className="w-4 h-4" />
               Manage Categories
@@ -119,6 +120,17 @@ export default function AdminDashboardContent({
             >
               <ImageIcon className="w-4 h-4" />
               Content Management
+            </Button>
+          </Link>
+
+          {/* Documentation Review */}
+          <Link href="/dashboard/admin/documentation">
+            <Button
+              variant="outline"
+              className="flex items-center gap-2 bg-orange-50 border-orange-200 text-orange-700 hover:bg-orange-100"
+            >
+              <FileText className="w-4 h-4" />
+              Review Documents
             </Button>
           </Link>
 

@@ -2,11 +2,15 @@ import { HeroSection } from "@/app/components/hero-section";
 import { AboutSection } from "@/app/components/about-section";
 import { BenefitsSection } from "@/app/components/benefits-section";
 import {
-  getAllHeroSlides,
-  getAboutSection,
-  getBenefitsSection,
+  getPublicHeroSlides,
+  getPublicAboutSection,
+  getPublicBenefitsSection,
 } from "@/app/actions/homepage-content";
 import type { Metadata } from "next";
+import { Suspense } from "react";
+import { HeroSkeleton } from "./components/skeletons/hero-skeleton";
+import { AboutSkeleton } from "./components/skeletons/about-skeleton";
+import { BenefitsSkeleton } from "./components/skeletons/benefits-skeleton";
 
 export const metadata: Metadata = {
   title: "Premium Himalayan Mad Honey | Pure & Natural Honey Store",
@@ -30,24 +34,41 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+export const revalidate = 3600; // revalidate every 1 hour
+
+async function HeroLoader() {
+  const result = await getPublicHeroSlides();
+  return <HeroSection slides={result.success ? result.result || [] : []} />;
+}
+
+async function AboutLoader() {
+  const result = await getPublicAboutSection();
+  return result.success && result.result ? (
+    <AboutSection data={result.result} />
+  ) : null;
+}
+
+async function BenefitsLoader() {
+  const result = await getPublicBenefitsSection();
+  return result.success && result.result ? (
+    <BenefitsSection data={result.result} />
+  ) : null;
+}
+
 export default async function HomePage() {
-  // Fetch all homepage data in parallel
-  const [heroResult, aboutResult, benefitsResult] = await Promise.all([
-    getAllHeroSlides(),
-    getAboutSection(),
-    getBenefitsSection(),
-  ]);
-
-  // Extract data from results, fallback to empty arrays/objects if failed
-  const heroSlides = heroResult.success ? heroResult.result || [] : [];
-  const aboutData = aboutResult.success ? aboutResult.result : null;
-  const benefitsData = benefitsResult.success ? benefitsResult.result : null;
-
   return (
     <main>
-      <HeroSection slides={heroSlides} />
-      {aboutData && <AboutSection data={aboutData} />}
-      {benefitsData && <BenefitsSection data={benefitsData} />}
+      <Suspense fallback={<HeroSkeleton />}>
+        <HeroLoader />
+      </Suspense>
+
+      <Suspense fallback={<AboutSkeleton />}>
+        <AboutLoader />
+      </Suspense>
+
+      <Suspense fallback={<BenefitsSkeleton />}>
+        <BenefitsLoader />
+      </Suspense>
     </main>
   );
 }

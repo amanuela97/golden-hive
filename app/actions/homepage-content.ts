@@ -65,6 +65,31 @@ export async function getAllHeroSlides(): Promise<
   }
 }
 
+// Public version for homepage (no authentication required)
+export async function getPublicHeroSlides(): Promise<
+  ActionResponse & { result?: HeroSlide[] }
+> {
+  try {
+    const slides = await db
+      .select()
+      .from(homepageHero)
+      .where(eq(homepageHero.isActive, true))
+      .orderBy(asc(homepageHero.order));
+
+    return {
+      success: true,
+      result: slides as HeroSlide[],
+    };
+  } catch (error) {
+    console.error("Error fetching public hero slides:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to fetch hero slides",
+    };
+  }
+}
+
 export async function createHeroSlide(
   data: CreateHeroSlideData
 ): Promise<ActionResponse> {
@@ -346,6 +371,33 @@ export async function getAboutSection(): Promise<
   }
 }
 
+// Public version for homepage (no authentication required)
+export async function getPublicAboutSection(): Promise<
+  ActionResponse & { result?: AboutSection | null }
+> {
+  try {
+    const about = await db
+      .select()
+      .from(homepageAbout)
+      .where(eq(homepageAbout.isActive, true))
+      .limit(1);
+
+    return {
+      success: true,
+      result: about[0] as AboutSection | null,
+    };
+  } catch (error) {
+    console.error("Error fetching public about section:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch about section",
+    };
+  }
+}
+
 export async function createAboutSection(
   data: CreateAboutData
 ): Promise<ActionResponse> {
@@ -483,6 +535,33 @@ export async function getBenefitsSection(): Promise<
     };
   } catch (error) {
     console.error("Error fetching benefits section:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch benefits section",
+    };
+  }
+}
+
+// Public version for homepage (no authentication required)
+export async function getPublicBenefitsSection(): Promise<
+  ActionResponse & { result?: BenefitsSection | null }
+> {
+  try {
+    const benefits = await db
+      .select()
+      .from(homepageBenefits)
+      .where(eq(homepageBenefits.isActive, true))
+      .limit(1);
+
+    return {
+      success: true,
+      result: benefits[0] as BenefitsSection | null,
+    };
+  } catch (error) {
+    console.error("Error fetching public benefits section:", error);
     return {
       success: false,
       error:

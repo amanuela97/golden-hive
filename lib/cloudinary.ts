@@ -8,6 +8,74 @@ cloudinary.config({
 });
 
 /**
+ * Upload a single file to Cloudinary and return full result
+ * @param file - File or Blob to upload
+ * @param folder - Cloudinary folder path
+ * @returns Promise<CloudinaryUploadResult> - Full Cloudinary upload result
+ */
+export async function uploadFileWithResult(
+  file: File | Blob,
+  folder: string
+): Promise<{ secure_url: string; public_id: string }> {
+  try {
+    // Validate Cloudinary configuration
+    if (
+      !process.env.CLOUDINARY_CLOUD_NAME ||
+      !process.env.CLOUDINARY_API_KEY ||
+      !process.env.CLOUDINARY_API_SECRET
+    ) {
+      throw new Error(
+        "Cloudinary configuration is missing. Please check your environment variables."
+      );
+    }
+
+    // Validate file
+    if (!file || file.size === 0) {
+      throw new Error("Invalid file provided");
+    }
+    const fileName = (file as File).name || "unnamed";
+    console.log(
+      `Uploading file: ${fileName}, size: ${file.size}, type: ${file.type}`
+    );
+
+    // Convert File/Blob to buffer
+    const buffer = await file.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString("base64");
+    const dataURI = `data:${file.type};base64,${base64}`;
+
+    console.log(`Uploading to folder: golden-hive/${folder}`);
+
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(dataURI, {
+      folder: `golden-hive/${folder}`,
+      resource_type: "auto", // Automatically detect image, video, or audio
+      quality: "auto",
+      fetch_format: "auto",
+    });
+
+    console.log(`Upload successful: ${result.secure_url}`);
+    return {
+      secure_url: result.secure_url,
+      public_id: result.public_id,
+    };
+  } catch (error) {
+    console.error("Error uploading file to Cloudinary:", error);
+    console.error("Error details:", {
+      message: error instanceof Error ? error.message : "Unknown error",
+      stack: error instanceof Error ? error.stack : undefined,
+      cloudinaryConfig: {
+        cloudName: process.env.CLOUDINARY_CLOUD_NAME ? "set" : "missing",
+        apiKey: process.env.CLOUDINARY_API_KEY ? "set" : "missing",
+        apiSecret: process.env.CLOUDINARY_API_SECRET ? "set" : "missing",
+      },
+    });
+    throw new Error(
+      `Failed to upload file: ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+  }
+}
+
+/**
  * Upload a single file to Cloudinary
  * @param file - File or Blob to upload
  * @param folder - Cloudinary folder path

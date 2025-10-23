@@ -4,14 +4,24 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-client";
+import { useEffect, useState } from "react";
 
 export function Navbar() {
   const pathname = usePathname();
   const { data: session } = useSession();
+  const [mounted, setMounted] = useState(false);
+
+  // Prevent hydration mismatch
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Always show the same nav items structure to prevent hydration issues
   const navItems = [
     { name: "Products", href: "/products" },
     { name: "About", href: "/about" },
-    ...(session?.user ? [{ name: "Dashboard", href: "/dashboard" }] : []),
+    { name: "Dashboard", href: "/dashboard", requiresAuth: true },
+    { name: "Login", href: "/login", requiresAuth: false },
   ];
 
   return (
@@ -32,8 +42,20 @@ export function Navbar() {
         <ul className="flex items-center gap-8">
           {navItems.map((item) => {
             const isActive = pathname === item.href;
+
             return (
-              <li key={item.href}>
+              <li
+                key={item.href}
+                className={cn(
+                  // Hide items based on authentication state
+                  item.requiresAuth === true &&
+                    (!mounted || !session?.user) &&
+                    "hidden",
+                  item.requiresAuth === false &&
+                    (!mounted || session?.user) &&
+                    "hidden"
+                )}
+              >
                 <Link
                   href={item.href}
                   className={cn(

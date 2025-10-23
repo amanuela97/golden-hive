@@ -9,6 +9,7 @@ import { user, roles, userRoles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { UserRole } from "@/lib/roles";
 
 // Validation schemas
 const loginSchema = z.object({
@@ -22,6 +23,7 @@ const registerSchema = z
     password: z.string().min(8, "Password must be at least 6 characters"),
     confirmPassword: z.string(),
     name: z.string().min(2, "Name must be at least 2 characters"),
+    role: z.enum(["Seller", "Customer"]).default("Customer"),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords don't match",
@@ -245,9 +247,23 @@ export async function loginAction(
       }
     }
 
+    // Get user's role for redirect
+    const userRole = await db
+      .select({
+        roleName: roles.name,
+      })
+      .from(userRoles)
+      .innerJoin(roles, eq(userRoles.roleId, roles.id))
+      .where(eq(userRoles.userId, result.user.id))
+      .limit(1);
+
+    const role =
+      userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "customer";
+
     return {
       success: true,
       message: "Signed in successfully",
+      redirectTo: `/dashboard/${role}`,
     };
   } catch (error) {
     console.error("Sign in error:", error);
@@ -274,6 +290,7 @@ export async function registerAction(
       password: formData.get("password") as string,
       confirmPassword: formData.get("confirmPassword") as string,
       name: formData.get("name") as string,
+      role: formData.get("role") as string,
     };
 
     // Validate form data
@@ -292,6 +309,9 @@ export async function registerAction(
     const isAdminEmail = process.env.ADMIN_LIST?.split(",").includes(
       validatedData.data.email
     );
+
+    // Determine the role to assign
+    const roleToAssign = isAdminEmail ? "Admin" : validatedData.data.role;
 
     // Attempt to create user using better-auth
     const response = await auth.api.signUpEmail({
@@ -327,38 +347,42 @@ export async function registerAction(
       })
       .where(eq(user.id, response.user.id));
 
-    // If this is an admin email, assign admin role
-    if (isAdminEmail) {
-      // Ensure Admin role exists
-      const adminRole = await db
-        .select()
-        .from(roles)
-        .where(eq(roles.name, "Admin"))
-        .limit(1);
+    // Assign role to user
+    const existingRole = await db
+      .select()
+      .from(roles)
+      .where(eq(roles.name, roleToAssign))
+      .limit(1);
 
-      if (adminRole.length === 0) {
-        // Create Admin role if it doesn't exist
-        const newAdminRole = await db
-          .insert(roles)
-          .values({
-            name: "Admin",
-            description: "Full system access and user management",
-          })
-          .returning();
+    let roleId: number;
 
-        // Assign admin role to user
-        await db.insert(userRoles).values({
-          userId: response.user.id,
-          roleId: newAdminRole[0].id,
-        });
-      } else {
-        // Assign existing admin role to user
-        await db.insert(userRoles).values({
-          userId: response.user.id,
-          roleId: adminRole[0].id,
-        });
-      }
+    if (existingRole.length === 0) {
+      // Create role if it doesn't exist
+      const roleDescriptions = {
+        Admin: "Full system access and user management",
+        Seller: "Can create and manage product listings",
+        Customer: "Can browse and purchase products",
+      };
+
+      const newRole = await db
+        .insert(roles)
+        .values({
+          name: roleToAssign,
+          description:
+            roleDescriptions[roleToAssign as keyof typeof roleDescriptions],
+        })
+        .returning();
+
+      roleId = newRole[0].id;
+    } else {
+      roleId = existingRole[0].id;
     }
+
+    // Assign role to user
+    await db.insert(userRoles).values({
+      userId: response.user.id,
+      roleId: roleId,
+    });
     return {
       success: true,
       message: "Account created successfully",
@@ -533,6 +557,112 @@ export async function deleteAccount(
         error instanceof APIError
           ? error.message
           : "Failed to initiate account deletion",
+    };
+  }
+}
+
+// Complete onboarding for Google sign-in users
+export async function completeOnboarding(
+  role: UserRole
+): Promise<ActionResponse> {
+  try {
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session) {
+      return {
+        success: false,
+        error: "Not authenticated",
+      };
+    }
+
+    const currentUser = session.user;
+
+    // Check if user already has a role
+    const existingUserRole = await db
+      .select()
+      .from(userRoles)
+      .where(eq(userRoles.userId, currentUser.id))
+      .limit(1);
+
+    if (existingUserRole.length > 0) {
+      return {
+        success: false,
+        error: "User already has a role assigned",
+      };
+    }
+
+    // Check if user exists in our database, if not create them
+    const existingUser = await db
+      .select()
+      .from(user)
+      .where(eq(user.id, currentUser.id))
+      .limit(1);
+
+    if (existingUser.length === 0) {
+      // Create user in our database
+      await db.insert(user).values({
+        id: currentUser.id,
+        name: currentUser.name,
+        email: currentUser.email,
+        emailVerified: currentUser.emailVerified,
+        status: "active",
+        image: currentUser.image,
+      });
+    }
+
+    // Check if this is an admin email
+    const isAdminEmail = process.env.ADMIN_LIST?.split(",").includes(
+      currentUser.email
+    );
+    const roleToAssign = isAdminEmail ? UserRole.ADMIN : role;
+
+    // Get or create the role
+    const existingRole = await db
+      .select()
+      .from(roles)
+      .where(eq(roles.name, roleToAssign))
+      .limit(1);
+
+    let roleId: number;
+
+    if (existingRole.length === 0) {
+      // Create role if it doesn't exist
+      const roleDescriptions = {
+        [UserRole.ADMIN]: "Full system access and user management",
+        [UserRole.SELLER]: "Can create and manage product listings",
+        [UserRole.CUSTOMER]: "Can browse and purchase products",
+      };
+
+      const newRole = await db
+        .insert(roles)
+        .values({
+          name: roleToAssign,
+          description: roleDescriptions[roleToAssign],
+        })
+        .returning();
+
+      roleId = newRole[0].id;
+    } else {
+      roleId = existingRole[0].id;
+    }
+
+    // Assign role to user
+    await db.insert(userRoles).values({
+      userId: currentUser.id,
+      roleId: roleId,
+    });
+
+    return {
+      success: true,
+      message: "Onboarding completed successfully",
+    };
+  } catch (error) {
+    console.error("Onboarding error:", error);
+    return {
+      success: false,
+      error: "Failed to complete onboarding",
     };
   }
 }

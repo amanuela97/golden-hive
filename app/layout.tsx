@@ -33,7 +33,7 @@ export default function RootLayout({
       >
         <Providers>
           <Navbar />
-          {children}
+          <main className="flex-1 h-screen">{children}</main>
           <Footer />
           <Toaster position="top-right" />
         </Providers>
