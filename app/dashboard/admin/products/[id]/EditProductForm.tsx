@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import ProductForm from "../../../components/shared/ProductForm";
-import { updateProductAction } from "@/app/actions/products";
+import { adminUpdateProductAction } from "@/app/actions/products";
 import { type UpdateListingData, type CreateListingData } from "@/lib/listing";
 import { Listing } from "@/db/schema";
 import toast from "react-hot-toast";
@@ -21,7 +21,9 @@ export default function EditProductForm({ initialData }: EditProductFormProps) {
     try {
       // Since we're in edit mode, we know the data should be UpdateListingData
       if ("id" in data) {
-        const result = await updateProductAction(data as UpdateListingData);
+        const result = await adminUpdateProductAction(
+          data as UpdateListingData
+        );
 
         if (result.success) {
           toast.success("Product updated successfully");

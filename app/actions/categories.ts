@@ -1,7 +1,11 @@
 "use server";
 
 import { db } from "@/db";
-import { category, categoryDocumentation } from "@/db/schema";
+import {
+  category,
+  categoryDocumentation,
+  documentationType,
+} from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getCurrentAdmin } from "./admin";
 import { revalidatePath } from "next/cache";
@@ -10,6 +14,8 @@ export interface Category {
   id: string;
   name: string;
   description: string | null;
+  requiresDocumentation?: boolean;
+  documentationDescription?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,6 +31,9 @@ export interface CreateCategoryData {
 export interface UpdateCategoryData {
   name?: string;
   description?: string;
+  requiresDocumentation?: boolean;
+  documentationDescription?: string;
+  documentationTypeIds?: string[];
 }
 
 export interface ActionResponse {
@@ -84,6 +93,65 @@ export async function getCategoryById(
     };
   } catch (error) {
     console.error("Error fetching category:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to fetch category",
+    };
+  }
+}
+
+// Get category with documentation types
+export async function getCategoryWithDocumentation(categoryId: string): Promise<
+  ActionResponse & {
+    result?: Category & {
+      documentationTypes: Array<{
+        id: string;
+        documentationTypeId: string;
+        documentationTypeName: string;
+      }>;
+    };
+  }
+> {
+  try {
+    await getCurrentAdmin();
+
+    const categories = await db
+      .select()
+      .from(category)
+      .where(eq(category.id, categoryId))
+      .limit(1);
+
+    if (categories.length === 0) {
+      return {
+        success: false,
+        error: "Category not found",
+      };
+    }
+
+    // Get documentation types for this category
+    const categoryDocs = await db
+      .select({
+        id: categoryDocumentation.id,
+        documentationTypeId: categoryDocumentation.documentationTypeId,
+        documentationTypeName: documentationType.name,
+      })
+      .from(categoryDocumentation)
+      .innerJoin(
+        documentationType,
+        eq(categoryDocumentation.documentationTypeId, documentationType.id)
+      )
+      .where(eq(categoryDocumentation.categoryId, categoryId));
+
+    return {
+      success: true,
+      result: {
+        ...categories[0],
+        documentationTypes: categoryDocs,
+      },
+    };
+  } catch (error) {
+    console.error("Error fetching category with documentation:", error);
     return {
       success: false,
       error:
@@ -197,10 +265,33 @@ export async function updateCategory(
       .set({
         name: categoryData.name,
         description: categoryData.description,
+        requiresDocumentation: categoryData.requiresDocumentation,
+        documentationDescription: categoryData.documentationDescription,
         updatedAt: new Date(),
       })
       .where(eq(category.id, categoryId))
       .returning();
+
+    // Update documentation type links if provided
+    if (categoryData.documentationTypeIds !== undefined) {
+      // Remove existing links
+      await db
+        .delete(categoryDocumentation)
+        .where(eq(categoryDocumentation.categoryId, categoryId));
+
+      // Add new links if any
+      if (categoryData.documentationTypeIds.length > 0) {
+        const links = categoryData.documentationTypeIds.map((docTypeId) => ({
+          categoryId,
+          documentationTypeId: docTypeId,
+        }));
+
+        await db.insert(categoryDocumentation).values(links);
+      }
+    }
+
+    revalidatePath("/dashboard/admin/categories");
+    revalidatePath("/dashboard/admin/documentation");
 
     return {
       success: true,

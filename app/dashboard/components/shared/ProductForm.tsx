@@ -6,6 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Listing,
   type CreateListingData,
   type UpdateListingData,
@@ -564,39 +572,42 @@ export default function ProductForm({
         </div>
       </form>
 
-      {/* Documentation Required Modal */}
-      {showDocumentationModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">
-              Documentation Required
-            </h3>
-            <p className="text-gray-600 mb-4">
+      {/* Documentation Required Dialog */}
+      <Dialog
+        open={showDocumentationModal}
+        onOpenChange={setShowDocumentationModal}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Documentation Required</DialogTitle>
+            <DialogDescription>
               This category requires the following documents before you can list
               products:
-            </p>
-            <ul className="list-disc list-inside mb-4 space-y-1">
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <ul className="list-disc list-inside space-y-1">
               {missingDocuments.map((doc) => (
                 <li key={doc.id} className="text-sm text-gray-700">
                   {doc.name}
                 </li>
               ))}
             </ul>
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowDocumentationModal(false)}
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-              <Link href="/dashboard/seller/documentation" className="flex-1">
-                <Button className="w-full">Upload Documents</Button>
-              </Link>
-            </div>
           </div>
-        </div>
-      )}
+          <DialogFooter className="flex gap-3">
+            <Button
+              variant="outline"
+              onClick={() => setShowDocumentationModal(false)}
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Link href="/dashboard/seller/documentation" className="flex-1">
+              <Button className="w-full">Upload Documents</Button>
+            </Link>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

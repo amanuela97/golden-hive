@@ -190,6 +190,21 @@ export async function deleteFile(
 }
 
 /**
+ * Delete a file from Cloudinary by public_id
+ * @param publicId - Cloudinary public_id to delete
+ * @returns Promise<boolean> - Success status
+ */
+export async function deleteFileByPublicId(publicId: string): Promise<boolean> {
+  try {
+    const result = await cloudinary.uploader.destroy(publicId);
+    return result.result === "ok";
+  } catch (error) {
+    console.error("Error deleting file from Cloudinary:", error);
+    return false;
+  }
+}
+
+/**
  * Delete multiple files from Cloudinary by URLs
  * @param urls - Array of Cloudinary URLs to delete
  * @returns Promise<boolean> - Success status
@@ -202,6 +217,28 @@ export async function deleteFiles(urls: string[]): Promise<boolean> {
     }
 
     const result = await cloudinary.api.delete_resources(publicIds as string[]);
+    return result.deleted && Object.keys(result.deleted).length > 0;
+  } catch (error) {
+    console.error("Error deleting files from Cloudinary:", error);
+    return false;
+  }
+}
+
+/**
+ * Delete multiple files from Cloudinary by public_ids
+ * @param publicIds - Array of Cloudinary public_ids to delete
+ * @returns Promise<boolean> - Success status
+ */
+export async function deleteFilesByPublicIds(
+  publicIds: (string | null)[]
+): Promise<boolean> {
+  try {
+    const validPublicIds = publicIds.filter((id): id is string => id !== null);
+    if (validPublicIds.length === 0) {
+      return true;
+    }
+
+    const result = await cloudinary.api.delete_resources(validPublicIds);
     return result.deleted && Object.keys(result.deleted).length > 0;
   } catch (error) {
     console.error("Error deleting files from Cloudinary:", error);

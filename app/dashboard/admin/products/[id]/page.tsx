@@ -28,10 +28,7 @@ export default async function AdminEditProductPage({
     notFound();
   }
 
-  // Check if the product belongs to the current user
-  if (product.producerId !== session.user.id) {
-    redirect("/dashboard/admin/products");
-  }
+  // Admin can edit any product, no ownership check needed
 
   return <EditProductForm initialData={product} />;
 }

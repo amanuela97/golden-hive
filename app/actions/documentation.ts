@@ -12,7 +12,11 @@ import {
 import { eq } from "drizzle-orm";
 import { v2 as cloudinary } from "cloudinary";
 import { revalidatePath } from "next/cache";
-import { uploadFileWithResult, deleteFiles } from "@/lib/cloudinary";
+import {
+  uploadFileWithResult,
+  deleteFileByPublicId,
+  deleteFilesByPublicIds,
+} from "@/lib/cloudinary";
 
 // Configure Cloudinary
 cloudinary.config({
@@ -278,6 +282,95 @@ export async function reviewSellerDocumentation(
 }
 
 /**
+ * Admin: Update seller documentation (for editing document details)
+ */
+export async function adminUpdateSellerDocumentation(
+  docId: string,
+  data: {
+    status?: "pending" | "approved" | "rejected";
+    reviewedAt?: Date | null;
+  }
+): Promise<ActionResponse> {
+  try {
+    await db
+      .update(sellerDocumentation)
+      .set({
+        ...data,
+        updatedAt: new Date(),
+      })
+      .where(eq(sellerDocumentation.id, docId));
+
+    revalidatePath("/dashboard/admin/documentation");
+    revalidatePath("/dashboard/seller/documentation");
+
+    return {
+      success: true,
+      message: "Document updated successfully",
+    };
+  } catch (error) {
+    console.error("Error updating document:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to update document",
+    };
+  }
+}
+
+/**
+ * Admin: Delete seller documentation
+ */
+export async function adminDeleteSellerDocumentation(
+  docId: string
+): Promise<ActionResponse> {
+  try {
+    // Get document details first to delete from Cloudinary
+    const doc = await db
+      .select()
+      .from(sellerDocumentation)
+      .where(eq(sellerDocumentation.id, docId))
+      .limit(1);
+
+    if (doc.length === 0) {
+      return {
+        success: false,
+        error: "Document not found",
+      };
+    }
+
+    // Delete from Cloudinary if public_id exists
+    if (doc[0].cloudinaryPublicId) {
+      try {
+        await deleteFileByPublicId(doc[0].cloudinaryPublicId);
+      } catch (cloudinaryError) {
+        console.warn("Failed to delete from Cloudinary:", cloudinaryError);
+        // Continue with database deletion even if Cloudinary deletion fails
+      }
+    }
+
+    // Delete from database
+    await db
+      .delete(sellerDocumentation)
+      .where(eq(sellerDocumentation.id, docId));
+
+    revalidatePath("/dashboard/admin/documentation");
+    revalidatePath("/dashboard/seller/documentation");
+
+    return {
+      success: true,
+      message: "Document deleted successfully",
+    };
+  } catch (error) {
+    console.error("Error deleting document:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to delete document",
+    };
+  }
+}
+
+/**
  * Get all submitted documents for admin review
  */
 export async function getAllSubmittedDocuments(): Promise<
@@ -352,7 +445,7 @@ export async function deleteSellerDocumentsOnAccountRemoval(
     // Delete from Cloudinary
     if (docs.length > 0) {
       const publicIds = docs.map((doc) => doc.publicId);
-      await deleteFiles(publicIds);
+      await deleteFilesByPublicIds(publicIds);
     }
 
     // Delete from database (cascade should handle this, but let's be explicit)

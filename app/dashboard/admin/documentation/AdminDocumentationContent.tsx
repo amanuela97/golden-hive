@@ -6,6 +6,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   CheckCircle,
   XCircle,
   Clock,
@@ -15,10 +29,15 @@ import {
   Calendar,
   Mail,
   Settings,
+  Edit,
+  Trash2,
+  MoreHorizontal,
 } from "lucide-react";
 import {
   getAllSubmittedDocuments,
   reviewSellerDocumentation,
+  adminUpdateSellerDocumentation,
+  adminDeleteSellerDocumentation,
 } from "@/app/actions/documentation";
 import DocumentationTypeManager from "./DocumentationTypeManager";
 import toast from "react-hot-toast";
@@ -43,6 +62,8 @@ export default function AdminDocumentationContent() {
   const [filter, setFilter] = useState<
     "all" | "pending" | "approved" | "rejected"
   >("all");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<SubmittedDocument | null>(null);
 
   useEffect(() => {
     loadDocuments();
@@ -79,6 +100,45 @@ export default function AdminDocumentationContent() {
     } catch (error) {
       console.error(`Error ${action}ing document:`, error);
       toast.error(`Failed to ${action} document`);
+    } finally {
+      setReviewing(null);
+    }
+  };
+
+  const handleDeleteDocument = async (document: SubmittedDocument) => {
+    try {
+      const result = await adminDeleteSellerDocumentation(document.id);
+      if (result.success) {
+        toast.success("Document deleted successfully");
+        setDeleteDialogOpen(false);
+        setDocumentToDelete(null);
+        await loadDocuments(); // Refresh the list
+      } else {
+        toast.error(result.error || "Failed to delete document");
+      }
+    } catch (error) {
+      console.error("Error deleting document:", error);
+      toast.error("Failed to delete document");
+    }
+  };
+
+  const handleRejectApprovedDocument = async (docId: string) => {
+    try {
+      setReviewing(docId);
+      const result = await adminUpdateSellerDocumentation(docId, {
+        status: "rejected",
+        reviewedAt: new Date(),
+      });
+
+      if (result.success) {
+        toast.success("Document rejected successfully");
+        await loadDocuments(); // Refresh the list
+      } else {
+        toast.error(result.error || "Failed to reject document");
+      }
+    } catch (error) {
+      console.error("Error rejecting document:", error);
+      toast.error("Failed to reject document");
     } finally {
       setReviewing(null);
     }
@@ -354,34 +414,57 @@ export default function AdminDocumentationContent() {
                           View Document
                         </Button>
 
-                        {doc.status === "pending" && (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleReview(doc.id, "approve")}
-                              disabled={reviewing === doc.id}
-                              className="text-green-600 border-green-200 hover:bg-green-50"
-                            >
-                              <CheckCircle className="w-4 h-4 mr-2" />
-                              {reviewing === doc.id
-                                ? "Processing..."
-                                : "Approve"}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm">
+                              <MoreHorizontal className="w-4 h-4" />
                             </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleReview(doc.id, "reject")}
-                              disabled={reviewing === doc.id}
-                              className="text-red-600 border-red-200 hover:bg-red-50"
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {doc.status === "pending" && (
+                              <>
+                                <DropdownMenuItem
+                                  onClick={() => handleReview(doc.id, "approve")}
+                                  disabled={reviewing === doc.id}
+                                  className="text-green-600"
+                                >
+                                  <CheckCircle className="w-4 h-4 mr-2" />
+                                  Approve
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => handleReview(doc.id, "reject")}
+                                  disabled={reviewing === doc.id}
+                                  className="text-red-600"
+                                >
+                                  <XCircle className="w-4 h-4 mr-2" />
+                                  Reject
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                            
+                            {doc.status === "approved" && (
+                              <DropdownMenuItem
+                                onClick={() => handleRejectApprovedDocument(doc.id)}
+                                disabled={reviewing === doc.id}
+                                className="text-red-600"
+                              >
+                                <XCircle className="w-4 h-4 mr-2" />
+                                Reject (Override)
+                              </DropdownMenuItem>
+                            )}
+
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setDocumentToDelete(doc);
+                                setDeleteDialogOpen(true);
+                              }}
+                              className="text-red-600"
                             >
-                              <XCircle className="w-4 h-4 mr-2" />
-                              {reviewing === doc.id
-                                ? "Processing..."
-                                : "Reject"}
-                            </Button>
-                          </>
-                        )}
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </div>
                   </CardContent>
@@ -408,6 +491,35 @@ export default function AdminDocumentationContent() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Document</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this document? This action cannot be undone and will remove the document from both the database and Cloudinary.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteDialogOpen(false);
+                setDocumentToDelete(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => documentToDelete && handleDeleteDocument(documentToDelete)}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

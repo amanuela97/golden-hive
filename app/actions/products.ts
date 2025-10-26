@@ -85,6 +85,33 @@ export async function updateProductAction(data: UpdateListingData) {
   }
 }
 
+export async function adminUpdateProductAction(data: UpdateListingData) {
+  try {
+    // Admin can update any product, no ownership check needed
+    const { getListingById } = await import("@/lib/listing");
+    const existingProduct = await getListingById(data.id);
+
+    if (!existingProduct) {
+      return { success: false, error: "Product not found" };
+    }
+
+    const product = await updateListing(data);
+
+    revalidatePath("/dashboard/admin/products");
+    revalidatePath("/dashboard/products");
+    revalidatePath(`/dashboard/products/${data.id}`);
+
+    return { success: true, product };
+  } catch (error) {
+    console.error("Error updating product:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to update product",
+    };
+  }
+}
+
 export async function deleteProductAction(id: string) {
   try {
     const user = await getCurrentUser();
@@ -104,6 +131,32 @@ export async function deleteProductAction(id: string) {
     await deleteListing(id);
 
     revalidatePath("/dashboard");
+    revalidatePath("/dashboard/products");
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting product:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to delete product",
+    };
+  }
+}
+
+export async function adminDeleteProductAction(id: string) {
+  try {
+    // Admin can delete any product, no ownership check needed
+    const { getListingById } = await import("@/lib/listing");
+    const existingProduct = await getListingById(id);
+
+    if (!existingProduct) {
+      return { success: false, error: "Product not found" };
+    }
+
+    await deleteListing(id);
+
+    revalidatePath("/dashboard/admin/products");
     revalidatePath("/dashboard/products");
 
     return { success: true };

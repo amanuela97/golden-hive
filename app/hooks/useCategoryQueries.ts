@@ -60,6 +60,9 @@ export function useUpdateCategory() {
       categoryData: {
         name?: string;
         description?: string;
+        requiresDocumentation?: boolean;
+        documentationDescription?: string;
+        documentationTypeIds?: string[];
       };
     }) => updateCategory(categoryId, categoryData),
     onSuccess: () => {

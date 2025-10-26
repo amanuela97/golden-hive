@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { listing, type Listing } from "@/db/schema";
+import { listing, user, type Listing } from "@/db/schema";
 
 // Re-export the Listing type for use in components
 export type { Listing };
@@ -126,6 +126,62 @@ export async function getListings(): Promise<Listing[]> {
     console.error("Error fetching listings:", error);
     throw new Error(
       `Failed to fetch listings: ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+  }
+}
+
+/**
+ * Get all listings with user information for admin management
+ */
+export async function getAllListingsWithUsers(): Promise<
+  Array<
+    Listing & {
+      producerName: string;
+      producerEmail: string;
+      isAdminCreated: boolean;
+    }
+  >
+> {
+  try {
+    const result = await db
+      .select({
+        id: listing.id,
+        name: listing.name,
+        description: listing.description,
+        category: listing.category,
+        price: listing.price,
+        currency: listing.currency,
+        stockQuantity: listing.stockQuantity,
+        unit: listing.unit,
+        producerId: listing.producerId,
+        imageUrl: listing.imageUrl,
+        gallery: listing.gallery,
+        tags: listing.tags,
+        isActive: listing.isActive,
+        isFeatured: listing.isFeatured,
+        marketType: listing.marketType,
+        originVillage: listing.originVillage,
+        harvestDate: listing.harvestDate,
+        createdAt: listing.createdAt,
+        updatedAt: listing.updatedAt,
+        producerName: user.name,
+        producerEmail: user.email,
+      })
+      .from(listing)
+      .innerJoin(user, eq(listing.producerId, user.id))
+      .orderBy(listing.createdAt);
+
+    // Check if producer is admin
+    const adminEmails = process.env.ADMIN_LIST?.split(",") || [];
+
+    return result.map((listing) => ({
+      ...listing,
+      isAdminCreated: adminEmails.includes(listing.producerEmail),
+    }));
+  } catch (error) {
+    console.error("Error fetching listings with users:", error);
+    throw new Error(
+      `Failed to fetch listings with users: ${error instanceof Error ? error.message : "Unknown error"}`
     );
   }
 }

@@ -1,247 +1,212 @@
-🧭 PROJECT BRIEF — “Seller Documentation Workflow (Server Actions Version)”
-🎯 Objective
+AI Instruction Prompt
 
-Implement a documentation verification system for sellers on the Golden Hive ecommerce platform using Next.js Server Actions and Drizzle ORM with Neon.
-Some product categories require one or more documents before sellers can list products. Once a seller uploads a specific document type, it should automatically apply to all relevant categories that require it.
+Instruction:
+Build a visitor feedback system for my ecommerce marketplace (focused on honey and other natural products) using Next.js App Router, TypeScript, Tailwind CSS, Drizzle ORM, and Neon PostgreSQL.
+The system should let visitors anonymously submit feedback about the website and allow admins to view and delete feedback from the admin dashboard.
+Use Next.js Server Actions — do not use /api routes.
 
-All documents must be uploaded to Cloudinary under
-golden-hive/listings/documents/[sellerId]
-and deleted automatically when the seller’s account is removed.
+🎯 Requirements
 
-🧱 1. Database Schema (Drizzle ORM + Neon PostgreSQL)
-documentation_type
+1. Public Feedback Page
 
-Defines all available document types configured by admins.
+Route: /feedback
 
-export const documentationType = pgTable("documentation_type", {
+Purpose: Collect anonymous visitor feedback.
+
+Display a clear message at the top:
+
+“This website is still under development — some features may not work yet.”
+
+Form fields:
+
+rating (1–5)
+
+message (textarea)
+
+suggestions (textarea)
+
+Submission:
+
+Uses a Server Action to store data in the database.
+
+Displays a thank-you confirmation after submission.
+
+🗄️ 2. Database Schema (Drizzle)
+
+Create a new schema file: db/schema/feedback.ts
+
+import { pgTable, text, timestamp, uuid, integer } from "drizzle-orm/pg-core";
+
+export const feedbacks = pgTable("feedbacks", {
 id: uuid("id").defaultRandom().primaryKey(),
-name: text("name").notNull(), // e.g., "Food Safety License"
-description: text("description"),
-exampleUrl: text("example_url"), // optional sample file for reference
+rating: integer("rating").check(sql => sql`rating BETWEEN 1 AND 5`),
+message: text("message"),
+suggestions: text("suggestions"),
+createdAt: timestamp("created_at").defaultNow(),
 });
 
-category_documentation
+Run your Drizzle migration after adding this table:
 
-Defines which document types are required for each category.
+pnpm drizzle-kit generate && pnpm drizzle-kit push
 
-export const categoryDocumentation = pgTable("category_documentation", {
-id: uuid("id").defaultRandom().primaryKey(),
-categoryId: uuid("category_id")
-.notNull()
-.references(() => category.id, { onDelete: "cascade" }),
-documentationTypeId: uuid("documentation_type_id")
-.notNull()
-.references(() => documentationType.id, { onDelete: "cascade" }),
+⚙️ 3. Server Actions
+
+Create a new file at actions/feedbackActions.ts:
+
+'use server';
+
+import { db } from '@/db';
+import { feedbacks } from '@/db/schema/feedback';
+import { eq, desc } from 'drizzle-orm';
+import { revalidatePath } from 'next/cache';
+
+export async function submitFeedback(formData: FormData) {
+const rating = Number(formData.get('rating'));
+const message = formData.get('message') as string;
+const suggestions = formData.get('suggestions') as string;
+
+if (!rating) return;
+
+await db.insert(feedbacks).values({
+rating,
+message,
+suggestions,
 });
 
-seller_documentation
-
-Stores uploaded documentation per seller and type.
-
-export const sellerDocumentation = pgTable("seller_documentation", {
-id: uuid("id").defaultRandom().primaryKey(),
-sellerId: text("seller_id")
-.notNull()
-.references(() => user.id, { onDelete: "cascade" }),
-documentationTypeId: uuid("documentation_type_id")
-.notNull()
-.references(() => documentationType.id, { onDelete: "cascade" }),
-documentUrl: text("document_url").notNull(),
-cloudinaryPublicId: text("cloudinary_public_id").notNull(),
-status: text("status").default("pending"), // pending | approved | rejected
-submittedAt: timestamp("submitted_at").defaultNow(),
-reviewedAt: timestamp("reviewed_at"),
-});
-
-createUniqueIndex("unique_seller_doc").on(
-sellerDocumentation.sellerId,
-sellerDocumentation.documentationTypeId
-);
-
-⚙️ 2. Server Actions
-
-All actions are defined under app/actions/documentation.ts.
-
-getRequiredDocumentsForCategory(categoryId: string)
-
-Fetches all required documentation types for a given category.
-
-Joins category_documentation with documentation_type.
-
-"use server";
-
-export async function getRequiredDocumentsForCategory(categoryId: string) {
-const requiredDocs = await db
-.select()
-.from(categoryDocumentation)
-.where(eq(categoryDocumentation.categoryId, categoryId))
-.leftJoin(
-documentationType,
-eq(categoryDocumentation.documentationTypeId, documentationType.id)
-);
-
-return requiredDocs.map((r) => r.documentation_type);
+revalidatePath('/feedback');
 }
 
-getSellerDocuments(sellerId: string)
-
-Fetches all documents uploaded by a seller, including status and type.
-
-"use server";
-
-export async function getSellerDocuments(sellerId: string) {
-return await db
-.select({
-id: sellerDocumentation.id,
-typeId: sellerDocumentation.documentationTypeId,
-url: sellerDocumentation.documentUrl,
-status: sellerDocumentation.status,
-})
-.from(sellerDocumentation)
-.where(eq(sellerDocumentation.sellerId, sellerId));
+export async function getAllFeedbacks() {
+const result = await db.select().from(feedbacks).orderBy(desc(feedbacks.createdAt));
+return result;
 }
 
-uploadSellerDocumentation(formData: FormData)
+export async function deleteFeedback(id: string) {
+await db.delete(feedbacks).where(eq(feedbacks.id, id));
+revalidatePath('/dashboard/admin/feedback');
+}
 
-Accepts a document upload for a specific documentationTypeId.
+💬 4. Feedback Page (/app/feedback/page.tsx)
+import { submitFeedback } from '@/actions/feedbackActions';
 
-Uploads to Cloudinary under
-golden-hive/listings/documents/[sellerId]
+export default function FeedbackPage() {
+return (
 
-Stores metadata in seller_documentation.
+<div className="max-w-xl mx-auto mt-12 p-6 bg-white shadow rounded-xl">
+<h1 className="text-2xl font-semibold mb-4 text-center">
+We’d love your feedback
+</h1>
+<p className="text-sm text-gray-500 text-center mb-6">
+This website is still under development — some features may not work yet.
+</p>
 
-"use server";
-import { v2 as cloudinary } from "cloudinary";
-import { revalidatePath } from "next/cache";
+      <form action={submitFeedback} className="flex flex-col gap-4">
+        <label className="flex flex-col">
+          Rating:
+          <select name="rating" required className="border rounded p-2">
+            <option value="">Select rating</option>
+            {[1, 2, 3, 4, 5].map(n => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
 
-cloudinary.config({
-cloud_name: process.env.CLOUDINARY_CLOUD_NAME!,
-api_key: process.env.CLOUDINARY_API_KEY!,
-api_secret: process.env.CLOUDINARY_API_SECRET!,
-});
+        <textarea
+          name="message"
+          placeholder="What do you think about the website?"
+          className="border rounded p-2 min-h-[80px]"
+        />
+        <textarea
+          name="suggestions"
+          placeholder="What features would you like to see?"
+          className="border rounded p-2 min-h-[80px]"
+        />
 
-export async function uploadSellerDocumentation(formData: FormData) {
-const sellerId = formData.get("sellerId") as string;
-const documentationTypeId = formData.get("documentationTypeId") as string;
-const file = formData.get("file") as File;
-
-if (!file) throw new Error("No file provided");
-
-const arrayBuffer = await file.arrayBuffer();
-const buffer = Buffer.from(arrayBuffer);
-
-const upload = await cloudinary.uploader.upload_stream(
-{ folder: `golden-hive/listings/documents/${sellerId}` },
-async (error, result) => {
-if (error) throw new Error(error.message);
-
-      await db.insert(sellerDocumentation).values({
-        sellerId,
-        documentationTypeId,
-        documentUrl: result.secure_url,
-        cloudinaryPublicId: result.public_id,
-      });
-
-      revalidatePath("/dashboard/seller/documentation");
-    }
+        <button
+          type="submit"
+          className="bg-yellow-600 text-white py-2 rounded hover:bg-yellow-700"
+        >
+          Submit Feedback
+        </button>
+      </form>
+    </div>
 
 );
-
-upload.end(buffer);
-
-return { success: true, message: "Document uploaded successfully." };
 }
 
-reviewSellerDocumentation(docId: string, action: "approve" | "reject")
+🧑‍💼 5. Admin Dashboard Integration
 
-Used by admins to review documents.
+Add a new admin route: /dashboard/admin/feedback/page.tsx
 
-"use server";
+import { getAllFeedbacks, deleteFeedback } from '@/actions/feedbackActions';
 
-export async function reviewSellerDocumentation(docId: string, action: "approve" | "reject") {
-await db
-.update(sellerDocumentation)
-.set({
-status: action === "approve" ? "approved" : "rejected",
-reviewedAt: new Date(),
-})
-.where(eq(sellerDocumentation.id, docId));
-}
+export default async function AdminFeedbackPage() {
+const feedbacks = await getAllFeedbacks();
 
-deleteSellerDocumentsOnAccountRemoval(sellerId: string)
+return (
 
-Called when a user account is deleted.
+<div className="p-6">
+<h2 className="text-xl font-semibold mb-4">Visitor Feedback</h2>
+{feedbacks.length === 0 && <p>No feedback yet.</p>}
 
-"use server";
+      <ul className="space-y-4">
+        {feedbacks.map(f => (
+          <li
+            key={f.id}
+            className="border p-4 rounded-lg bg-white shadow-sm"
+          >
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm text-gray-600">
+                Rating: {f.rating}/5
+              </span>
+              <form action={async () => deleteFeedback(f.id)}>
+                <button className="text-red-500 text-sm hover:underline">
+                  Delete
+                </button>
+              </form>
+            </div>
+            <p className="text-gray-800">{f.message}</p>
+            {f.suggestions && (
+              <p className="text-gray-600 text-sm mt-2">
+                <strong>Suggestion:</strong> {f.suggestions}
+              </p>
+            )}
+            <p className="text-xs text-gray-400 mt-2">
+              {new Date(f.createdAt).toLocaleString()}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </div>
 
-export async function deleteSellerDocumentsOnAccountRemoval(sellerId: string) {
-const docs = await db
-.select({ publicId: sellerDocumentation.cloudinaryPublicId })
-.from(sellerDocumentation)
-.where(eq(sellerDocumentation.sellerId, sellerId));
-
-for (const doc of docs) {
-await cloudinary.uploader.destroy(doc.publicId);
-}
-
-await cloudinary.api.delete_folder(`golden-hive/listings/documents/${sellerId}`);
-}
-
-🧮 3. Listing Creation Flow (Server Action Integration)
-
-When the seller submits a new listing:
-
-Fetch requiredDocs = getRequiredDocumentsForCategory(categoryId)
-
-Fetch existingDocs = getSellerDocuments(sellerId) (where status = “approved”)
-
-Compute missing docs:
-
-const missingDocs = requiredDocs.filter(
-(req) => !existingDocs.some((e) => e.typeId === req.id && e.status === "approved")
 );
+}
 
-If missingDocs.length > 0, block listing submission and show a modal to upload only missing docs.
+🔒 6. Access Control
 
-If all are approved, allow listing creation.
+Restrict /dashboard/admin/feedback to users with role = 'admin'.
 
-🧑‍💻 4. Frontend Pages (under /dashboard)
-/dashboard/seller/documentation
+If you already have middleware or a ProtectedRoute component:
 
-Lists all documentation types (both required and uploaded)
+Apply it to /dashboard/admin/feedback.
 
-Shows badges:
+Redirect non-admins back to /.
 
-🟢 Approved
+💡 7. Optional Enhancements
 
-🟡 Pending
+Add pagination or search on admin page.
 
-🔴 Rejected
+Include “feedback count” in your dashboard summary.
 
-Allows upload via <form action={uploadSellerDocumentation}>
+Add toast confirmation (react-hot-toast or custom) on submission.
 
-/dashboard/admin/documentation
-
-Lists all submitted documents for all sellers.
-
-Allows admin to review with Approve/Reject buttons using
-action={reviewSellerDocumentation}
-
-☁️ 5. Cloudinary Folder Structure
-golden-hive/
-└── listings/
-└── documents/
-├── seller123/
-│ ├── food_license.jpg
-│ └── export_certificate.pdf
-├── seller456/
-│ └── herbal_auth.jpg
-
-✅ 6. Requirements Summary
-Feature Description
-Document upload Via server action, stored in Cloudinary
-Reusability Seller doesn’t reupload docs already approved
-Multi-doc categories Ask only for missing ones
-Auto-delete All seller docs deleted when their account is removed
-Admin review Approve/reject via dashboard form
-Storage path golden-hive/listings/documents/[sellerId]
+✅ Deliverables Summary
+Component Description
+/feedback Public page with anonymous feedback form
+/dashboard/admin/feedback Admin-only page showing and deleting feedback
+db/schema/feedback.ts Drizzle schema for feedbacks table
+actions/feedbackActions.ts Server Actions for CRUD operations
+feedbacks table Stored in Neon PostgreSQL
+Access Control Only admins can view/delete feedback

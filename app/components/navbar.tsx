@@ -20,6 +20,7 @@ export function Navbar() {
   const navItems = [
     { name: "Products", href: "/products" },
     { name: "About", href: "/about" },
+    { name: "Feedback", href: "/feedback" },
     { name: "Dashboard", href: "/dashboard", requiresAuth: true },
     { name: "Login", href: "/login", requiresAuth: false },
   ];

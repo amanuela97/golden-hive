@@ -1,8 +1,8 @@
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { getListingsByProducer } from "@/lib/listing";
-import ProductsPageClient from "../../components/shared/ProductsPageClient";
+import { getAllListingsWithUsers } from "@/lib/listing";
+import AdminProductsPageClient from "./AdminProductsPageClient";
 
 export default async function AdminProductsPage() {
   const session = await auth.api.getSession({
@@ -13,21 +13,21 @@ export default async function AdminProductsPage() {
     redirect("/login");
   }
 
-  // Get products for the current user (producer)
-  const products = await getListingsByProducer(session.user.id);
+  // Get all products with user information
+  const products = await getAllListingsWithUsers();
 
   return (
     <div className="h-screen space-y-6 py-4 px-6 ">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Products</h1>
+          <h1 className="text-3xl font-bold">All Products</h1>
           <p className="text-gray-600 mt-2">
-            Manage your product listings and inventory
+            Manage all product listings across the platform
           </p>
         </div>
       </div>
 
-      <ProductsPageClient products={products} basePath="/dashboard/admin" />
+      <AdminProductsPageClient products={products} />
     </div>
   );
 }

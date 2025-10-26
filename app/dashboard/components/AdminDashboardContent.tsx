@@ -134,6 +134,17 @@ export default function AdminDashboardContent({
             </Button>
           </Link>
 
+          {/* Feedbacks  */}
+          <Link href="/dashboard/admin/feedback">
+            <Button
+              variant="outline"
+              className="flex items-center gap-2 bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
+            >
+              <FileText className="w-4 h-4" />
+              View Feedbacks
+            </Button>
+          </Link>
+
           <LogoutButton />
         </div>
       </div>

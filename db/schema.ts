@@ -267,6 +267,9 @@ export const sellerDocumentation = pgTable(
   ]
 );
 
+// Export feedbacks table
+export { feedbacks } from "./schema/feedback";
+
 export type User = InferSelectModel<typeof user>;
 export type Session = InferSelectModel<typeof session>;
 export type Account = InferSelectModel<typeof account>;
