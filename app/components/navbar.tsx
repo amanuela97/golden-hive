@@ -5,14 +5,33 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-client";
 import { useEffect, useState } from "react";
-import { Menu, X } from "lucide-react";
+import { Menu, X, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import Image from "next/image";
+import { useCart } from "@/lib/cart-context";
 
-export function Navbar() {
+type NavbarItem = {
+  id?: number;
+  label?: string;
+  name?: string;
+  href: string;
+  order?: number | null;
+  requiresAuth?: boolean | null;
+  isVisible?: boolean | null;
+};
+
+type NavbarProps = {
+  title?: string;
+  logoUrl?: string;
+  items?: NavbarItem[];
+};
+
+export function Navbar(props: NavbarProps = {}) {
   const pathname = usePathname();
   const { data: session } = useSession();
   const [mounted, setMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { itemCount, total } = useCart();
 
   // Prevent hydration mismatch
   useEffect(() => {
@@ -25,7 +44,7 @@ export function Navbar() {
   }, [pathname]);
 
   // Always show the same nav items structure to prevent hydration issues
-  const navItems = [
+  const defaultItems: NavbarItem[] = [
     { name: "Products", href: "/products" },
     { name: "About", href: "/about" },
     { name: "Feedback", href: "/feedback" },
@@ -33,12 +52,28 @@ export function Navbar() {
     { name: "Login", href: "/login", requiresAuth: false },
   ];
 
+  const navItems: NavbarItem[] = (
+    props.items && props.items.length > 0
+      ? [...props.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      : defaultItems
+  ).filter((i) => i.isVisible !== false);
+
   const filteredNavItems = navItems.filter((item) => {
     if (!mounted) return false;
+    // Only restrict for explicit auth-gated items
     if (item.requiresAuth === true && !session?.user) return false;
-    if (item.requiresAuth === false && session?.user) return false;
+
+    // Hide "Login" when the user is already logged in
+    const isLoginItem =
+      (item.href && item.href.toLowerCase() === "/login") ||
+      (item.label ?? item.name ?? "").toLowerCase() === "login";
+    if (session?.user && isLoginItem) return false;
+
+    // Otherwise, show item regardless of requiresAuth value
     return true;
   });
+
+  console.log("navbar props", props);
 
   return (
     <nav className="sticky top-0 z-50 w-full bg-background shadow-sm">
@@ -48,33 +83,62 @@ export function Navbar() {
           href="/"
           className="flex items-center gap-3 transition-opacity hover:opacity-80"
         >
-          <BeeLogo />
+          {props.logoUrl ? (
+            <Image
+              src={props.logoUrl}
+              alt={props.title ?? "Golden Hive"}
+              width={80}
+              height={40}
+            />
+          ) : (
+            <BeeLogo />
+          )}
           <span className="font-serif text-2xl font-bold tracking-tight text-accent md:text-4xl">
-            Golden Hive
+            {props.title ?? "Golden Hive"}
           </span>
         </Link>
 
         {/* Desktop Navigation Items */}
-        <ul className="hidden md:flex items-center gap-8">
-          {filteredNavItems.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className={cn(
-                    "text-sm font-medium uppercase tracking-wide transition-colors",
-                    isActive
-                      ? "text-accent"
-                      : "text-foreground/70 hover:text-accent"
-                  )}
-                >
-                  {item.name}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="hidden md:flex items-center gap-8">
+          <ul className="flex items-center gap-8">
+            {filteredNavItems.map((item) => {
+              const label = item.label ?? item.name ?? "Untitled";
+              const isActive = pathname === item.href;
+              return (
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    className={cn(
+                      "text-sm font-medium uppercase tracking-wide transition-colors",
+                      isActive
+                        ? "text-accent"
+                        : "text-foreground/70 hover:text-accent"
+                    )}
+                  >
+                    {label}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+          {/* Cart Icon */}
+          <Link
+            href="/cart"
+            className="relative flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-colors"
+          >
+            <ShoppingCart className="w-5 h-5" />
+            {itemCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                {itemCount}
+              </span>
+            )}
+            {total > 0 && (
+              <span className="text-sm font-semibold text-foreground">
+                €{total.toFixed(2)}
+              </span>
+            )}
+          </Link>
+        </div>
 
         {/* Mobile Menu Button */}
         <Button
@@ -97,6 +161,7 @@ export function Navbar() {
         <div className="md:hidden border-t bg-background shadow-lg">
           <ul className="container mx-auto px-4 py-4 space-y-4">
             {filteredNavItems.map((item) => {
+              const label = item.label ?? item.name ?? "Untitled";
               const isActive = pathname === item.href;
               return (
                 <li key={item.href}>
@@ -109,11 +174,31 @@ export function Navbar() {
                         : "text-foreground/70 hover:text-accent"
                     )}
                   >
-                    {item.name}
+                    {label}
                   </Link>
                 </li>
               );
             })}
+            {/* Mobile Cart Link */}
+            <li>
+              <Link
+                href="/cart"
+                className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide transition-colors py-2"
+              >
+                <ShoppingCart className="w-5 h-5" />
+                <span>Cart</span>
+                {itemCount > 0 && (
+                  <span className="bg-primary text-primary-foreground text-xs font-bold rounded-full px-2 py-0.5">
+                    {itemCount}
+                  </span>
+                )}
+                {total > 0 && (
+                  <span className="ml-auto text-sm font-semibold">
+                    €{total.toFixed(2)}
+                  </span>
+                )}
+              </Link>
+            </li>
           </ul>
         </div>
       )}

@@ -12,6 +12,7 @@ import {
   pgEnum,
   jsonb,
   unique,
+  varchar,
 } from "drizzle-orm/pg-core";
 
 export const userStatusEnum = pgEnum("user_status", [
@@ -267,6 +268,91 @@ export const sellerDocumentation = pgTable(
   ]
 );
 
+// ===================================
+// NAVBAR
+// ===================================
+export const navbar = pgTable("navbar", {
+  id: serial("id").primaryKey(),
+  title: varchar("title", { length: 200 }).notNull(), // e.g., "Golden Hive"
+  logoUrl: varchar("logo_url", { length: 500 }).notNull(), // Cloudinary URL or static path
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const navbarItems = pgTable("navbar_items", {
+  id: serial("id").primaryKey(),
+  navbarId: integer("navbar_id")
+    .notNull()
+    .references(() => navbar.id, { onDelete: "cascade" }),
+  label: varchar("label", { length: 100 }).notNull(),
+  href: varchar("href", { length: 255 }).notNull(),
+  order: integer("order").default(0),
+  requiresAuth: boolean("requires_auth").default(false),
+  isVisible: boolean("is_visible").default(true),
+});
+
+// ===================================
+// FOOTER
+// ===================================
+export const footerSections = pgTable("footer_sections", {
+  id: serial("id").primaryKey(),
+  title: varchar("title", { length: 150 }).notNull(), // e.g., "Office", "Payment", etc.
+  order: integer("order").default(0),
+});
+
+export const footerItems = pgTable("footer_items", {
+  id: serial("id").primaryKey(),
+  sectionId: integer("section_id")
+    .notNull()
+    .references(() => footerSections.id, { onDelete: "cascade" }),
+
+  // For text, link, or icon-based entries
+  text: varchar("text", { length: 255 }),
+  href: varchar("href", { length: 255 }), // optional link
+  icon: varchar("icon", { length: 100 }), // e.g., "MapPin", "Phone", "Mail"
+  hasIcon: boolean("has_icon").default(false),
+
+  // For lists (e.g., payment options)
+  listItems: jsonb("list_items").$type<string[]>(),
+
+  order: integer("order").default(0),
+});
+
+// ===================================
+// ABOUT PAGE
+// ===================================
+export const aboutPage = pgTable("about_page", {
+  id: serial("id").primaryKey(),
+  title: varchar("title", { length: 200 }).notNull(),
+  description: text("description"),
+  metadata: jsonb("metadata").$type<{
+    openGraphTitle?: string;
+    openGraphDescription?: string;
+  }>(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Each section of the About page (hero, mission, values, etc.)
+export const aboutSections = pgTable("about_sections", {
+  id: serial("id").primaryKey(),
+  aboutId: integer("about_id")
+    .notNull()
+    .references(() => aboutPage.id, { onDelete: "cascade" }),
+  type: varchar("type", { length: 50 }).notNull(), // e.g., 'hero', 'mission', 'values', 'cta'
+  title: varchar("title", { length: 200 }),
+  subtitle: varchar("subtitle", { length: 300 }),
+  content: text("content"), // for paragraphs or rich text
+  imageUrl: varchar("image_url", { length: 500 }), // Cloudinary image
+  extraData: jsonb("extra_data").$type<{
+    list?: { title: string; description?: string }[];
+    features?: { title: string; description?: string }[];
+    buttons?: { label: string; href: string; variant?: "solid" | "outline" }[];
+  }>(),
+  order: integer("order").default(0),
+  isVisible: boolean("is_visible").default(true),
+});
+
 // Export feedbacks table
 export { feedbacks } from "./schema/feedback";
 
@@ -280,3 +366,47 @@ export type CategoryDocumentation = InferSelectModel<
   typeof categoryDocumentation
 >;
 export type SellerDocumentation = InferSelectModel<typeof sellerDocumentation>;
+export type Navbar = InferSelectModel<typeof navbar>;
+export type NavbarItems = InferSelectModel<typeof navbarItems>;
+export type FooterSections = InferSelectModel<typeof footerSections>;
+export type FooterItems = InferSelectModel<typeof footerItems>;
+export type AboutPage = InferSelectModel<typeof aboutPage>;
+export type AboutSections = InferSelectModel<typeof aboutSections>;
+
+// Shipping and Billing Information
+export const shippingBillingInfo = pgTable("shipping_billing_info", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" })
+    .unique(), // One address per user
+  // Billing Information
+  billingFirstName: text("billing_first_name"),
+  billingLastName: text("billing_last_name"),
+  billingCompany: text("billing_company"),
+  billingCountry: text("billing_country"),
+  billingAddress: text("billing_address"),
+  billingAddress2: text("billing_address_2"),
+  billingCity: text("billing_city"),
+  billingState: text("billing_state"),
+  billingZip: text("billing_zip"),
+  billingPhone: text("billing_phone"),
+  billingEmail: text("billing_email"),
+  // Shipping Information
+  shippingFirstName: text("shipping_first_name"),
+  shippingLastName: text("shipping_last_name"),
+  shippingCompany: text("shipping_company"),
+  shippingCountry: text("shipping_country"),
+  shippingAddress: text("shipping_address"),
+  shippingAddress2: text("shipping_address_2"),
+  shippingCity: text("shipping_city"),
+  shippingState: text("shipping_state"),
+  shippingZip: text("shipping_zip"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
+
+export type ShippingBillingInfo = InferSelectModel<typeof shippingBillingInfo>;

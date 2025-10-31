@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -25,7 +25,10 @@ import RoleManagement from "./admin/RoleManagement";
 import PermissionsManagement from "./admin/PermissionsManagement";
 import { GetUserStatsResponse } from "@/lib/types";
 import LogoutButton from "@/app/components/LogoutButton";
+import SettingsModal from "./shared/SettingsModal";
 import { User } from "better-auth";
+import { useSession } from "@/lib/auth-client";
+import { Settings } from "lucide-react";
 
 interface RoleFromDB {
   id: number;
@@ -60,6 +63,18 @@ export default function AdminDashboardContent({
   initialPermissions,
 }: AdminDashboardContentProps) {
   const [activeTab, setActiveTab] = useState("users");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const { data: session } = useSession();
+
+  const handleSettingsOpen = useCallback(() => {
+    setIsSettingsOpen(true);
+  }, []);
+
+  const handleSettingsClose = useCallback(() => {
+    setIsSettingsOpen(false);
+  }, []);
+
+  const isCredential = session?.user?.emailVerified ?? false;
 
   // Use initial data from props
   const stats = initialStats || {
@@ -145,9 +160,24 @@ export default function AdminDashboardContent({
             </Button>
           </Link>
 
+          <Button
+            variant="outline"
+            onClick={handleSettingsOpen}
+            className="flex items-center gap-2"
+          >
+            <Settings className="w-4 h-4" />
+            Settings
+          </Button>
+
           <LogoutButton />
         </div>
       </div>
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={handleSettingsClose}
+        isCredential={isCredential}
+      />
 
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

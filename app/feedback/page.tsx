@@ -2,7 +2,7 @@ import { submitFeedback } from "../actions/feedbackActions";
 
 export default function FeedbackPage() {
   return (
-    <div className="max-w-xl mx-auto mt-12 p-6 bg-white shadow rounded-xl">
+    <div className="min-h-screen max-w-xl mx-auto mt-12 p-6 bg-white shadow rounded-xl">
       <h1 className="text-2xl font-semibold mb-4 text-center">
         We&apos;d love your feedback
       </h1>

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Card,
   CardContent,
@@ -17,6 +18,8 @@ import {
   Plus,
   Eye,
   EyeOff,
+  List,
+  Menu,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -25,6 +28,14 @@ import {
   useBenefitsSection,
 } from "@/app/hooks/useHomepageContentQueries";
 import { HeroSlide } from "@/app/actions/homepage-content";
+import {
+  getNavbarData as getNavbarCMS,
+  getFooterData as getFooterCMS,
+  getAboutData as getAboutPageCMS,
+  type FooterData as FooterCMSData,
+  type NavbarData as NavbarCMSData,
+  type AboutData as AboutPageCMSData,
+} from "@/app/actions/site-content";
 
 const sections = [
   {
@@ -34,16 +45,34 @@ const sections = [
     description: "Manage hero section slides (3-5 slides max)",
   },
   {
-    name: "Benefits Section",
+    name: "Homepage Benefits Section",
     path: "/dashboard/admin/content/benefits",
     icon: Star,
     description: "Manage benefit cards (3 max)",
   },
   {
-    name: "About Section",
+    name: "Homepage About Section",
+    path: "/dashboard/admin/content/homepage-about",
+    icon: Info,
+    description: "Manage about section content (with images)",
+  },
+  {
+    name: "About Page",
     path: "/dashboard/admin/content/about",
     icon: Info,
-    description: "Manage about section content",
+    description: "Manage the /about page content (with images)",
+  },
+  {
+    name: "Navbar",
+    path: "/dashboard/admin/content/navbar",
+    icon: Menu,
+    description: "Manage navigation links and branding",
+  },
+  {
+    name: "Footer",
+    path: "/dashboard/admin/content/footer",
+    icon: List,
+    description: "Manage footer sections and items",
   },
 ];
 
@@ -52,6 +81,31 @@ export default function ContentManagementIndex() {
   const { data: aboutData, isLoading: aboutLoading } = useAboutSection();
   const { data: benefitsData, isLoading: benefitsLoading } =
     useBenefitsSection();
+
+  const [navbarData, setNavbarData] = useState<NavbarCMSData | null>(null);
+  const [footerData, setFooterData] = useState<FooterCMSData>([]);
+  const [aboutPageData, setAboutPageData] = useState<AboutPageCMSData | null>(
+    null
+  );
+
+  // Load CMS data for Navbar, Footer, About Page
+  // These are lightweight and called on the client similar to other sections
+  useEffect(() => {
+    (async () => {
+      try {
+        const [nav, foot, aboutPage] = await Promise.all([
+          getNavbarCMS(),
+          getFooterCMS(),
+          getAboutPageCMS(),
+        ]);
+        setNavbarData(nav ?? null);
+        setFooterData(foot ?? []);
+        setAboutPageData(aboutPage ?? null);
+      } catch {
+        // best-effort; leave as null/empty on failure
+      }
+    })();
+  }, []);
 
   const heroSlides = heroData?.result || [];
   const aboutSection = aboutData?.result;
@@ -69,7 +123,7 @@ export default function ContentManagementIndex() {
           status: activeHeroSlides.length > 0 ? "active" : "empty",
           message: `${activeHeroSlides.length}/5 slides active`,
         };
-      case "Benefits Section":
+      case "Homepage Benefits Section":
         return {
           count: benefitsSection?.items?.length || 0,
           max: 3,
@@ -78,13 +132,53 @@ export default function ContentManagementIndex() {
             ? `${benefitsSection.items?.length || 0}/3 benefits`
             : "No content",
         };
-      case "About Section":
+      case "Homepage About Section":
         return {
           count: aboutSection ? 1 : 0,
           max: 1,
           status: aboutSection ? "active" : "empty",
           message: aboutSection ? "Content available" : "No content",
         };
+      case "About Page": {
+        const hasAbout = !!aboutPageData;
+        const sectionsCount = aboutPageData?.sections?.length || 0;
+        return {
+          count: sectionsCount,
+          max: 0,
+          status:
+            hasAbout && (aboutPageData?.title || sectionsCount > 0)
+              ? "active"
+              : "empty",
+          message: hasAbout
+            ? `${sectionsCount} section${sectionsCount === 1 ? "" : "s"}`
+            : "No content",
+        };
+      }
+      case "Navbar": {
+        const itemsCount = navbarData?.items?.length || 0;
+        const hasBranding = !!(navbarData?.title || navbarData?.logoUrl);
+        const isActive = itemsCount > 0 || hasBranding;
+        return {
+          count: itemsCount,
+          max: 0,
+          status: isActive ? "active" : "empty",
+          message: isActive
+            ? `${itemsCount} item${itemsCount === 1 ? "" : "s"}`
+            : "No items",
+        };
+      }
+      case "Footer": {
+        const sectionsCount = footerData.length;
+        return {
+          count: sectionsCount,
+          max: 0,
+          status: sectionsCount > 0 ? "active" : "empty",
+          message:
+            sectionsCount > 0
+              ? `${sectionsCount} section${sectionsCount === 1 ? "" : "s"}`
+              : "No sections",
+        };
+      }
       default:
         return {
           count: 0,
@@ -277,7 +371,7 @@ export default function ContentManagementIndex() {
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">
-                        About Section
+                        Homepage About Section
                       </p>
                       <p className="text-2xl font-bold">
                         {aboutSection ? 1 : 0}

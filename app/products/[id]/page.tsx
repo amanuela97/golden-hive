@@ -1,6 +1,6 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,8 @@ import { ProductCard } from "@/app/components/product-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProduct, useRelatedProducts } from "@/app/hooks/useProductQueries";
 import { PublicProduct } from "@/app/actions/public-products";
+import { useCart } from "@/lib/cart-context";
+import toast from "react-hot-toast";
 
 export default function ProductDetailPage({
   params,
@@ -18,6 +20,8 @@ export default function ProductDetailPage({
   const { id } = use(params);
   const { data: productData, isLoading, error } = useProduct(id);
   const product = productData?.result;
+  const { addItem } = useCart();
+  const [quantity, setQuantity] = useState(1);
 
   const { data: relatedProductsData } = useRelatedProducts(
     id,
@@ -25,6 +29,33 @@ export default function ProductDetailPage({
     4
   );
   const relatedProducts = relatedProductsData?.result || [];
+
+  const handleDecrement = () => {
+    if (quantity > 1) {
+      setQuantity(quantity - 1);
+    }
+  };
+
+  const handleIncrement = () => {
+    setQuantity(quantity + 1);
+  };
+
+  const handleAddToCart = () => {
+    if (!product) return;
+    addItem(
+      {
+        id: product.id,
+        name: product.name,
+        price: parseFloat(product.price),
+        image: product.imageUrl,
+        category: product.categoryName,
+        currency: product.currency || "NPR",
+      },
+      quantity
+    );
+    toast.success(`${quantity} ${product.name} added to cart!`);
+    setQuantity(1); // Reset quantity after adding
+  };
 
   if (isLoading) {
     return (
@@ -85,20 +116,39 @@ export default function ProductDetailPage({
             {/* Quantity and Add to Cart */}
             <div className="flex items-center gap-4 mb-8">
               <div className="flex items-center border border-border rounded-lg">
-                <Button variant="ghost" size="icon" className="h-12 w-12">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-12 w-12"
+                  onClick={handleDecrement}
+                  disabled={quantity <= 1}
+                >
                   <Minus className="h-4 w-4" />
                 </Button>
                 <input
                   type="number"
-                  value="1"
-                  readOnly
+                  value={quantity}
+                  onChange={(e) => {
+                    const value = Number.parseInt(e.target.value) || 1;
+                    setQuantity(Math.max(1, value));
+                  }}
+                  min="1"
                   className="w-16 text-center border-x border-border bg-transparent text-foreground"
                 />
-                <Button variant="ghost" size="icon" className="h-12 w-12">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-12 w-12"
+                  onClick={handleIncrement}
+                >
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
-              <Button size="lg" className="flex-1 h-12 text-base">
+              <Button
+                size="lg"
+                className="flex-1 h-12 text-base"
+                onClick={handleAddToCart}
+              >
                 Add to Cart
               </Button>
             </div>

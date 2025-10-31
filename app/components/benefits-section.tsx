@@ -1,18 +1,13 @@
-import { Leaf, Heart, Users } from "lucide-react";
 import {
   BenefitItem,
   BenefitsSection as BenefitsSectionType,
 } from "@/app/actions/homepage-content";
+import { ICON_MAP } from "@/lib/icons";
+import { Leaf } from "lucide-react";
 
 interface BenefitsSectionProps {
   data: BenefitsSectionType;
 }
-
-const iconMap = {
-  leaf: Leaf,
-  heart: Heart,
-  users: Users,
-};
 
 export function BenefitsSection({ data }: BenefitsSectionProps) {
   if (!data.isActive) return null;
@@ -26,7 +21,8 @@ export function BenefitsSection({ data }: BenefitsSectionProps) {
 
         <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
           {data.items.slice(0, 3).map((benefit: BenefitItem, index: number) => {
-            const Icon = iconMap[benefit.icon as keyof typeof iconMap] || Leaf;
+            const Icon =
+              ICON_MAP[benefit.icon as keyof typeof ICON_MAP] || Leaf;
 
             return (
               <div

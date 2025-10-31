@@ -314,16 +314,40 @@ export async function registerAction(
     const roleToAssign = isAdminEmail ? "Admin" : validatedData.data.role;
 
     // Attempt to create user using better-auth
-    const response = await auth.api.signUpEmail({
-      body: {
-        email: validatedData.data.email,
-        password: validatedData.data.password,
-        name: validatedData.data.name,
-        status: "pending", // Default status, will be updated based on email verification
-        callbackURL: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
-      },
-      headers: await headers(),
-    });
+    let response;
+    try {
+      response = await auth.api.signUpEmail({
+        body: {
+          email: validatedData.data.email,
+          password: validatedData.data.password,
+          name: validatedData.data.name,
+          status: "pending", // Default status, will be updated based on email verification
+          callbackURL: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
+        },
+        headers: await headers(),
+      });
+    } catch (err) {
+      // Log specific internal reason while returning a generic message to the user
+      const message = err instanceof Error ? err.message.toLowerCase() : "";
+      const looksLikeDuplicate =
+        message.includes("already exists") ||
+        message.includes("duplicate") ||
+        message.includes("conflict") ||
+        message.includes("unique");
+
+      if (looksLikeDuplicate) {
+        console.warn("Registration failed: email already exists");
+      } else {
+        console.error("Registration failed:", err);
+      }
+
+      return {
+        success: false,
+        error:
+          "Unable to register. Please check your information or try another email.",
+        payload: formData,
+      };
+    }
 
     if (!response) {
       return {

@@ -13,28 +13,33 @@ import { AboutSkeleton } from "./components/skeletons/about-skeleton";
 import { BenefitsSkeleton } from "./components/skeletons/benefits-skeleton";
 
 export const metadata: Metadata = {
-  title: "Premium Himalayan Mad Honey | Pure & Natural Honey Store",
+  title: "Connecting entrepreneurs with customers",
   description:
-    "Discover the finest Himalayan mad honey, traditionally harvested from pristine mountain cliffs. 100% organic, pure, and natural honey with unique health benefits.",
+    "Discover the finest products from entrepreneurs around the world",
   keywords: [
-    "mad honey",
-    "himalayan honey",
-    "organic honey",
-    "natural honey",
-    "pure honey",
-    "rhododendron honey",
+    "natural products",
+    "entrepreneurs",
+    "ecommerce",
+    "marketplace",
+    "business",
+    "startup",
+    "growth",
+    "scaling",
+    "entrepreneurship",
+    "entrepreneurial",
+    "entrepreneurial journey",
   ],
   openGraph: {
-    title: "Premium Himalayan Mad Honey | Pure & Natural",
+    title: "Connecting entrepreneurs with customers",
     description:
-      "Traditionally harvested mad honey from the Himalayas. Pure, organic, and supporting local communities.",
+      "Discover the finest products from entrepreneurs around the world",
     type: "website",
   },
 };
 
 export const dynamic = "force-dynamic";
 
-export const revalidate = 3600; // revalidate every 1 hour
+export const revalidate = false; // means static by default, updated only on revalidation
 
 async function HeroLoader() {
   const result = await getPublicHeroSlides();
