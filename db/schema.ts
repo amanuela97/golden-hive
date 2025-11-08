@@ -148,82 +148,6 @@ export const category = pgTable("category", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const listing = pgTable("listing", {
-  id: uuid("id").primaryKey(), // unique listing ID
-  producerId: text("producer_id") // link to users table (producer)
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-
-  // Basic product info
-  name: text("name").notNull(), // e.g., "Himalayan Mad Honey"
-  description: text("description"), // longer description
-  category: uuid("category_id").references(() => category.id, {
-    onDelete: "set null",
-  }), // e.g., "Domestic Honey", "Mad Honey"
-  imageUrl: text("image_url"), // main product image
-  gallery: text("gallery").array(), // optional additional images
-  tags: text("tags").array(),
-
-  // Pricing & inventory
-  price: numeric("price", { precision: 10, scale: 2 }).notNull(), // price per unit
-  currency: text("currency").default("NPR").notNull(),
-  stockQuantity: integer("stock_quantity").default(0), // available units
-  unit: text("unit").default("kg"), // e.g., kg, g, bottle
-
-  // Status & visibility
-  isActive: boolean("is_active").default(false), // hide if false
-  isFeatured: boolean("is_featured").default(false), // for homepage promotions
-  marketType: marketTypeEnum("market_type").default("local"), // local or international
-
-  // Timestamps
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-
-  // Optional fields for advanced features
-  ratingAverage: numeric("rating_average", { precision: 3, scale: 2 }).default(
-    "0"
-  ),
-  ratingCount: integer("rating_count").default(0),
-  salesCount: integer("sales_count").default(0), // total sold units
-  originVillage: text("origin_village"), // optional metadata
-  harvestDate: timestamp("harvest_date"), // when honey was harvested
-});
-
-// 🧁 Hero Slider
-export const homepageHero = pgTable(
-  "homepage_hero",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    imageUrl: text("image_url").notNull(),
-    title: text("title"),
-    subtitle: text("subtitle"),
-    ctaLabel: text("cta_label"),
-    ctaLink: text("cta_link"),
-    order: integer("order").default(0), // for ordering slides
-    isActive: boolean("is_active").default(true),
-  },
-  (table) => [unique().on(table.order)]
-);
-
-// 🍯 About Section
-export const homepageAbout = pgTable("homepage_about", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  title: text("title").default("Our Story"),
-  content: text("content"),
-  assetUrl: text("asset_url"),
-  isActive: boolean("is_active").default(true),
-});
-
-// 🌻 Benefits Section
-export const homepageBenefits = pgTable("homepage_benefits", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  title: text("title").default("Why Choose Golden Hive?"),
-  items: jsonb("items")
-    .$type<{ icon: string; title: string; description: string }[]>()
-    .default([]),
-  isActive: boolean("is_active").default(true),
-});
-
 // Documentation tables
 export const documentationType = pgTable("documentation_type", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -268,15 +192,160 @@ export const sellerDocumentation = pgTable(
   ]
 );
 
+//////////////////////////////////////////////////////////
+// LISTING (Base table in English)
+//////////////////////////////////////////////////////////
+
+export const listing = pgTable("listing", {
+  id: uuid("id").primaryKey(), // unique listing ID
+  producerId: text("producer_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+
+  // Basic product info
+  name: text("name").notNull(), // e.g. "Himalayan Mad Honey"
+  description: text("description"),
+  category: uuid("category_id").references(() => category.id, {
+    onDelete: "set null",
+  }),
+  imageUrl: text("image_url"),
+  gallery: text("gallery").array(),
+  tags: text("tags").array(),
+
+  // Pricing & inventory
+  price: numeric("price", { precision: 10, scale: 2 }).notNull(),
+  currency: text("currency").default("NPR").notNull(),
+  stockQuantity: integer("stock_quantity").default(0),
+  unit: text("unit").default("kg"),
+
+  // Status & visibility
+  isActive: boolean("is_active").default(false),
+  isFeatured: boolean("is_featured").default(false),
+  marketType: marketTypeEnum("market_type").default("local"),
+
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+
+  // Optional metadata
+  ratingAverage: numeric("rating_average", { precision: 3, scale: 2 }).default(
+    "0"
+  ),
+  ratingCount: integer("rating_count").default(0),
+  salesCount: integer("sales_count").default(0),
+  originVillage: text("origin_village"),
+  harvestDate: timestamp("harvest_date"),
+});
+
+//////////////////////////////////////////////////////////
+// LISTING TRANSLATIONS TABLE
+//////////////////////////////////////////////////////////
+
+export const listingTranslations = pgTable("listing_translations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  listingId: uuid("listing_id")
+    .notNull()
+    .references(() => listing.id, { onDelete: "cascade" }),
+
+  // Locale code (e.g. 'en', 'fi', 'ne')
+  locale: varchar("locale", { length: 10 }).notNull(),
+
+  // Translatable fields
+  name: text("name"),
+  description: text("description"),
+  tags: text("tags").array(),
+
+  // Optional localized metadata
+  originVillage: text("origin_village"),
+});
+
+// ===================================
+// HOMEPAGE
+// ===================================
+// Hero section
+export const homepageHero = pgTable("homepage_hero", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  imageUrl: text("image_url").notNull(),
+  ctaLink: text("cta_link"),
+  order: integer("order").default(0),
+  isActive: boolean("is_active").default(true),
+});
+
+export const homepageHeroTranslations = pgTable("homepage_hero_translations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  heroId: uuid("hero_id")
+    .notNull()
+    .references(() => homepageHero.id, { onDelete: "cascade" }),
+  locale: varchar("locale", { length: 10 }).notNull(),
+  title: text("title"),
+  subtitle: text("subtitle"),
+  ctaLabel: text("cta_label"),
+});
+
+// About section
+export const homepageAbout = pgTable("homepage_about", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  assetUrl: text("asset_url"),
+  isActive: boolean("is_active").default(true),
+});
+
+export const homepageAboutTranslations = pgTable(
+  "homepage_about_translations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    aboutId: uuid("about_id")
+      .notNull()
+      .references(() => homepageAbout.id, { onDelete: "cascade" }),
+    locale: varchar("locale", { length: 10 }).notNull(),
+    title: text("title"),
+    content: text("content"),
+  }
+);
+
+// Benefits section
+export const homepageBenefits = pgTable("homepage_benefits", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  isActive: boolean("is_active").default(true),
+});
+
+export const homepageBenefitTranslations = pgTable(
+  "homepage_benefit_translations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    benefitId: uuid("benefit_id")
+      .notNull()
+      .references(() => homepageBenefits.id, { onDelete: "cascade" }),
+    locale: varchar("locale", { length: 10 }).notNull(),
+    title: text("title"),
+    items: jsonb("items").$type<
+      {
+        icon: string;
+        title: string;
+        description: string;
+      }[]
+    >(),
+  }
+);
+
+// ===================================
+
 // ===================================
 // NAVBAR
 // ===================================
 export const navbar = pgTable("navbar", {
   id: serial("id").primaryKey(),
-  title: varchar("title", { length: 200 }).notNull(), // e.g., "Golden Hive"
-  logoUrl: varchar("logo_url", { length: 500 }).notNull(), // Cloudinary URL or static path
+  logoUrl: varchar("logo_url", { length: 500 }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const navbarTranslations = pgTable("navbar_translations", {
+  id: serial("id").primaryKey(),
+  navbarId: integer("navbar_id")
+    .notNull()
+    .references(() => navbar.id, { onDelete: "cascade" }),
+  locale: varchar("locale", { length: 10 }).notNull(), // 'en', 'fi', 'ne'
+  title: varchar("title", { length: 200 }).notNull(),
 });
 
 export const navbarItems = pgTable("navbar_items", {
@@ -284,11 +353,19 @@ export const navbarItems = pgTable("navbar_items", {
   navbarId: integer("navbar_id")
     .notNull()
     .references(() => navbar.id, { onDelete: "cascade" }),
-  label: varchar("label", { length: 100 }).notNull(),
   href: varchar("href", { length: 255 }).notNull(),
   order: integer("order").default(0),
   requiresAuth: boolean("requires_auth").default(false),
   isVisible: boolean("is_visible").default(true),
+});
+
+export const navbarItemTranslations = pgTable("navbar_item_translations", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id")
+    .notNull()
+    .references(() => navbarItems.id, { onDelete: "cascade" }),
+  locale: varchar("locale", { length: 10 }).notNull(),
+  label: varchar("label", { length: 100 }).notNull(),
 });
 
 // ===================================
@@ -296,26 +373,40 @@ export const navbarItems = pgTable("navbar_items", {
 // ===================================
 export const footerSections = pgTable("footer_sections", {
   id: serial("id").primaryKey(),
-  title: varchar("title", { length: 150 }).notNull(), // e.g., "Office", "Payment", etc.
   order: integer("order").default(0),
 });
+
+export const footerSectionTranslations = pgTable(
+  "footer_section_translations",
+  {
+    id: serial("id").primaryKey(),
+    sectionId: integer("section_id")
+      .notNull()
+      .references(() => footerSections.id, { onDelete: "cascade" }),
+    locale: varchar("locale", { length: 10 }).notNull(),
+    title: varchar("title", { length: 150 }).notNull(),
+  }
+);
 
 export const footerItems = pgTable("footer_items", {
   id: serial("id").primaryKey(),
   sectionId: integer("section_id")
     .notNull()
     .references(() => footerSections.id, { onDelete: "cascade" }),
-
-  // For text, link, or icon-based entries
-  text: varchar("text", { length: 255 }),
-  href: varchar("href", { length: 255 }), // optional link
-  icon: varchar("icon", { length: 100 }), // e.g., "MapPin", "Phone", "Mail"
+  href: varchar("href", { length: 255 }),
+  icon: varchar("icon", { length: 100 }),
   hasIcon: boolean("has_icon").default(false),
-
-  // For lists (e.g., payment options)
-  listItems: jsonb("list_items").$type<string[]>(),
-
   order: integer("order").default(0),
+  listItems: jsonb("list_items").$type<string[]>(),
+});
+
+export const footerItemTranslations = pgTable("footer_item_translations", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id")
+    .notNull()
+    .references(() => footerItems.id, { onDelete: "cascade" }),
+  locale: varchar("locale", { length: 10 }).notNull(),
+  text: varchar("text", { length: 255 }),
 });
 
 // ===================================
@@ -323,8 +414,6 @@ export const footerItems = pgTable("footer_items", {
 // ===================================
 export const aboutPage = pgTable("about_page", {
   id: serial("id").primaryKey(),
-  title: varchar("title", { length: 200 }).notNull(),
-  description: text("description"),
   metadata: jsonb("metadata").$type<{
     openGraphTitle?: string;
     openGraphDescription?: string;
@@ -333,24 +422,47 @@ export const aboutPage = pgTable("about_page", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Each section of the About page (hero, mission, values, etc.)
+export const aboutPageTranslations = pgTable("about_page_translations", {
+  id: serial("id").primaryKey(),
+  aboutId: integer("about_id")
+    .notNull()
+    .references(() => aboutPage.id, { onDelete: "cascade" }),
+  locale: varchar("locale", { length: 10 }).notNull(),
+  title: varchar("title", { length: 200 }),
+  description: text("description"),
+});
+
 export const aboutSections = pgTable("about_sections", {
   id: serial("id").primaryKey(),
   aboutId: integer("about_id")
     .notNull()
     .references(() => aboutPage.id, { onDelete: "cascade" }),
-  type: varchar("type", { length: 50 }).notNull(), // e.g., 'hero', 'mission', 'values', 'cta'
-  title: varchar("title", { length: 200 }),
-  subtitle: varchar("subtitle", { length: 300 }),
-  content: text("content"), // for paragraphs or rich text
-  imageUrl: varchar("image_url", { length: 500 }), // Cloudinary image
-  extraData: jsonb("extra_data").$type<{
-    list?: { title: string; description?: string }[];
-    features?: { title: string; description?: string }[];
-    buttons?: { label: string; href: string; variant?: "solid" | "outline" }[];
-  }>(),
+  type: varchar("type", { length: 50 }).notNull(), // e.g. 'hero', 'mission', 'values'
+  imageUrl: varchar("image_url", { length: 500 }),
   order: integer("order").default(0),
   isVisible: boolean("is_visible").default(true),
+});
+
+export const aboutSectionTranslations = pgTable("about_section_translations", {
+  id: serial("id").primaryKey(),
+  sectionId: integer("section_id")
+    .notNull()
+    .references(() => aboutSections.id, { onDelete: "cascade" }),
+  locale: varchar("locale", { length: 10 }).notNull(),
+  title: varchar("title", { length: 200 }),
+  subtitle: varchar("subtitle", { length: 300 }),
+  content: text("content"),
+  extraData: jsonb("extra_data").$type<{
+    card1Icon?: string;
+    card1Title?: string;
+    card1Text?: string;
+    card2Icon?: string;
+    card2Title?: string;
+    card2Text?: string;
+    card3Icon?: string;
+    card3Title?: string;
+    card3Text?: string;
+  }>(),
 });
 
 // Export feedbacks table
@@ -410,3 +522,80 @@ export const shippingBillingInfo = pgTable("shipping_billing_info", {
 });
 
 export type ShippingBillingInfo = InferSelectModel<typeof shippingBillingInfo>;
+
+// ===================================
+// TRANSLATIONS
+// ===================================
+// Type for translation data - nested JSON structure
+// Top level keys are strings, values can be strings or nested objects
+export type TranslationData = Record<
+  string,
+  string | Record<string, string | Record<string, string>>
+>;
+
+export const translations = pgTable("translations", {
+  lang: text("lang").primaryKey(), // 'en', 'fi', 'ne'
+  // JSONB stores nested translation objects
+  // Type allows string values or nested Record structures
+  data: jsonb("data").notNull().$type<TranslationData>(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export type Translations = InferSelectModel<typeof translations>;
+
+// ===================================
+// FAQ
+// ===================================
+export const faqSections = pgTable("faq_sections", {
+  id: serial("id").primaryKey(),
+  slug: varchar("slug", { length: 100 }).notNull().unique(), // e.g. "for-sellers", "for-customers"
+  order: integer("order").default(0),
+  isVisible: boolean("is_visible").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const faqSectionTranslations = pgTable("faq_section_translations", {
+  id: serial("id").primaryKey(),
+  sectionId: integer("section_id")
+    .notNull()
+    .references(() => faqSections.id, { onDelete: "cascade" }),
+  locale: varchar("locale", { length: 10 }).notNull(), // 'en', 'fi', 'ne'
+  title: varchar("title", { length: 200 }).notNull(), // e.g. "For Sellers", "For Customers"
+});
+
+export const faqItems = pgTable("faq_items", {
+  id: serial("id").primaryKey(),
+  sectionId: integer("section_id")
+    .notNull()
+    .references(() => faqSections.id, { onDelete: "cascade" }),
+  order: integer("order").default(0),
+  isVisible: boolean("is_visible").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const faqItemTranslations = pgTable("faq_item_translations", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id")
+    .notNull()
+    .references(() => faqItems.id, { onDelete: "cascade" }),
+  locale: varchar("locale", { length: 10 }).notNull(), // 'en', 'fi', 'ne'
+  question: varchar("question", { length: 500 }).notNull(),
+  answer: text("answer").notNull(),
+});
+
+export type FaqSection = InferSelectModel<typeof faqSections>;
+export type FaqSectionTranslation = InferSelectModel<typeof faqSectionTranslations>;
+export type FaqItem = InferSelectModel<typeof faqItems>;
+export type FaqItemTranslation = InferSelectModel<typeof faqItemTranslations>;

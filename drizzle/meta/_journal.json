@@ -50,6 +50,20 @@
       "when": 1761834137694,
       "tag": "0006_cute_sinister_six",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1762432163669,
+      "tag": "0007_nervous_lenny_balinger",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1762560109174,
+      "tag": "0008_old_korath",
+      "breakpoints": true
     }
   ]
 }

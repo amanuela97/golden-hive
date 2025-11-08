@@ -2,7 +2,7 @@ import { APIError, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "@/db"; // your Drizzle schema
 import resend from "./resend";
-import ResetPasswordEmail from "@/app/components/reset-password-email";
+import ResetPasswordEmail from "@/app/[locale]/components/reset-password-email";
 import { nextCookies } from "better-auth/next-js";
 import { User } from "better-auth";
 export const auth = betterAuth({
@@ -38,7 +38,7 @@ export const auth = betterAuth({
       // Delete seller documents when account is removed
       try {
         const { deleteSellerDocumentsOnAccountRemoval } = await import(
-          "@/app/actions/documentation"
+          "@/app/[locale]/actions/documentation"
         );
         await deleteSellerDocumentsOnAccountRemoval(user.id);
         console.log(`Deleted documents for user: ${user.email}`);
