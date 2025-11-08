@@ -3,14 +3,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -400,7 +392,8 @@ function SectionCard({
             </div>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
-              No items in this section yet. Click "Add Item" to create one.
+              No items in this section yet. Click &quot;Add Item&quot; to create
+              one.
             </div>
           )}
         </CardContent>
@@ -452,7 +445,8 @@ function CreateSectionDialog({
               required
             />
             <p className="text-xs text-muted-foreground mt-1">
-              URL-friendly identifier (e.g., "for-sellers", "for-customers")
+              URL-friendly identifier (e.g., &quot;for-sellers&quot;,
+              &quot;for-customers&quot;)
             </p>
           </div>
           <div>

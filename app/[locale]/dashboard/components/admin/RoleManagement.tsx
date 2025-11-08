@@ -26,7 +26,6 @@ import {
   useCreateRole,
   useUpdateRole,
   useDeleteRole,
-  useRoleWithPermissions,
   usePermissions,
 } from "../../../hooks/useAdminQueries";
 import toast from "react-hot-toast";

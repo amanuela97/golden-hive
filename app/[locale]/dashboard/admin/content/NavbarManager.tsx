@@ -95,7 +95,7 @@ export default function NavbarManager() {
           <Button
             onClick={async () => {
               try {
-                await updateNavbar({ title, logoUrl }, "en");
+                await updateNavbar({ title, logoUrl });
                 await refresh();
                 toast.success("Navbar saved");
               } catch (e) {
@@ -174,17 +174,13 @@ export default function NavbarManager() {
                   variant="outline"
                   onClick={async () => {
                     try {
-                      await updateNavbarItem(
-                        item.id,
-                        {
-                          label: item.label,
-                          href: item.href,
-                          order: item.order,
-                          requiresAuth: item.requiresAuth,
-                          isVisible: item.isVisible ?? true,
-                        },
-                        "en"
-                      );
+                      await updateNavbarItem(item.id, {
+                        label: item.label,
+                        href: item.href,
+                        order: item.order,
+                        requiresAuth: item.requiresAuth,
+                        isVisible: item.isVisible ?? true,
+                      });
                       toast.success("Item saved");
                     } catch (e) {
                       toast.error(
@@ -254,16 +250,13 @@ export default function NavbarManager() {
                     ) as HTMLInputElement
                   ).checked;
                   if (!label || !href) return;
-                  await createNavbarItem(
-                    {
-                      label,
-                      href,
-                      order,
-                      requiresAuth,
-                      isVisible: true,
-                    },
-                    "en"
-                  );
+                  await createNavbarItem({
+                    label,
+                    href,
+                    order,
+                    requiresAuth,
+                    isVisible: true,
+                  });
                   await refresh();
                   (
                     document.getElementById("newLabel") as HTMLInputElement

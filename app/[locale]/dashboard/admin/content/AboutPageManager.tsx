@@ -68,13 +68,10 @@ export default function AboutPageManager() {
           <Button
             onClick={async () => {
               try {
-                await updateAboutPageContent(
-                  {
-                    title: page?.title ?? "",
-                    description: page?.description ?? "",
-                  },
-                  "en"
-                );
+                await updateAboutPageContent({
+                  title: page?.title ?? "",
+                  description: page?.description ?? "",
+                });
                 toast.success("About page saved");
               } catch (e) {
                 toast.error(
@@ -390,21 +387,18 @@ export default function AboutPageManager() {
                   variant="outline"
                   onClick={async () => {
                     try {
-                      await upsertAboutSectionContent(
-                        {
-                          id: s.id,
-                          type: s.type,
-                          title: s.title,
-                          subtitle: s.subtitle,
-                          content: s.content,
-                          imageUrl: s.imageUrl,
-                          extraData:
-                            (s.extraData as Record<string, string>) ?? null,
-                          order: s.order,
-                          isVisible: s.isVisible,
-                        },
-                        "en"
-                      );
+                      await upsertAboutSectionContent({
+                        id: s.id,
+                        type: s.type,
+                        title: s.title,
+                        subtitle: s.subtitle,
+                        content: s.content,
+                        imageUrl: s.imageUrl,
+                        extraData:
+                          (s.extraData as Record<string, string>) ?? null,
+                        order: s.order,
+                        isVisible: s.isVisible,
+                      });
                       toast.success("Section saved");
                     } catch (e) {
                       toast.error(
@@ -504,18 +498,15 @@ export default function AboutPageManager() {
                       document.getElementById("new-visible") as HTMLInputElement
                     ).value || "true") === "true";
                   if (!type) return;
-                  await upsertAboutSectionContent(
-                    {
-                      type,
-                      title,
-                      subtitle,
-                      content,
-                      imageUrl,
-                      order,
-                      isVisible,
-                    },
-                    "en"
-                  );
+                  await upsertAboutSectionContent({
+                    type,
+                    title,
+                    subtitle,
+                    content,
+                    imageUrl,
+                    order,
+                    isVisible,
+                  });
                   await reload();
                   toast.success("Section added");
                 } catch (e) {

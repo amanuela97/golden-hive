@@ -10,9 +10,6 @@ import {
   createFaqItem,
   updateFaqItem,
   deleteFaqItem,
-  type FaqSectionData,
-  type FaqSectionWithItems,
-  type FaqItemData,
   type CreateFaqSectionInput,
   type UpdateFaqSectionInput,
   type CreateFaqItemInput,
@@ -189,13 +186,7 @@ export function useDeleteFaqItem() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({
-      itemId,
-      sectionId,
-    }: {
-      itemId: number;
-      sectionId: number;
-    }) => {
+    mutationFn: async ({ itemId }: { itemId: number; sectionId: number }) => {
       const result = await deleteFaqItem(itemId);
       if (!result.success) {
         throw new Error(result.error || "Failed to delete FAQ item");

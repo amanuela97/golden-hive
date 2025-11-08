@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Link } from "@/i18n/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -425,12 +426,12 @@ export default function CategoryManagement({
                             </p>
                             <p className="text-xs text-gray-500">
                               Create documentation types first in the{" "}
-                              <a
+                              <Link
                                 href="/dashboard/admin/documentation"
                                 className="text-blue-600 hover:underline"
                               >
                                 Documentation Management
-                              </a>{" "}
+                              </Link>{" "}
                               page
                             </p>
                           </div>

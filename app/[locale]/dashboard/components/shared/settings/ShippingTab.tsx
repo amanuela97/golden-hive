@@ -107,7 +107,7 @@ export default function ShippingTab() {
       } else {
         toast.error(result.error || "Failed to save information");
       }
-    } catch (error) {
+    } catch {
       toast.error("An unexpected error occurred");
     } finally {
       setLoading(false);
