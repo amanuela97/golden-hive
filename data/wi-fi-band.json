@@ -1,0 +1,22 @@
+[
+  {
+    "value": "2.4ghz",
+    "label": "2.4 GHz"
+  },
+  {
+    "value": "5ghz",
+    "label": "5 GHz"
+  },
+  {
+    "value": "6ghz",
+    "label": "6 GHz"
+  },
+  {
+    "value": "dual-band",
+    "label": "Dual-Band"
+  },
+  {
+    "value": "tri-band",
+    "label": "Tri-Band"
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "value": "dry",
+    "label": "Dry"
+  },
+  {
+    "value": "off-dry",
+    "label": "Off-Dry"
+  },
+  {
+    "value": "semi-sweet",
+    "label": "Semi-Sweet"
+  },
+  {
+    "value": "sweet",
+    "label": "Sweet"
+  },
+  {
+    "value": "very-sweet",
+    "label": "Very Sweet"
+  }
+]

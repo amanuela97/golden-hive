@@ -1,0 +1,18 @@
+[
+  {
+    "value": "classic",
+    "label": "Classic"
+  },
+  {
+    "value": "modern",
+    "label": "Modern"
+  },
+  {
+    "value": "vintage",
+    "label": "Vintage"
+  },
+  {
+    "value": "contemporary",
+    "label": "Contemporary"
+  }
+]

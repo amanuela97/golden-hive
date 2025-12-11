@@ -1,0 +1,34 @@
+[
+  {
+    "value": "cotton",
+    "label": "Cotton"
+  },
+  {
+    "value": "polyester",
+    "label": "Polyester"
+  },
+  {
+    "value": "wool",
+    "label": "Wool"
+  },
+  {
+    "value": "silk",
+    "label": "Silk"
+  },
+  {
+    "value": "leather",
+    "label": "Leather"
+  },
+  {
+    "value": "plastic",
+    "label": "Plastic"
+  },
+  {
+    "value": "metal",
+    "label": "Metal"
+  },
+  {
+    "value": "wood",
+    "label": "Wood"
+  }
+]

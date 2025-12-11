@@ -1,17 +1,20 @@
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { redirect } from "@/i18n/navigation";
 import { db } from "@/db";
 import { userRoles, roles } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { getLocale } from "next-intl/server";
+import DashboardHomeServer from "./components/shared/DashboardHomeServer";
 
-export default async function Dashboard() {
+export default async function DashboardPage() {
+  const locale = await getLocale();
   const session = await auth.api.getSession({
     headers: await headers(),
   });
 
   if (!session) {
-    redirect("/login");
+    redirect({ href: "/login", locale });
   }
 
   // Get user's role
@@ -21,16 +24,17 @@ export default async function Dashboard() {
     })
     .from(userRoles)
     .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session.user.id))
+    .where(eq(userRoles.userId, session?.user.id ?? ""))
     .limit(1);
 
   if (userRole.length === 0) {
-    // User has no role, redirect to onboarding
-    redirect("/onboarding");
+    redirect({ href: "/onboarding", locale });
   }
 
-  const roleName = userRole[0].roleName.toLowerCase();
+  const roleName = userRole[0].roleName.toLowerCase() as
+    | "admin"
+    | "seller"
+    | "customer";
 
-  // Redirect to appropriate role-based dashboard
-  redirect(`/dashboard/${roleName}`);
+  return <DashboardHomeServer userRole={roleName} />;
 }

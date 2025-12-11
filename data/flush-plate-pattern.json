@@ -1,0 +1,22 @@
+[
+  {
+    "value": "solid",
+    "label": "Solid"
+  },
+  {
+    "value": "striped",
+    "label": "Striped"
+  },
+  {
+    "value": "polka-dot",
+    "label": "Polka Dot"
+  },
+  {
+    "value": "floral",
+    "label": "Floral"
+  },
+  {
+    "value": "geometric",
+    "label": "Geometric"
+  }
+]

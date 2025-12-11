@@ -1,10 +1,17 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -18,14 +25,21 @@ import {
   type CreateListingData,
   type UpdateListingData,
 } from "@/lib/listing";
-import { Upload, X, Save, ArrowLeft } from "lucide-react";
+import { Save, ArrowLeft, Image as ImageIcon, X } from "lucide-react";
 import { Link } from "@/i18n/navigation";
-import Image from "next/image";
 import toast from "react-hot-toast";
-import { useCategories } from "../../../hooks/useCategoryQueries";
 import { InputTags } from "../../../components/input-tags";
 import { checkSellerDocumentationForCategory } from "../../../actions/documentation";
 import { useSession } from "@/lib/auth-client";
+import { TaxonomyCategorySelector } from "./TaxonomyCategorySelector";
+import { ProductVariants } from "./product-variants";
+import { FileUploader } from "react-drag-drop-files";
+import { getCategoryRuleByTaxonomyId } from "../../../actions/category-rules";
+import { getInventoryLocations } from "../../../actions/inventory";
+import type { VariantData } from "@/lib/listing";
+import { getCategoryAttributes, type TaxonomyAttribute } from "@/lib/taxonomy";
+
+const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP"];
 
 interface ProductFormProps {
   mode: "create" | "edit";
@@ -36,6 +50,20 @@ interface ProductFormProps {
   isAdmin?: boolean; // Whether the current user is an admin
 }
 
+// Variant type matching product-variants.tsx
+type Variant = {
+  id: string;
+  options: Record<string, string>;
+  price: string;
+  quantity: string;
+  sku?: string;
+  barcode?: string;
+  package?: string;
+  weight?: string;
+  origin?: string;
+  images?: string[];
+};
+
 export default function ProductForm({
   mode,
   initialData,
@@ -44,20 +72,17 @@ export default function ProductForm({
   basePath,
   isAdmin = false,
 }: ProductFormProps) {
-  // Fetch categories using react-query
-  const { data: categoriesData, isLoading: categoriesLoading } =
-    useCategories();
-  const categories = categoriesData?.result || [];
-
   const [formData, setFormData] = useState({
     name: initialData?.name || "",
     description: initialData?.description || "",
-    category: initialData?.category || "",
+    taxonomyCategoryId: initialData?.taxonomyCategoryId || "",
     price: initialData?.price ? parseFloat(initialData.price) : 0,
+    compareAtPrice: initialData?.compareAtPrice
+      ? parseFloat(initialData.compareAtPrice)
+      : undefined,
     currency: initialData?.currency || "NPR",
-    stockQuantity: initialData?.stockQuantity || 0,
     unit: initialData?.unit || "kg",
-    isActive: initialData?.isActive ?? true,
+    status: (initialData?.status as "active" | "draft" | "archived") || "draft",
     isFeatured: initialData?.isFeatured ?? false,
     marketType: initialData?.marketType || "local",
     originVillage: initialData?.originVillage || "",
@@ -65,24 +90,67 @@ export default function ProductForm({
       ? new Date(initialData.harvestDate).toISOString().split("T")[0]
       : "",
     tags: initialData?.tags || [],
+    // Inventory fields
+    tracksInventory: false,
+    inventoryLocationId: "",
+    costPerItem: 0,
   });
+
+  // Fetch inventory locations
+  const [inventoryLocations, setInventoryLocations] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [loadingLocations, setLoadingLocations] = useState(false);
+
+  // Category attributes for recommended options
+  const [categoryAttributes, setCategoryAttributes] = useState<
+    TaxonomyAttribute[]
+  >([]);
+
+  useEffect(() => {
+    if (mode === "create") {
+      setLoadingLocations(true);
+      getInventoryLocations()
+        .then((result) => {
+          if (result.success && result.result) {
+            setInventoryLocations(result.result);
+          }
+        })
+        .catch((error) => {
+          console.error("Error fetching inventory locations:", error);
+        })
+        .finally(() => {
+          setLoadingLocations(false);
+        });
+    }
+  }, [mode]);
 
   const [tags, setTags] = useState<string[]>(initialData?.tags || []);
 
   const [mainImage, setMainImage] = useState<File | null>(null);
+  const [mainImagePreview, setMainImagePreview] = useState<string | null>(
+    initialData?.imageUrl || null
+  );
+
   const [galleryFiles, setGalleryFiles] = useState<File[]>([]);
-  const [previewImages, setPreviewImages] = useState<string[]>([]);
+  const [galleryPreviews, setGalleryPreviews] = useState<string[]>([]);
   const [galleryUrls, setGalleryUrls] = useState<string[]>(
     initialData?.gallery || []
   );
+
+  // Variant images - stored as File[] keyed by variant ID
+  const [variantImages, setVariantImages] = useState<Record<string, File[]>>(
+    {}
+  );
+  const [variantImagePreviews, setVariantImagePreviews] = useState<
+    Record<string, string[]>
+  >({});
 
   const [showDocumentationModal, setShowDocumentationModal] = useState(false);
   const [missingDocuments, setMissingDocuments] = useState<
     { id: string; name: string }[]
   >([]);
 
-  const mainImageRef = useRef<HTMLInputElement>(null);
-  const galleryRef = useRef<HTMLInputElement>(null);
   const { data: session } = useSession();
 
   const handleInputChange = (
@@ -105,25 +173,68 @@ export default function ProductForm({
     }));
   };
 
-  const handleMainImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setMainImage(file);
+  const handleMainImageChange = (file: File | null) => {
+    if (!file) {
+      setMainImage(null);
+      setMainImagePreview(initialData?.imageUrl || null);
+      return;
     }
+
+    // Validate file type
+    if (!fileTypes.includes(file.name.split(".").pop()?.toUpperCase() || "")) {
+      toast.error(
+        "Please select a valid image file (JPG, PNG, GIF, JPEG, WEBP)"
+      );
+      return;
+    }
+
+    // Validate file size (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size must be less than 5MB");
+      return;
+    }
+
+    setMainImage(file);
+    setMainImagePreview(URL.createObjectURL(file));
   };
 
-  const handleGalleryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    setGalleryFiles((prev) => [...prev, ...files]);
+  const handleGalleryChange = (files: File[] | null) => {
+    if (!files || files.length === 0) return;
 
-    // Create preview URLs
-    const newPreviews = files.map((file) => URL.createObjectURL(file));
-    setPreviewImages((prev) => [...prev, ...newPreviews]);
+    const validFiles: File[] = [];
+    const newPreviews: string[] = [];
+
+    files.forEach((file) => {
+      // Validate file type
+      if (
+        !fileTypes.includes(file.name.split(".").pop()?.toUpperCase() || "")
+      ) {
+        toast.error(
+          `File ${file.name} is not a valid image file (JPG, PNG, GIF, JPEG, WEBP)`
+        );
+        return;
+      }
+
+      // Validate file size (5MB max)
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error(`Image ${file.name} size must be less than 5MB`);
+        return;
+      }
+
+      validFiles.push(file);
+      newPreviews.push(URL.createObjectURL(file));
+    });
+
+    setGalleryFiles((prev) => [...prev, ...validFiles]);
+    setGalleryPreviews((prev) => [...prev, ...newPreviews]);
   };
 
   const removeGalleryImage = (index: number) => {
-    setGalleryFiles((prev) => prev.filter((_, i) => i !== index));
-    setPreviewImages((prev) => {
+    setGalleryFiles((prev) => {
+      const newFiles = prev.filter((_, i) => i !== index);
+      return newFiles;
+    });
+    setGalleryPreviews((prev) => {
       const newPreviews = [...prev];
       URL.revokeObjectURL(newPreviews[index]);
       return newPreviews.filter((_, i) => i !== index);
@@ -134,6 +245,91 @@ export default function ProductForm({
     setGalleryUrls((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // Handle variant images - these are stored but not uploaded until form submit
+  const handleVariantImageChange = useCallback(
+    (variantId: string, files: File[] | null) => {
+      if (!files || files.length === 0) {
+        setVariantImages((prev) => {
+          const newImages = { ...prev };
+          delete newImages[variantId];
+          return newImages;
+        });
+        setVariantImagePreviews((prev) => {
+          const newPreviews = { ...prev };
+          // Revoke old preview URLs
+          if (newPreviews[variantId]) {
+            newPreviews[variantId].forEach((url) => URL.revokeObjectURL(url));
+          }
+          delete newPreviews[variantId];
+          return newPreviews;
+        });
+        return;
+      }
+
+      const validFiles: File[] = [];
+      const newPreviews: string[] = [];
+
+      files.forEach((file) => {
+        // Validate file type
+        if (
+          !fileTypes.includes(file.name.split(".").pop()?.toUpperCase() || "")
+        ) {
+          toast.error(
+            `File ${file.name} is not a valid image file (JPG, PNG, GIF, JPEG, WEBP)`
+          );
+          return;
+        }
+
+        // Validate file size (5MB max)
+        if (file.size > 5 * 1024 * 1024) {
+          toast.error(`Image ${file.name} size must be less than 5MB`);
+          return;
+        }
+
+        validFiles.push(file);
+        newPreviews.push(URL.createObjectURL(file));
+      });
+
+      setVariantImages((prev) => ({
+        ...prev,
+        [variantId]: validFiles,
+      }));
+      setVariantImagePreviews((prev) => ({
+        ...prev,
+        [variantId]: newPreviews,
+      }));
+    },
+    []
+  );
+
+  const removeVariantImage = (variantId: string, index: number) => {
+    setVariantImages((prev) => {
+      const images = prev[variantId] || [];
+      return {
+        ...prev,
+        [variantId]: images.filter((_, i) => i !== index),
+      };
+    });
+    setVariantImagePreviews((prev) => {
+      const previews = prev[variantId] || [];
+      URL.revokeObjectURL(previews[index]);
+      return {
+        ...prev,
+        [variantId]: previews.filter((_, i) => i !== index),
+      };
+    });
+  };
+
+  // Get variants from ProductVariants component
+  // Note: Variants are now stored in listing_variants table, not in listing
+  // For edit mode, we'd need to fetch variants separately
+  const [variants, setVariants] = useState<Variant[]>([]);
+
+  // Memoize the callback to prevent unnecessary re-renders
+  const handleVariantsChange = useCallback((newVariants: Variant[]) => {
+    setVariants(newVariants);
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -142,74 +338,189 @@ export default function ProductForm({
       return;
     }
 
-    // Check for required documentation if creating a new product and category is selected
-    // Skip documentation check for admin users
-    if (
-      mode === "create" &&
-      formData.category &&
-      session?.user?.id &&
-      !isAdmin
-    ) {
+    // Validate required fields for creation
+    if (mode === "create") {
+      if (!session?.user?.id) {
+        toast.error("You must be logged in to create a product");
+        return;
+      }
+
+      if (!formData.taxonomyCategoryId) {
+        toast.error("Please select a category");
+        return;
+      }
+
+      // Try to fetch categoryRuleId from taxonomyCategoryId (optional - category may not have rules)
+      let categoryRuleId: string | undefined = undefined;
       try {
-        const docCheck = await checkSellerDocumentationForCategory(
-          session.user.id,
-          formData.category
+        const categoryRuleResult = await getCategoryRuleByTaxonomyId(
+          formData.taxonomyCategoryId
         );
 
-        if (docCheck.success && docCheck.result) {
-          if (
-            !docCheck.result.hasAllRequired &&
-            docCheck.result.missingDocuments.length > 0
-          ) {
-            setMissingDocuments(docCheck.result.missingDocuments);
-            setShowDocumentationModal(true);
-            return;
+        if (categoryRuleResult.success && categoryRuleResult.result) {
+          categoryRuleId = categoryRuleResult.result.id;
+        }
+        // If no rule exists, that's okay - the category just doesn't have documentation requirements
+      } catch (error) {
+        console.error("Error fetching category rule:", error);
+        // Continue without categoryRuleId - it's optional
+      }
+
+      // Check for required documentation if creating a new product and taxonomy category is selected
+      // Skip documentation check for admin users
+      if (!isAdmin) {
+        try {
+          const docCheck = await checkSellerDocumentationForCategory(
+            session.user.id,
+            formData.taxonomyCategoryId
+          );
+
+          if (docCheck.success && docCheck.result) {
+            if (
+              !docCheck.result.hasAllRequired &&
+              docCheck.result.missingDocuments.length > 0
+            ) {
+              setMissingDocuments(docCheck.result.missingDocuments);
+              setShowDocumentationModal(true);
+              return;
+            }
+          }
+        } catch (error) {
+          console.error("Error checking documentation:", error);
+          // Continue with submission if documentation check fails
+        }
+      }
+
+      // Validate variants: max 100 variants
+      if (variants.length > 100) {
+        toast.error("Maximum 100 variants allowed per product");
+        return;
+      }
+
+      // Validate inventory location if tracking inventory
+      if (formData.tracksInventory && !formData.inventoryLocationId) {
+        toast.error(
+          "Please select an inventory location when tracking inventory"
+        );
+        return;
+      }
+
+      try {
+        // Convert variants from ProductVariants format to VariantData format
+        const variantData: VariantData[] = variants.map((variant) => ({
+          id: variant.id,
+          title: Object.values(variant.options).join(" / ") || "Default",
+          sku: variant.sku,
+          price: parseFloat(variant.price) || formData.price,
+          compareAtPrice: undefined, // Can be added later if needed
+          imageUrl: variant.images?.[0],
+          options: variant.options,
+          initialStock: formData.tracksInventory
+            ? parseInt(variant.quantity) || 0
+            : undefined,
+          costPerItem:
+            formData.costPerItem > 0 ? formData.costPerItem : undefined,
+        }));
+
+        const baseData = {
+          ...formData,
+          producerId: session.user.id, // Set automatically from session
+          categoryRuleId: categoryRuleId, // Optional - only set if category rule exists
+          taxonomyCategoryId: formData.taxonomyCategoryId, // Already set by user
+          tags,
+          compareAtPrice: formData.compareAtPrice || undefined,
+          harvestDate: formData.harvestDate
+            ? new Date(formData.harvestDate)
+            : undefined,
+          variants: variantData.length > 0 ? variantData : undefined,
+          tracksInventory: formData.tracksInventory,
+          inventoryLocationId: formData.inventoryLocationId || undefined,
+          variantImages:
+            Object.keys(variantImages).length > 0 ? variantImages : undefined,
+        };
+
+        const submitData: CreateListingData = {
+          ...baseData,
+          mainImage: mainImage || undefined,
+          galleryFiles: galleryFiles.length > 0 ? galleryFiles : undefined,
+          gallery: galleryUrls.length > 0 ? galleryUrls : undefined,
+        };
+
+        await onSubmit(submitData);
+      } catch (error) {
+        toast.error("Failed to create product");
+        console.error("Submit error:", error);
+      }
+    } else {
+      // Edit mode
+      if (!initialData?.id) {
+        toast.error("Product ID is required for editing");
+        return;
+      }
+
+      try {
+        // Convert variants from ProductVariants format to VariantData format
+        const variantData: VariantData[] = variants.map((variant) => ({
+          id: variant.id,
+          title: Object.values(variant.options).join(" / ") || "Default",
+          sku: variant.sku,
+          price: parseFloat(variant.price) || formData.price,
+          compareAtPrice: undefined,
+          imageUrl: variant.images?.[0],
+          options: variant.options,
+        }));
+
+        const baseData = {
+          ...formData,
+          tags,
+          compareAtPrice: formData.compareAtPrice || undefined,
+          harvestDate: formData.harvestDate
+            ? new Date(formData.harvestDate)
+            : undefined,
+          variants: variantData.length > 0 ? variantData : undefined,
+          variantImages:
+            Object.keys(variantImages).length > 0 ? variantImages : undefined,
+        };
+
+        // If taxonomyCategoryId changed, try to fetch new categoryRuleId (optional)
+        let categoryRuleId = initialData.categoryRuleId;
+        if (
+          formData.taxonomyCategoryId &&
+          formData.taxonomyCategoryId !== initialData.taxonomyCategoryId
+        ) {
+          try {
+            const categoryRuleResult = await getCategoryRuleByTaxonomyId(
+              formData.taxonomyCategoryId
+            );
+
+            if (categoryRuleResult.success && categoryRuleResult.result) {
+              categoryRuleId = categoryRuleResult.result.id;
+            } else {
+              // No rule exists for this category - that's okay, set to undefined
+              categoryRuleId = undefined;
+            }
+          } catch (error) {
+            console.error("Error fetching category rule:", error);
+            // Continue without categoryRuleId - it's optional
+            categoryRuleId = undefined;
           }
         }
-      } catch (error) {
-        console.error("Error checking documentation:", error);
-        // Continue with submission if documentation check fails
-      }
-    }
 
-    try {
-      const baseData = {
-        ...formData,
-        tags,
-        harvestDate: formData.harvestDate
-          ? new Date(formData.harvestDate)
-          : undefined,
-      };
-
-      let submitData: CreateListingData | UpdateListingData;
-
-      if (mode === "create") {
-        submitData = {
-          ...baseData,
-          mainImage,
-          galleryFiles: galleryFiles.length > 0 ? galleryFiles : undefined,
-          gallery: galleryUrls.length > 0 ? galleryUrls : undefined,
-        } as CreateListingData;
-      } else {
-        if (!initialData?.id) {
-          toast.error("Product ID is required for editing");
-          return;
-        }
-        submitData = {
+        const submitData: UpdateListingData = {
           ...baseData,
           id: initialData.id,
-          mainImage,
+          categoryRuleId: categoryRuleId || undefined,
+          taxonomyCategoryId: formData.taxonomyCategoryId || undefined,
+          mainImage: mainImage || undefined,
           galleryFiles: galleryFiles.length > 0 ? galleryFiles : undefined,
           gallery: galleryUrls.length > 0 ? galleryUrls : undefined,
-        } as UpdateListingData;
-      }
+        };
 
-      await onSubmit(submitData);
-    } catch (error) {
-      toast.error(
-        `Failed to ${mode === "create" ? "create" : "update"} product`
-      );
-      console.error("Submit error:", error);
+        await onSubmit(submitData);
+      } catch (error) {
+        toast.error("Failed to update product");
+        console.error("Submit error:", error);
+      }
     }
   };
 
@@ -259,29 +570,24 @@ export default function ProductForm({
                     rows={4}
                   />
                 </div>
-                <div>
-                  <Label htmlFor="category">Category</Label>
-                  <select
-                    id="category"
-                    name="category"
-                    value={formData.category}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    disabled={categoriesLoading}
-                  >
-                    <option value="">Select Category</option>
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
-                  {categoriesLoading && (
-                    <p className="text-sm text-gray-500 mt-1">
-                      Loading categories...
-                    </p>
-                  )}
-                </div>
+                <TaxonomyCategorySelector
+                  value={formData.taxonomyCategoryId}
+                  onChange={(value) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      taxonomyCategoryId: value,
+                    }));
+                    // Fetch attributes for the selected category
+                    if (value) {
+                      const attributes = getCategoryAttributes(value);
+                      setCategoryAttributes(attributes);
+                    } else {
+                      setCategoryAttributes([]);
+                    }
+                  }}
+                  label="Category"
+                  description="Type to search and select a category from the taxonomy"
+                />
                 <div>
                   <Label htmlFor="originVillage">Origin Village</Label>
                   <Input
@@ -327,6 +633,22 @@ export default function ProductForm({
                   />
                 </div>
                 <div>
+                  <Label htmlFor="compareAtPrice">Compare at Price</Label>
+                  <Input
+                    id="compareAtPrice"
+                    name="compareAtPrice"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={formData.compareAtPrice || ""}
+                    onChange={handleInputChange}
+                    placeholder="0.00"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Original price before discount (shown crossed out)
+                  </p>
+                </div>
+                <div>
                   <Label htmlFor="currency">Currency</Label>
                   <select
                     id="currency"
@@ -357,18 +679,6 @@ export default function ProductForm({
                   </select>
                 </div>
                 <div>
-                  <Label htmlFor="stockQuantity">Stock Quantity</Label>
-                  <Input
-                    id="stockQuantity"
-                    name="stockQuantity"
-                    type="number"
-                    min="0"
-                    value={formData.stockQuantity}
-                    onChange={handleInputChange}
-                    placeholder="0"
-                  />
-                </div>
-                <div>
                   <Label htmlFor="harvestDate">Harvest Date</Label>
                   <Input
                     id="harvestDate"
@@ -394,33 +704,143 @@ export default function ProductForm({
               </div>
             </Card>
 
+            {/* Inventory Settings */}
+            {mode === "create" && (
+              <Card className="p-6">
+                <h2 className="text-lg font-semibold mb-4">
+                  Inventory Settings
+                </h2>
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="tracksInventory"
+                      name="tracksInventory"
+                      checked={formData.tracksInventory}
+                      onChange={handleCheckboxChange}
+                      className="rounded border-gray-300"
+                    />
+                    <Label htmlFor="tracksInventory">
+                      Track inventory for this product
+                    </Label>
+                  </div>
+
+                  {formData.tracksInventory && (
+                    <>
+                      <div>
+                        <Label htmlFor="inventoryLocationId">
+                          Inventory Location *
+                        </Label>
+                        <select
+                          id="inventoryLocationId"
+                          name="inventoryLocationId"
+                          value={formData.inventoryLocationId}
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          required={formData.tracksInventory}
+                          disabled={loadingLocations}
+                        >
+                          <option value="">
+                            {loadingLocations
+                              ? "Loading locations..."
+                              : "Select location"}
+                          </option>
+                          {inventoryLocations.map((location) => (
+                            <option key={location.id} value={location.id}>
+                              {location.name}
+                            </option>
+                          ))}
+                        </select>
+                        {inventoryLocations.length === 0 &&
+                          !loadingLocations && (
+                            <p className="text-sm text-gray-500 mt-1">
+                              No inventory locations found. Please create one in
+                              Settings.
+                            </p>
+                          )}
+                      </div>
+
+                      <div>
+                        <Label htmlFor="costPerItem">
+                          Cost per Item (Optional)
+                        </Label>
+                        <Input
+                          id="costPerItem"
+                          name="costPerItem"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={formData.costPerItem}
+                          onChange={handleInputChange}
+                          placeholder="0.00"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Cost of goods sold (COGS) for accounting
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </Card>
+            )}
+
+            {/* Variants */}
+            <Card className="p-6">
+              <h2 className="text-lg font-semibold mb-4">Product Variants</h2>
+              <ProductVariants
+                initialVariants={variants}
+                onVariantsChange={handleVariantsChange}
+                onVariantImageChange={handleVariantImageChange}
+                variantImagePreviews={variantImagePreviews}
+                onRemoveVariantImage={removeVariantImage}
+                recommendedAttributes={categoryAttributes}
+              />
+            </Card>
+
             {/* Status */}
             <Card className="p-6">
               <h2 className="text-lg font-semibold mb-4">
                 Status & Visibility
               </h2>
               <div className="space-y-4">
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="isActive"
-                    name="isActive"
-                    checked={formData.isActive}
-                    onChange={handleCheckboxChange}
-                    disabled={!isAdmin}
-                    className="rounded border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  <Label
-                    htmlFor="isActive"
-                    className={!isAdmin ? "text-gray-500" : ""}
+                <div>
+                  <Label htmlFor="status">Product Status</Label>
+                  <Select
+                    value={formData.status}
+                    onValueChange={(value: "active" | "draft" | "archived") => {
+                      setFormData((prev) => ({ ...prev, status: value }));
+                    }}
                   >
-                    Active (visible to customers)
-                    {!isAdmin && (
-                      <span className="text-xs text-gray-400 ml-1">
-                        (Admin only)
-                      </span>
-                    )}
-                  </Label>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">
+                        <div>
+                          <div className="font-medium">Active</div>
+                          <div className="text-xs text-gray-500">
+                            Product is visible to customers and can be purchased
+                          </div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="draft">
+                        <div>
+                          <div className="font-medium">Draft</div>
+                          <div className="text-xs text-gray-500">
+                            Product is saved but not visible to customers
+                          </div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="archived">
+                        <div>
+                          <div className="font-medium">Archived</div>
+                          <div className="text-xs text-gray-500">
+                            Product is hidden and cannot be purchased
+                          </div>
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="flex items-center space-x-2">
                   <input
@@ -445,42 +865,43 @@ export default function ProductForm({
             <Card className="p-6">
               <h2 className="text-lg font-semibold mb-4">Main Image</h2>
               <div className="space-y-4">
-                {initialData?.imageUrl && !mainImage && (
+                {mainImagePreview && (
                   <div className="relative w-full h-48 rounded-lg overflow-hidden bg-gray-100">
-                    <Image
-                      src={initialData.imageUrl}
-                      alt="Current product image"
-                      fill
-                      className="object-cover"
-                    />
-                  </div>
-                )}
-                {mainImage && (
-                  <div className="relative w-full h-48 rounded-lg overflow-hidden bg-gray-100">
-                    <Image
-                      src={URL.createObjectURL(mainImage)}
+                    <img
+                      src={mainImagePreview}
                       alt="Preview"
-                      fill
-                      className="object-cover"
+                      className="w-full h-full object-cover"
                     />
+                    <button
+                      type="button"
+                      onClick={() => handleMainImageChange(null)}
+                      className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
                 )}
-                <input
-                  ref={mainImageRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleMainImageChange}
-                  className="hidden"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => mainImageRef.current?.click()}
-                  className="w-full"
+
+                <FileUploader
+                  handleChange={(file: File | File[]) => {
+                    handleMainImageChange(Array.isArray(file) ? file[0] : file);
+                  }}
+                  name="mainImage"
+                  types={fileTypes}
+                  maxSize={5}
+                  hoverTitle="Drop image here"
+                  label="Drag & drop main image here or click to browse"
                 >
-                  <Upload className="w-4 h-4 mr-2" />
-                  {mainImage ? "Change Image" : "Upload Image"}
-                </Button>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-primary transition-colors">
+                    <ImageIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+                    <p className="text-sm text-gray-600">
+                      Drag & drop image here or click to browse
+                    </p>
+                    <p className="text-xs text-gray-400 mt-2">
+                      JPG, PNG, GIF, JPEG, WEBP (max 5MB)
+                    </p>
+                  </div>
+                </FileUploader>
               </div>
             </Card>
 
@@ -494,11 +915,10 @@ export default function ProductForm({
                     {galleryUrls.map((url, index) => (
                       <div key={index} className="relative group">
                         <div className="relative w-full h-24 rounded-lg overflow-hidden bg-gray-100">
-                          <Image
+                          <img
                             src={url}
                             alt={`Gallery ${index + 1}`}
-                            fill
-                            className="object-cover"
+                            className="w-full h-full object-cover"
                           />
                         </div>
                         <button
@@ -514,16 +934,15 @@ export default function ProductForm({
                 )}
 
                 {/* New gallery images */}
-                {previewImages.length > 0 && (
+                {galleryPreviews.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
-                    {previewImages.map((preview, index) => (
+                    {galleryPreviews.map((preview, index) => (
                       <div key={index} className="relative group">
                         <div className="relative w-full h-24 rounded-lg overflow-hidden bg-gray-100">
-                          <Image
+                          <img
                             src={preview}
                             alt={`Preview ${index + 1}`}
-                            fill
-                            className="object-cover"
+                            className="w-full h-full object-cover"
                           />
                         </div>
                         <button
@@ -538,23 +957,27 @@ export default function ProductForm({
                   </div>
                 )}
 
-                <input
-                  ref={galleryRef}
-                  type="file"
-                  accept="image/*"
+                <FileUploader
+                  handleChange={(files: File | File[]) => {
+                    handleGalleryChange(Array.isArray(files) ? files : [files]);
+                  }}
+                  name="gallery"
+                  types={fileTypes}
+                  maxSize={5}
                   multiple
-                  onChange={handleGalleryChange}
-                  className="hidden"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => galleryRef.current?.click()}
-                  className="w-full"
+                  hoverTitle="Drop images here"
+                  label="Drag & drop gallery images here or click to browse"
                 >
-                  <Upload className="w-4 h-4 mr-2" />
-                  Add Gallery Images
-                </Button>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-primary transition-colors">
+                    <ImageIcon className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+                    <p className="text-sm text-gray-600">
+                      Drag & drop images here or click to browse
+                    </p>
+                    <p className="text-xs text-gray-400 mt-2">
+                      JPG, PNG, GIF, JPEG, WEBP (max 5MB each)
+                    </p>
+                  </div>
+                </FileUploader>
               </div>
             </Card>
           </div>
@@ -608,7 +1031,7 @@ export default function ProductForm({
             >
               Cancel
             </Button>
-            <Link href="/dashboard/seller/documentation" className="flex-1">
+            <Link href="/dashboard/documentation" className="flex-1">
               <Button className="w-full">Upload Documents</Button>
             </Link>
           </DialogFooter>

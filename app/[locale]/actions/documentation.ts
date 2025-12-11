@@ -3,7 +3,8 @@
 import { db } from "@/db";
 import {
   documentationType,
-  categoryDocumentation,
+  categoryRules,
+  categoryRulesDocumentation,
   sellerDocumentation,
   user,
   type DocumentationType,
@@ -33,10 +34,11 @@ export interface ActionResponse {
 }
 
 /**
- * Get all required documentation types for a given category
+ * Get all required documentation types for a given category rule
+ * @deprecated Use checkSellerDocumentationForCategory with taxonomyCategoryId instead
  */
 export async function getRequiredDocumentsForCategory(
-  categoryId: string
+  categoryRuleId: string
 ): Promise<ActionResponse & { result?: DocumentationType[] }> {
   try {
     const requiredDocs = await db
@@ -48,12 +50,12 @@ export async function getRequiredDocumentsForCategory(
         createdAt: documentationType.createdAt,
         updatedAt: documentationType.updatedAt,
       })
-      .from(categoryDocumentation)
+      .from(categoryRulesDocumentation)
       .innerJoin(
         documentationType,
-        eq(categoryDocumentation.documentationTypeId, documentationType.id)
+        eq(categoryRulesDocumentation.documentationTypeId, documentationType.id)
       )
-      .where(eq(categoryDocumentation.categoryId, categoryId));
+      .where(eq(categoryRulesDocumentation.categoryRuleId, categoryRuleId));
 
     return {
       success: true,
@@ -468,11 +470,12 @@ export async function deleteSellerDocumentsOnAccountRemoval(
 }
 
 /**
- * Check if seller has all required documents for a category
+ * Check if seller has all required documents for a taxonomy category
+ * Now uses taxonomyCategoryId to look up rules in category_rules table
  */
 export async function checkSellerDocumentationForCategory(
   sellerId: string,
-  categoryId: string
+  taxonomyCategoryId: string
 ): Promise<
   ActionResponse & {
     result?: {
@@ -483,17 +486,52 @@ export async function checkSellerDocumentationForCategory(
   }
 > {
   try {
-    // Get required documents for category
-    const requiredDocsResult =
-      await getRequiredDocumentsForCategory(categoryId);
-    if (!requiredDocsResult.success || !requiredDocsResult.result) {
+    // Check if this taxonomy category requires documentation
+    const rule = await db
+      .select()
+      .from(categoryRules)
+      .where(eq(categoryRules.taxonomyCategoryId, taxonomyCategoryId))
+      .limit(1);
+
+    // If no rule exists or documentation is not required, return success
+    if (rule.length === 0 || !rule[0].requiresDocumentation) {
       return {
-        success: false,
-        error: "Failed to fetch required documents",
+        success: true,
+        result: {
+          hasAllRequired: true,
+          missingDocuments: [],
+          approvedDocuments: [],
+        },
       };
     }
 
-    const requiredDocs = requiredDocsResult.result;
+    // Get required documentation types for this taxonomy category
+    const requiredDocs = await db
+      .select({
+        id: documentationType.id,
+        name: documentationType.name,
+        description: documentationType.description,
+        exampleUrl: documentationType.exampleUrl,
+        createdAt: documentationType.createdAt,
+        updatedAt: documentationType.updatedAt,
+      })
+      .from(categoryRulesDocumentation)
+      .innerJoin(
+        documentationType,
+        eq(categoryRulesDocumentation.documentationTypeId, documentationType.id)
+      )
+      .where(eq(categoryRulesDocumentation.categoryRuleId, rule[0].id));
+
+    if (requiredDocs.length === 0) {
+      return {
+        success: true,
+        result: {
+          hasAllRequired: true,
+          missingDocuments: [],
+          approvedDocuments: [],
+        },
+      };
+    }
 
     // Get seller's approved documents
     const sellerDocsResult = await getSellerDocuments(sellerId);
@@ -744,18 +782,18 @@ export async function deleteDocumentationType(
       };
     }
 
-    // Check if documentation type is being used by any categories
+    // Check if documentation type is being used by any category rules
     const categoryUsage = await db
       .select()
-      .from(categoryDocumentation)
-      .where(eq(categoryDocumentation.documentationTypeId, id))
+      .from(categoryRulesDocumentation)
+      .where(eq(categoryRulesDocumentation.documentationTypeId, id))
       .limit(1);
 
     if (categoryUsage.length > 0) {
       return {
         success: false,
         error:
-          "Cannot delete documentation type that is required by categories. Remove it from categories first.",
+          "Cannot delete documentation type that is required by category rules. Remove it from category rules first.",
       };
     }
 
@@ -794,13 +832,13 @@ export async function deleteDocumentationType(
   }
 }
 
-// ===== CATEGORY DOCUMENTATION LINKING =====
+// ===== CATEGORY RULES DOCUMENTATION LINKING =====
 
 /**
- * Get documentation types required for a category
+ * Get documentation types required for a category rule
  */
-export async function getCategoryDocumentationTypes(
-  categoryId: string
+export async function getCategoryRuleDocumentationTypes(
+  categoryRuleId: string
 ): Promise<
   ActionResponse & {
     result?: Array<{
@@ -813,78 +851,110 @@ export async function getCategoryDocumentationTypes(
   try {
     const categoryDocs = await db
       .select({
-        id: categoryDocumentation.id,
-        documentationTypeId: categoryDocumentation.documentationTypeId,
+        id: categoryRulesDocumentation.id,
+        documentationTypeId: categoryRulesDocumentation.documentationTypeId,
         documentationTypeName: documentationType.name,
       })
-      .from(categoryDocumentation)
+      .from(categoryRulesDocumentation)
       .innerJoin(
         documentationType,
-        eq(categoryDocumentation.documentationTypeId, documentationType.id)
+        eq(categoryRulesDocumentation.documentationTypeId, documentationType.id)
       )
-      .where(eq(categoryDocumentation.categoryId, categoryId));
+      .where(eq(categoryRulesDocumentation.categoryRuleId, categoryRuleId));
 
     return {
       success: true,
       result: categoryDocs,
     };
   } catch (error) {
-    console.error("Error fetching category documentation types:", error);
+    console.error("Error fetching category rule documentation types:", error);
     return {
       success: false,
       error:
         error instanceof Error
           ? error.message
-          : "Failed to fetch category documentation types",
+          : "Failed to fetch category rule documentation types",
     };
   }
 }
 
 /**
- * Link documentation types to a category
+ * Link documentation types to a category rule
  */
-export async function linkDocumentationTypesToCategory(
-  categoryId: string,
+export async function linkDocumentationTypesToCategoryRule(
+  categoryRuleId: string,
   documentationTypeIds: string[]
 ): Promise<ActionResponse> {
   try {
-    if (!categoryId) {
+    if (!categoryRuleId) {
       return {
         success: false,
-        error: "Category ID is required",
+        error: "Category rule ID is required",
       };
     }
 
     // Remove existing links
     await db
-      .delete(categoryDocumentation)
-      .where(eq(categoryDocumentation.categoryId, categoryId));
+      .delete(categoryRulesDocumentation)
+      .where(eq(categoryRulesDocumentation.categoryRuleId, categoryRuleId));
 
     // Add new links if any
     if (documentationTypeIds.length > 0) {
       const links = documentationTypeIds.map((docTypeId) => ({
-        categoryId,
+        categoryRuleId,
         documentationTypeId: docTypeId,
       }));
 
-      await db.insert(categoryDocumentation).values(links);
+      await db.insert(categoryRulesDocumentation).values(links);
     }
 
-    revalidatePath("/dashboard/admin/categories");
-    revalidatePath("/dashboard/admin/documentation");
+    revalidatePath("/dashboard/categories");
+    revalidatePath("/dashboard/settings/documentation");
 
     return {
       success: true,
-      message: "Documentation types linked to category successfully",
+      message: "Documentation types linked to category rule successfully",
     };
   } catch (error) {
-    console.error("Error linking documentation types to category:", error);
+    console.error("Error linking documentation types to category rule:", error);
     return {
       success: false,
       error:
         error instanceof Error
           ? error.message
-          : "Failed to link documentation types to category",
+          : "Failed to link documentation types to category rule",
     };
   }
+}
+
+/**
+ * @deprecated Use getCategoryRuleDocumentationTypes instead
+ * Legacy function for backward compatibility
+ */
+export async function getCategoryDocumentationTypes(
+  categoryRuleId: string
+): Promise<
+  ActionResponse & {
+    result?: Array<{
+      id: string;
+      documentationTypeId: string;
+      documentationTypeName: string;
+    }>;
+  }
+> {
+  return getCategoryRuleDocumentationTypes(categoryRuleId);
+}
+
+/**
+ * @deprecated Use linkDocumentationTypesToCategoryRule instead
+ * Legacy function for backward compatibility
+ */
+export async function linkDocumentationTypesToCategory(
+  categoryRuleId: string,
+  documentationTypeIds: string[]
+): Promise<ActionResponse> {
+  return linkDocumentationTypesToCategoryRule(
+    categoryRuleId,
+    documentationTypeIds
+  );
 }

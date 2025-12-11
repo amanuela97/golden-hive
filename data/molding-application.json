@@ -1,0 +1,14 @@
+[
+  {
+    "value": "manual",
+    "label": "Manual"
+  },
+  {
+    "value": "automatic",
+    "label": "Automatic"
+  },
+  {
+    "value": "semi-automatic",
+    "label": "Semi-Automatic"
+  }
+]

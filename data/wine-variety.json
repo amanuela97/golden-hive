@@ -1,0 +1,26 @@
+[
+  {
+    "value": "red",
+    "label": "Red"
+  },
+  {
+    "value": "white",
+    "label": "White"
+  },
+  {
+    "value": "rose",
+    "label": "Rosé"
+  },
+  {
+    "value": "sparkling",
+    "label": "Sparkling"
+  },
+  {
+    "value": "dessert",
+    "label": "Dessert"
+  },
+  {
+    "value": "fortified",
+    "label": "Fortified"
+  }
+]

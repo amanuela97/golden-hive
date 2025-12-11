@@ -5,9 +5,10 @@ import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useCategories } from "../hooks/useCategoryQueries";
+// Categories are now handled via taxonomy - no longer using old category system
 import { ProductFilters as ProductFiltersType } from "../actions/public-products";
 import { useTranslations } from "next-intl";
+import { TaxonomyCategory } from "@/lib/taxonomy";
 
 interface ProductFiltersProps {
   onFiltersChange: (filters: ProductFiltersType) => void;
@@ -21,9 +22,9 @@ export function ProductFilters({ onFiltersChange }: ProductFiltersProps) {
   const isInitialMount = useRef(true);
   const t = useTranslations("products");
 
-  const { data: categoriesData, isLoading: categoriesLoading } =
-    useCategories();
-  const categories = categoriesData?.result || [];
+  // Categories are now handled via taxonomy - removed old category system
+  const categories: TaxonomyCategory[] = [];
+  const categoriesLoading = false;
 
   // Sync temp price range with applied price range
   useEffect(() => {

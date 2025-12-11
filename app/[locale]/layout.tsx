@@ -1,15 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "@/app/globals.css";
-import dynamic from "next/dynamic";
-const NavbarServer = dynamic(() => import("./components/NavbarServer"), {
-  ssr: true,
-});
 import { Toaster } from "react-hot-toast";
 import { Providers } from "./providers";
-const FooterServer = dynamic(() => import("./components/FooterServer"), {
-  ssr: true,
-});
+import ConditionalNavbar from "./components/ConditionalNavbar";
+import ConditionalFooter from "./components/ConditionalFooter";
 import { NextIntlClientProvider, hasLocale } from "next-intl";
 import { getMessages, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -67,10 +62,11 @@ export default async function LocaleLayout({
       >
         <Providers>
           <NextIntlClientProvider locale={locale} messages={messages}>
-            {/* Server-driven Navbar with CMS data */}
-            <NavbarServer />
+            {/* Conditionally render Navbar - hide on dashboard routes */}
+            <ConditionalNavbar />
             <main className="flex-1 flex flex-col">{children}</main>
-            <FooterServer />
+            {/* Conditionally render Footer - hide on dashboard routes */}
+            <ConditionalFooter />
             <Toaster position="top-right" />
           </NextIntlClientProvider>
         </Providers>

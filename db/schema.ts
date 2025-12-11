@@ -23,6 +23,13 @@ export const userStatusEnum = pgEnum("user_status", [
 
 export const marketTypeEnum = pgEnum("market_type", ["local", "international"]);
 
+// Shopify-style status enum: active | draft | archived
+export const listingStatusEnum = pgEnum("listing_status", [
+  "active",
+  "draft",
+  "archived",
+]);
+
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -135,17 +142,19 @@ export const verification = pgTable("verification", {
     .notNull(),
 });
 
-// 1️⃣ Categories table
-export const category = pgTable("category", {
+// 2️⃣ Category Rules table - stores documentation requirements for taxonomy categories
+export const categoryRules = pgTable("category_rules", {
   id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull().unique(), // e.g. "Mad Honey", "Organic Honey"
-  description: text("description"),
+  taxonomyCategoryId: text("taxonomy_category_id").notNull().unique(),
   requiresDocumentation: boolean("requires_documentation")
     .default(false)
     .notNull(),
   documentationDescription: text("documentation_description"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
 });
 
 // Documentation tables
@@ -158,16 +167,20 @@ export const documentationType = pgTable("documentation_type", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const categoryDocumentation = pgTable("category_documentation", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  categoryId: uuid("category_id")
-    .notNull()
-    .references(() => category.id, { onDelete: "cascade" }),
-  documentationTypeId: uuid("documentation_type_id")
-    .notNull()
-    .references(() => documentationType.id, { onDelete: "cascade" }),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+// Category Rules Documentation - links documentation types to taxonomy categories
+export const categoryRulesDocumentation = pgTable(
+  "category_rules_documentation",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    categoryRuleId: uuid("category_rule_id")
+      .notNull()
+      .references(() => categoryRules.id, { onDelete: "cascade" }),
+    documentationTypeId: uuid("documentation_type_id")
+      .notNull()
+      .references(() => documentationType.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  }
+);
 
 export const sellerDocumentation = pgTable(
   "seller_documentation",
@@ -205,23 +218,36 @@ export const listing = pgTable("listing", {
   // Basic product info
   name: text("name").notNull(), // e.g. "Himalayan Mad Honey"
   description: text("description"),
-  category: uuid("category_id").references(() => category.id, {
+  vendorId: uuid("vendor_id")
+    .references(() => vendor.id, {
+      onDelete: "set null",
+    })
+    .notNull(), // Reference to vendor table
+  categoryRuleId: uuid("category_rule_id").references(() => categoryRules.id, {
     onDelete: "set null",
-  }),
+  }), // Optional - only required if category has documentation rules
+  taxonomyCategoryId: text("taxonomy_category_id"), // Taxonomy category ID from JSON file
+  taxonomyCategoryName: text("taxonomy_category_name"), // Short name (e.g., "Honey") for display
   imageUrl: text("image_url"),
   gallery: text("gallery").array(),
   tags: text("tags").array(),
 
-  // Pricing & inventory
+  // Pricing
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),
+  compareAtPrice: numeric("compare_at_price", {
+    precision: 10,
+    scale: 2,
+  }), // Optional compare-at price
   currency: text("currency").default("NPR").notNull(),
-  stockQuantity: integer("stock_quantity").default(0),
   unit: text("unit").default("kg"),
 
-  // Status & visibility
-  isActive: boolean("is_active").default(false),
+  // Status & visibility (Shopify-style)
+  status: listingStatusEnum("status").default("draft"),
   isFeatured: boolean("is_featured").default(false),
   marketType: marketTypeEnum("market_type").default("local"),
+
+  // Published at (when it became active)
+  publishedAt: timestamp("published_at"),
 
   // Timestamps
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -257,6 +283,174 @@ export const listingTranslations = pgTable("listing_translations", {
 
   // Optional localized metadata
   originVillage: text("origin_village"),
+});
+
+// ===================================
+// VENDOR
+// ===================================
+export const vendor = pgTable("vendor", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  storeName: text("store_name").notNull(),
+  logoUrl: text("logo_url"),
+  ownerUserId: text("owner_user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// LISTING VARIANTS
+// ===================================
+export const listingVariants = pgTable("listing_variants", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  listingId: uuid("listing_id")
+    .notNull()
+    .references(() => listing.id, { onDelete: "cascade" }),
+  title: text("title").notNull(), // Example: "500g / Premium"
+  sku: text("sku"),
+  price: numeric("price", { precision: 10, scale: 2 }),
+  compareAtPrice: numeric("compare_at_price", { precision: 10, scale: 2 }),
+  imageUrl: text("image_url"),
+  // For multiple options (size, weight, gram, color)
+  options: jsonb("options"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// Listing Variants Translations
+export const listingVariantTranslations = pgTable(
+  "listing_variant_translations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    variantId: uuid("variant_id")
+      .notNull()
+      .references(() => listingVariants.id, { onDelete: "cascade" }),
+    locale: varchar("locale", { length: 10 }).notNull(),
+    title: text("title"),
+  }
+);
+
+// ===================================
+// INVENTORY ITEMS
+// ===================================
+export const inventoryItems = pgTable("inventory_items", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  variantId: uuid("variant_id")
+    .notNull()
+    .references(() => listingVariants.id, { onDelete: "cascade" }),
+  costPerItem: numeric("cost_per_item", { precision: 10, scale: 2 }).default(
+    "0"
+  ),
+  requiresShipping: boolean("requires_shipping").default(true),
+  weightGrams: integer("weight_grams").default(0),
+  countryOfOrigin: text("country_of_origin"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// INVENTORY LOCATIONS
+// ===================================
+export const inventoryLocations = pgTable("inventory_locations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  vendorId: uuid("vendor_id")
+    .notNull()
+    .references(() => vendor.id, { onDelete: "cascade" }),
+  name: text("name").notNull(), // e.g. "Kathmandu Warehouse"
+  address: text("address"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// Inventory Locations Translations
+export const inventoryLocationTranslations = pgTable(
+  "inventory_location_translations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    locationId: uuid("location_id")
+      .notNull()
+      .references(() => inventoryLocations.id, { onDelete: "cascade" }),
+    locale: varchar("locale", { length: 10 }).notNull(),
+    name: text("name"),
+    address: text("address"),
+  }
+);
+
+// ===================================
+// INVENTORY LEVELS
+// ===================================
+export const inventoryLevels = pgTable("inventory_levels", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  inventoryItemId: uuid("inventory_item_id")
+    .notNull()
+    .references(() => inventoryItems.id, { onDelete: "cascade" }),
+  locationId: uuid("location_id")
+    .notNull()
+    .references(() => inventoryLocations.id, { onDelete: "cascade" }),
+  available: integer("available").default(0),
+  committed: integer("committed").default(0),
+  incoming: integer("incoming").default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// FULFILLMENTS
+// ===================================
+export const fulfillments = pgTable("fulfillments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id"),
+  vendorId: uuid("vendor_id").references(() => vendor.id, {
+    onDelete: "set null",
+  }),
+  locationId: uuid("location_id").references(() => inventoryLocations.id, {
+    onDelete: "set null",
+  }),
+  status: text("status").default("pending"),
+  trackingNumber: text("tracking_number"),
+  trackingUrl: text("tracking_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// INVENTORY ADJUSTMENTS
+// ===================================
+export const inventoryAdjustments = pgTable("inventory_adjustments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  inventoryItemId: uuid("inventory_item_id").references(
+    () => inventoryItems.id,
+    { onDelete: "set null" }
+  ),
+  locationId: uuid("location_id").references(() => inventoryLocations.id, {
+    onDelete: "set null",
+  }),
+  change: integer("change").notNull(), // +10, -3, etc.
+  reason: text("reason").default("manual"),
+  createdBy: text("created_by").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // ===================================
@@ -474,8 +668,9 @@ export type Account = InferSelectModel<typeof account>;
 export type Verification = InferSelectModel<typeof verification>;
 export type Listing = InferSelectModel<typeof listing>;
 export type DocumentationType = InferSelectModel<typeof documentationType>;
-export type CategoryDocumentation = InferSelectModel<
-  typeof categoryDocumentation
+export type CategoryRules = InferSelectModel<typeof categoryRules>;
+export type CategoryRulesDocumentation = InferSelectModel<
+  typeof categoryRulesDocumentation
 >;
 export type SellerDocumentation = InferSelectModel<typeof sellerDocumentation>;
 export type Navbar = InferSelectModel<typeof navbar>;
@@ -596,6 +791,21 @@ export const faqItemTranslations = pgTable("faq_item_translations", {
 });
 
 export type FaqSection = InferSelectModel<typeof faqSections>;
-export type FaqSectionTranslation = InferSelectModel<typeof faqSectionTranslations>;
+export type FaqSectionTranslation = InferSelectModel<
+  typeof faqSectionTranslations
+>;
 export type FaqItem = InferSelectModel<typeof faqItems>;
 export type FaqItemTranslation = InferSelectModel<typeof faqItemTranslations>;
+export type Vendor = InferSelectModel<typeof vendor>;
+export type ListingVariant = InferSelectModel<typeof listingVariants>;
+export type ListingVariantTranslation = InferSelectModel<
+  typeof listingVariantTranslations
+>;
+export type InventoryItem = InferSelectModel<typeof inventoryItems>;
+export type InventoryLocation = InferSelectModel<typeof inventoryLocations>;
+export type InventoryLocationTranslation = InferSelectModel<
+  typeof inventoryLocationTranslations
+>;
+export type InventoryLevel = InferSelectModel<typeof inventoryLevels>;
+export type Fulfillment = InferSelectModel<typeof fulfillments>;
+export type InventoryAdjustment = InferSelectModel<typeof inventoryAdjustments>;

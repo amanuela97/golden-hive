@@ -122,8 +122,8 @@ export async function saveTranslation(
       });
 
     // Revalidate cache
-    revalidateTag(`translation-${lang}`);
-    revalidateTag("translations");
+    revalidateTag(`translation-${lang}`, "default");
+    revalidateTag("translations", "default");
 
     return { success: true };
   } catch (error) {

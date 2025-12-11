@@ -1,5 +1,14 @@
 import { db } from "@/db";
-import { listing, listingTranslations, user, type Listing } from "@/db/schema";
+import {
+  listing,
+  listingTranslations,
+  user,
+  vendor,
+  listingVariants,
+  inventoryItems,
+  inventoryLevels,
+  type Listing,
+} from "@/db/schema";
 
 // Re-export the Listing type for use in components
 export type { Listing };
@@ -7,6 +16,7 @@ import { uploadFile, uploadFiles, deleteFile, deleteFiles } from "./cloudinary";
 import { eq, and } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { translateText } from "./translate";
+import { findCategoryById } from "./taxonomy";
 
 // Helper function to translate text to all locales
 async function translateToAllLocales(
@@ -72,27 +82,49 @@ async function translateTags(
   return translations;
 }
 
+// Variant data structure
+export type VariantData = {
+  id?: string; // Optional for new variants
+  title: string;
+  sku?: string;
+  price: number;
+  compareAtPrice?: number;
+  imageUrl?: string;
+  options?: Record<string, string>; // e.g., { size: "500g", color: "red" }
+  // Inventory fields
+  initialStock?: number;
+  costPerItem?: number;
+};
+
 // Types for CRUD operations
 export type CreateListingData = {
   name: string;
   description?: string;
-  category?: string;
-  price: number;
+  categoryRuleId?: string; // Optional - reference to category_rules table (only if category has rules)
+  taxonomyCategoryId: string; // Required - Taxonomy category ID from JSON file
+  taxonomyCategoryName?: string; // Short name (e.g., "Honey") - will be extracted if not provided
+  price: number; // Default price (used if no variants)
+  compareAtPrice?: number; // Optional compare-at price
   currency?: string;
-  stockQuantity?: number;
   unit?: string;
   producerId: string;
   imageUrl?: string;
   gallery?: string[];
   tags?: string[];
-  isActive?: boolean;
+  status?: "active" | "draft" | "archived"; // Shopify-style status
   isFeatured?: boolean;
   marketType?: "local" | "international";
   originVillage?: string;
   harvestDate?: Date;
+  // Variants (relational, not JSON)
+  variants?: VariantData[];
+  // Inventory settings
+  tracksInventory?: boolean;
+  inventoryLocationId?: string; // Required if tracksInventory is true
   // Media files for upload
   mainImage?: File | Blob;
   galleryFiles?: (File | Blob)[];
+  variantImages?: Record<string, File[]>; // Variant images keyed by variant ID
 };
 
 export type UpdateListingData = Partial<
@@ -102,14 +134,54 @@ export type UpdateListingData = Partial<
 };
 
 /**
- * Create a new listing
+ * Create a new listing (Shopify-style workflow)
+ * Step 1: Insert listing
+ * Step 2: Create variants (or default variant if none)
+ * Step 3: Create inventory items for each variant
+ * Step 4: Create inventory levels for each variant and location
  */
 export async function createListing(data: CreateListingData): Promise<Listing> {
   try {
     // Validate required fields
-    if (!data.name || !data.price || !data.producerId) {
-      throw new Error("Name, price, and producerId are required");
+    if (!data.name || !data.price || !data.producerId || !data.taxonomyCategoryId) {
+      throw new Error("Name, price, producerId, and taxonomyCategoryId are required");
     }
+
+    // Validate variants: max 100 variants, max 3 options
+    if (data.variants && data.variants.length > 100) {
+      throw new Error("Maximum 100 variants allowed per product");
+    }
+
+    // Check options count across all variants
+    if (data.variants) {
+      const allOptionKeys = new Set<string>();
+      for (const variant of data.variants) {
+        if (variant.options) {
+          Object.keys(variant.options).forEach((key) => allOptionKeys.add(key));
+        }
+      }
+      if (allOptionKeys.size > 3) {
+        throw new Error("Maximum 3 option types allowed per product (e.g., size, color, weight)");
+      }
+    }
+
+    // Validate inventory location if tracking inventory
+    if (data.tracksInventory && !data.inventoryLocationId) {
+      throw new Error("Inventory location is required when tracking inventory");
+    }
+
+    // Fetch vendor from vendor table
+    const vendorResult = await db
+      .select({ id: vendor.id })
+      .from(vendor)
+      .where(eq(vendor.ownerUserId, data.producerId))
+      .limit(1);
+
+    if (vendorResult.length === 0) {
+      throw new Error("Vendor not found. Please set up your vendor information in Settings > Vendor before creating a listing.");
+    }
+
+    const vendorId = vendorResult[0].id;
 
     let imageUrl = data.imageUrl;
     let gallery = data.gallery || [];
@@ -128,30 +200,112 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
       gallery = [...gallery, ...galleryUrls];
     }
 
-    // Create listing in database (non-translatable fields only)
+    // Step 1: Create listing in database
     const listingId = uuidv4();
+    const publishedAt = data.status === "active" ? new Date() : null;
+    
     const newListing = await db
       .insert(listing)
       .values({
         id: listingId,
-        name: data.name, // Keep in base table for fallback
-        description: data.description, // Keep in base table for fallback
-        category: data.category || null, // Convert empty string to null for UUID field
+        name: data.name,
+        description: data.description,
+        vendorId: vendorId,
+        categoryRuleId: data.categoryRuleId || null,
+        taxonomyCategoryId: data.taxonomyCategoryId,
         price: data.price.toString(),
+        compareAtPrice: data.compareAtPrice ? data.compareAtPrice.toString() : null,
         currency: data.currency || "NPR",
-        stockQuantity: data.stockQuantity || 0,
         unit: data.unit || "kg",
         producerId: data.producerId,
         imageUrl,
         gallery,
-        tags: data.tags || [], // Keep in base table for fallback
-        isActive: data.isActive ?? true,
+        tags: data.tags || [],
+        status: data.status || "draft",
         isFeatured: data.isFeatured ?? false,
         marketType: data.marketType || "local",
-        originVillage: data.originVillage, // Keep in base table for fallback
+        publishedAt,
+        originVillage: data.originVillage,
         harvestDate: data.harvestDate,
       })
       .returning();
+
+    // Step 2: Create variants (Shopify always creates at least one variant)
+    const variantsToCreate = data.variants && data.variants.length > 0
+      ? data.variants
+      : [
+          {
+            title: "Default",
+            price: data.price,
+            compareAtPrice: data.compareAtPrice,
+            sku: undefined,
+            imageUrl: undefined,
+            options: undefined,
+            initialStock: data.tracksInventory ? 0 : undefined,
+            costPerItem: undefined,
+          } as VariantData,
+        ];
+
+    const createdVariants = [];
+
+    for (const variantData of variantsToCreate) {
+      // Upload variant image if provided
+      let variantImageUrl = variantData.imageUrl;
+      if (variantData.id && data.variantImages?.[variantData.id]) {
+        const variantImageFiles = data.variantImages[variantData.id];
+        if (variantImageFiles && variantImageFiles.length > 0) {
+          const variantImageUrls = await uploadFiles(
+            variantImageFiles,
+            `listings/variants/${listingId}/${variantData.id}`
+          );
+          variantImageUrl = variantImageUrls[0] || variantImageUrl;
+        }
+      }
+
+      const variant = await db
+        .insert(listingVariants)
+        .values({
+          listingId,
+          title: variantData.title,
+          sku: variantData.sku || null,
+          price: variantData.price ? variantData.price.toString() : null,
+          compareAtPrice: variantData.compareAtPrice
+            ? variantData.compareAtPrice.toString()
+            : null,
+          imageUrl: variantImageUrl || null,
+          options: variantData.options || null,
+        })
+        .returning();
+
+      createdVariants.push({ ...variant[0], initialStock: variantData.initialStock, costPerItem: variantData.costPerItem });
+    }
+
+    // Step 3 & 4: Create inventory items and levels (if tracking inventory)
+    if (data.tracksInventory && data.inventoryLocationId) {
+      for (const variant of createdVariants) {
+        // Step 3: Create inventory item for each variant
+        const inventoryItem = await db
+          .insert(inventoryItems)
+          .values({
+            variantId: variant.id,
+            costPerItem: variant.costPerItem
+              ? variant.costPerItem.toString()
+              : "0",
+            requiresShipping: true,
+            weightGrams: 0,
+          })
+          .returning();
+
+        // Step 4: Create inventory level for this variant and location
+        await db.insert(inventoryLevels).values({
+          inventoryItemId: inventoryItem[0].id,
+          locationId: data.inventoryLocationId,
+          available: variant.initialStock || 0,
+          committed: 0,
+          incoming: 0,
+        });
+      }
+    }
 
     // Translate and insert translations for all locales
     const [
@@ -193,6 +347,11 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
  */
 export async function getListingById(id: string): Promise<Listing | null> {
   try {
+    // Validate ID format (should be a UUID or valid ID, not a route segment)
+    if (!id || id.trim() === "" || id === "products" || id === "new") {
+      return null;
+    }
+    
     // Fetch listing with English translations (admin/seller dashboard uses English)
     const result = await db
       .select({
@@ -200,17 +359,21 @@ export async function getListingById(id: string): Promise<Listing | null> {
         producerId: listing.producerId,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        category: listing.category,
+        vendorId: listing.vendorId,
+        categoryRuleId: listing.categoryRuleId,
+        taxonomyCategoryId: listing.taxonomyCategoryId,
+        taxonomyCategoryName: listing.taxonomyCategoryName,
         price: listing.price,
+        compareAtPrice: listing.compareAtPrice,
         currency: listing.currency,
-        stockQuantity: listing.stockQuantity,
         unit: listing.unit,
         imageUrl: listing.imageUrl,
         gallery: listing.gallery,
         tags: listingTranslations.tags,
-        isActive: listing.isActive,
+        status: listing.status,
         isFeatured: listing.isFeatured,
         marketType: listing.marketType,
+        publishedAt: listing.publishedAt,
         originVillage: listingTranslations.originVillage,
         harvestDate: listing.harvestDate,
         ratingAverage: listing.ratingAverage,
@@ -245,17 +408,21 @@ export async function getListingById(id: string): Promise<Listing | null> {
       producerId: r.producerId,
       name: r.name || r.nameFallback || "",
       description: r.description || r.descriptionFallback || null,
-      category: r.category,
+      vendorId: r.vendorId || null,
+      categoryRuleId: r.categoryRuleId,
+      taxonomyCategoryId: r.taxonomyCategoryId || null,
+      taxonomyCategoryName: r.taxonomyCategoryName || null,
       price: r.price,
+      compareAtPrice: r.compareAtPrice || null,
       currency: r.currency,
-      stockQuantity: r.stockQuantity,
       unit: r.unit,
       imageUrl: r.imageUrl,
       gallery: r.gallery,
       tags: r.tags || r.tagsFallback || [],
-      isActive: r.isActive,
+      status: r.status || "draft",
       isFeatured: r.isFeatured,
       marketType: r.marketType,
+      publishedAt: r.publishedAt || null,
       originVillage: r.originVillage || r.originVillageFallback || null,
       harvestDate: r.harvestDate,
       ratingAverage: r.ratingAverage,
@@ -284,17 +451,21 @@ export async function getListings(): Promise<Listing[]> {
         producerId: listing.producerId,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        category: listing.category,
+        vendorId: listing.vendorId,
+        categoryRuleId: listing.categoryRuleId,
+        taxonomyCategoryId: listing.taxonomyCategoryId,
+        taxonomyCategoryName: listing.taxonomyCategoryName,
         price: listing.price,
+        compareAtPrice: listing.compareAtPrice,
         currency: listing.currency,
-        stockQuantity: listing.stockQuantity,
         unit: listing.unit,
         imageUrl: listing.imageUrl,
         gallery: listing.gallery,
         tags: listingTranslations.tags,
-        isActive: listing.isActive,
+        status: listing.status,
         isFeatured: listing.isFeatured,
         marketType: listing.marketType,
+        publishedAt: listing.publishedAt,
         originVillage: listingTranslations.originVillage,
         harvestDate: listing.harvestDate,
         ratingAverage: listing.ratingAverage,
@@ -323,17 +494,21 @@ export async function getListings(): Promise<Listing[]> {
       producerId: r.producerId,
       name: r.name || r.nameFallback || "",
       description: r.description || r.descriptionFallback || null,
-      category: r.category,
+      vendorId: r.vendorId || null,
+      categoryRuleId: r.categoryRuleId,
+      taxonomyCategoryId: r.taxonomyCategoryId || null,
+      taxonomyCategoryName: r.taxonomyCategoryName || null,
       price: r.price,
+      compareAtPrice: r.compareAtPrice || null,
       currency: r.currency,
-      stockQuantity: r.stockQuantity,
       unit: r.unit,
       imageUrl: r.imageUrl,
       gallery: r.gallery,
       tags: r.tags || r.tagsFallback || [],
-      isActive: r.isActive,
+      status: r.status || "draft",
       isFeatured: r.isFeatured,
       marketType: r.marketType,
+      publishedAt: r.publishedAt || null,
       originVillage: r.originVillage || r.originVillageFallback || null,
       harvestDate: r.harvestDate,
       ratingAverage: r.ratingAverage,
@@ -369,18 +544,22 @@ export async function getAllListingsWithUsers(): Promise<
         id: listing.id,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        category: listing.category,
+        vendorId: listing.vendorId,
+        categoryRuleId: listing.categoryRuleId,
+        taxonomyCategoryId: listing.taxonomyCategoryId,
+        taxonomyCategoryName: listing.taxonomyCategoryName,
         price: listing.price,
+        compareAtPrice: listing.compareAtPrice,
         currency: listing.currency,
-        stockQuantity: listing.stockQuantity,
         unit: listing.unit,
         producerId: listing.producerId,
         imageUrl: listing.imageUrl,
         gallery: listing.gallery,
         tags: listingTranslations.tags,
-        isActive: listing.isActive,
+        status: listing.status,
         isFeatured: listing.isFeatured,
         marketType: listing.marketType,
+        publishedAt: listing.publishedAt,
         originVillage: listingTranslations.originVillage,
         harvestDate: listing.harvestDate,
         ratingAverage: listing.ratingAverage,
@@ -410,37 +589,78 @@ export async function getAllListingsWithUsers(): Promise<
     // Check if producer is admin
     const adminEmails = process.env.ADMIN_LIST?.split(",") || [];
 
-    return result.map((r) => ({
-      id: r.id,
-      producerId: r.producerId,
-      name: r.name || r.nameFallback || "",
-      description: r.description || r.descriptionFallback || null,
-      category: r.category,
-      price: r.price,
-      currency: r.currency,
-      stockQuantity: r.stockQuantity,
-      unit: r.unit,
-      imageUrl: r.imageUrl,
-      gallery: r.gallery,
-      tags: r.tags || r.tagsFallback || [],
-      isActive: r.isActive,
-      isFeatured: r.isFeatured,
-      marketType: r.marketType,
-      originVillage: r.originVillage || r.originVillageFallback || null,
-      harvestDate: r.harvestDate,
-      ratingAverage: r.ratingAverage,
-      ratingCount: r.ratingCount,
-      salesCount: r.salesCount,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-      producerName: r.producerName,
-      producerEmail: r.producerEmail,
-      isAdminCreated: adminEmails.includes(r.producerEmail),
-    }));
+    return result.map((r) => {
+      // Ensure gallery is an array
+      let gallery: string[] = [];
+      if (Array.isArray(r.gallery)) {
+        gallery = r.gallery;
+      } else if (r.gallery) {
+        gallery = [r.gallery as unknown as string];
+      }
+
+      // Ensure tags is an array
+      let tags: string[] = [];
+      if (Array.isArray(r.tags)) {
+        tags = r.tags;
+      } else if (r.tags) {
+        tags = [r.tags as unknown as string];
+      }
+      
+      const tagsFallback: string[] = Array.isArray(r.tagsFallback) 
+        ? r.tagsFallback 
+        : r.tagsFallback 
+          ? [r.tagsFallback as unknown as string] 
+          : [];
+
+      return {
+        id: r.id,
+        producerId: r.producerId,
+        name: r.name || r.nameFallback || "",
+        description: r.description || r.descriptionFallback || null,
+        vendorId: r.vendorId || null,
+        categoryRuleId: r.categoryRuleId,
+        taxonomyCategoryId: r.taxonomyCategoryId || null,
+        price: r.price,
+        compareAtPrice: r.compareAtPrice || null,
+        currency: r.currency || "NPR",
+        unit: r.unit || "kg",
+        imageUrl: r.imageUrl || null,
+        gallery,
+        tags: tags.length > 0 ? tags : tagsFallback,
+        status: r.status || "draft",
+        isFeatured: r.isFeatured ?? false,
+        marketType: r.marketType || "local",
+        publishedAt: r.publishedAt || null,
+        originVillage: r.originVillage || r.originVillageFallback || null,
+        harvestDate: r.harvestDate || null,
+        ratingAverage: r.ratingAverage || "0",
+        ratingCount: r.ratingCount || 0,
+        salesCount: r.salesCount || 0,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        producerName: r.producerName || "",
+        producerEmail: r.producerEmail || "",
+        isAdminCreated: adminEmails.includes(r.producerEmail || ""),
+      };
+    });
   } catch (error) {
     console.error("Error fetching listings with users:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    // Check if the error is specifically about missing category_rule_id column (PostgreSQL error code 42703)
+    const pgError = error as any;
+    if (
+      (pgError?.code === "42703" && errorMessage.includes("category_rule_id")) ||
+      (errorMessage.includes("category_rule_id") && errorMessage.includes("does not exist"))
+    ) {
+      throw new Error(
+        `Database schema is out of sync. The 'category_rule_id' column is missing from the 'listing' table. ` +
+        `Please run: npx tsx scripts/add-category-rule-id-column.ts to add this column.`
+      );
+    }
+    
     throw new Error(
-      `Failed to fetch listings with users: ${error instanceof Error ? error.message : "Unknown error"}`
+      `Failed to fetch listings with users: ${errorMessage}`
     );
   }
 }
@@ -459,17 +679,21 @@ export async function getListingsByProducer(
         producerId: listing.producerId,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        category: listing.category,
+        vendorId: listing.vendorId,
+        categoryRuleId: listing.categoryRuleId,
+        taxonomyCategoryId: listing.taxonomyCategoryId,
+        taxonomyCategoryName: listing.taxonomyCategoryName,
         price: listing.price,
+        compareAtPrice: listing.compareAtPrice,
         currency: listing.currency,
-        stockQuantity: listing.stockQuantity,
         unit: listing.unit,
         imageUrl: listing.imageUrl,
         gallery: listing.gallery,
         tags: listingTranslations.tags,
-        isActive: listing.isActive,
+        status: listing.status,
         isFeatured: listing.isFeatured,
         marketType: listing.marketType,
+        publishedAt: listing.publishedAt,
         originVillage: listingTranslations.originVillage,
         harvestDate: listing.harvestDate,
         ratingAverage: listing.ratingAverage,
@@ -499,17 +723,21 @@ export async function getListingsByProducer(
       producerId: r.producerId,
       name: r.name || r.nameFallback || "",
       description: r.description || r.descriptionFallback || null,
-      category: r.category,
+      vendorId: r.vendorId || null,
+      categoryRuleId: r.categoryRuleId,
+      taxonomyCategoryId: r.taxonomyCategoryId || null,
+      taxonomyCategoryName: r.taxonomyCategoryName || null,
       price: r.price,
+      compareAtPrice: r.compareAtPrice || null,
       currency: r.currency,
-      stockQuantity: r.stockQuantity,
       unit: r.unit,
       imageUrl: r.imageUrl,
       gallery: r.gallery,
       tags: r.tags || r.tagsFallback || [],
-      isActive: r.isActive,
+      status: r.status || "draft",
       isFeatured: r.isFeatured,
       marketType: r.marketType,
+      publishedAt: r.publishedAt || null,
       originVillage: r.originVillage || r.originVillageFallback || null,
       harvestDate: r.harvestDate,
       ratingAverage: r.ratingAverage,
@@ -562,19 +790,49 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
       gallery = [...gallery, ...newGalleryUrls];
     }
 
+
+    // Extract taxonomy category short name if category is being updated
+    let taxonomyCategoryName: string | null = null;
+    if (updateData.taxonomyCategoryId) {
+      const category = findCategoryById(updateData.taxonomyCategoryId);
+      if (category) {
+        taxonomyCategoryName = category.name; // Short name (e.g., "Honey")
+      }
+    } else if (existingListing.taxonomyCategoryId) {
+      // Keep existing short name if category is not being updated
+      const existingListingWithName = await db
+        .select({ taxonomyCategoryName: listing.taxonomyCategoryName })
+        .from(listing)
+        .where(eq(listing.id, id))
+        .limit(1);
+      taxonomyCategoryName = existingListingWithName[0]?.taxonomyCategoryName || null;
+    }
+
+    // Determine publishedAt based on status
+    const publishedAt = updateData.status === "active" && !existingListing.publishedAt
+      ? new Date()
+      : updateData.status === "active"
+      ? existingListing.publishedAt
+      : updateData.status === "draft" || updateData.status === "archived"
+      ? null
+      : existingListing.publishedAt;
+
     // Update base listing table (non-translatable fields)
     const baseUpdateData: Partial<typeof listing.$inferInsert> = {
-      category: updateData.category || null,
+      categoryRuleId: updateData.categoryRuleId !== undefined ? updateData.categoryRuleId : existingListing.categoryRuleId || null,
+      taxonomyCategoryId: updateData.taxonomyCategoryId || existingListing.taxonomyCategoryId || null, // Taxonomy category ID
+      taxonomyCategoryName: taxonomyCategoryName !== null ? taxonomyCategoryName : undefined, // Short name
       imageUrl: imageUrl || undefined,
       gallery,
       updatedAt: new Date(),
       price: updateData.price ? String(updateData.price) : undefined,
+      compareAtPrice: updateData.compareAtPrice ? String(updateData.compareAtPrice) : undefined,
       currency: updateData.currency,
-      stockQuantity: updateData.stockQuantity,
       unit: updateData.unit,
-      isActive: updateData.isActive,
+      status: updateData.status || existingListing.status || "draft",
       isFeatured: updateData.isFeatured,
       marketType: updateData.marketType,
+      publishedAt,
       harvestDate: updateData.harvestDate,
     };
 
@@ -776,7 +1034,7 @@ export async function deleteListingImage(
 }
 
 /**
- * Toggle listing active status
+ * Toggle listing status between active and draft
  */
 export async function toggleListingStatus(id: string): Promise<Listing> {
   try {
@@ -785,10 +1043,17 @@ export async function toggleListingStatus(id: string): Promise<Listing> {
       throw new Error("Listing not found");
     }
 
+    // Toggle between active and draft
+    const newStatus = existingListing.status === "active" ? "draft" : "active";
+    const publishedAt = newStatus === "active" && !existingListing.publishedAt
+      ? new Date()
+      : existingListing.publishedAt;
+
     const updatedListing = await db
       .update(listing)
       .set({
-        isActive: !existingListing.isActive,
+        status: newStatus,
+        publishedAt,
         updatedAt: new Date(),
       })
       .where(eq(listing.id, id))

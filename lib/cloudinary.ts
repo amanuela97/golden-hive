@@ -1,4 +1,5 @@
 import { v2 as cloudinary } from "cloudinary";
+import sharp from "sharp";
 
 // Configure Cloudinary
 cloudinary.config({
@@ -6,6 +7,67 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+
+/**
+ * Check if a file is an image
+ */
+function isImageFile(file: File | Blob): boolean {
+  const fileType = file instanceof File ? file.type : "";
+  return fileType.startsWith("image/");
+}
+
+/**
+ * Compress image using Sharp
+ * @param buffer - Image buffer
+ * @param mimeType - Original MIME type
+ * @returns Compressed image buffer
+ */
+async function compressImage(
+  buffer: Buffer,
+  mimeType: string
+): Promise<Buffer> {
+  try {
+    let sharpInstance = sharp(buffer);
+
+    // Get image metadata
+    const metadata = await sharpInstance.metadata();
+
+    // Determine output format based on original format
+    // Prefer WebP for better compression, fallback to original format
+    const outputFormat = mimeType.includes("png")
+      ? "png"
+      : mimeType.includes("gif")
+        ? "gif"
+        : "webp";
+
+    // Resize if image is too large (max width 2000px, maintain aspect ratio)
+    if (metadata.width && metadata.width > 2000) {
+      sharpInstance = sharpInstance.resize(2000, null, {
+        withoutEnlargement: true,
+        fit: "inside",
+      });
+    }
+
+    // Compress based on format
+    if (outputFormat === "webp") {
+      return await sharpInstance.webp({ quality: 85, effort: 6 }).toBuffer();
+    } else if (outputFormat === "png") {
+      return await sharpInstance
+        .png({ quality: 85, compressionLevel: 9 })
+        .toBuffer();
+    } else if (outputFormat === "gif") {
+      // GIF compression is limited, just optimize
+      return await sharpInstance.gif().toBuffer();
+    } else {
+      // JPEG or other formats - convert to WebP for better compression
+      return await sharpInstance.webp({ quality: 85, effort: 6 }).toBuffer();
+    }
+  } catch (error) {
+    console.error("Error compressing image:", error);
+    // Return original buffer if compression fails
+    return buffer;
+  }
+}
 
 /**
  * Upload a single file to Cloudinary and return full result
@@ -34,14 +96,44 @@ export async function uploadFileWithResult(
       throw new Error("Invalid file provided");
     }
     const fileName = (file as File).name || "unnamed";
+    const fileType =
+      file instanceof File ? file.type : "application/octet-stream";
     console.log(
-      `Uploading file: ${fileName}, size: ${file.size}, type: ${file.type}`
+      `Uploading file: ${fileName}, size: ${file.size}, type: ${fileType}`
     );
 
     // Convert File/Blob to buffer
-    const buffer = await file.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
-    const dataURI = `data:${file.type};base64,${base64}`;
+    const arrayBuffer = await file.arrayBuffer();
+    let buffer: Buffer = Buffer.from(new Uint8Array(arrayBuffer));
+    const originalSize = buffer.length;
+
+    // Compress image if it's an image file
+    if (isImageFile(file)) {
+      try {
+        const compressedBuffer = await compressImage(buffer, fileType);
+        buffer = compressedBuffer;
+        const compressedSize = buffer.length;
+        const compressionRatio = (
+          (1 - compressedSize / originalSize) *
+          100
+        ).toFixed(1);
+        console.log(
+          `Image compressed: ${originalSize} bytes -> ${compressedSize} bytes (${compressionRatio}% reduction)`
+        );
+      } catch (error) {
+        console.warn("Failed to compress image, using original:", error);
+        // Continue with original buffer if compression fails
+      }
+    }
+
+    // Convert buffer to base64 data URI
+    const base64 = buffer.toString("base64");
+    // Use WebP MIME type if image was compressed to WebP, otherwise use original
+    const mimeType =
+      isImageFile(file) && buffer.length < originalSize
+        ? "image/webp"
+        : fileType;
+    const dataURI = `data:${mimeType};base64,${base64}`;
 
     console.log(`Uploading to folder: golden-hive/${folder}`);
 
@@ -102,14 +194,44 @@ export async function uploadFile(
       throw new Error("Invalid file provided");
     }
     const fileName = (file as File).name || "unnamed";
+    const fileType =
+      file instanceof File ? file.type : "application/octet-stream";
     console.log(
-      `Uploading file: ${fileName}, size: ${file.size}, type: ${file.type}`
+      `Uploading file: ${fileName}, size: ${file.size}, type: ${fileType}`
     );
 
     // Convert File/Blob to buffer
-    const buffer = await file.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
-    const dataURI = `data:${file.type};base64,${base64}`;
+    const arrayBuffer = await file.arrayBuffer();
+    let buffer: Buffer = Buffer.from(new Uint8Array(arrayBuffer));
+    const originalSize = buffer.length;
+
+    // Compress image if it's an image file
+    if (isImageFile(file)) {
+      try {
+        const compressedBuffer = await compressImage(buffer, fileType);
+        buffer = compressedBuffer;
+        const compressedSize = buffer.length;
+        const compressionRatio = (
+          (1 - compressedSize / originalSize) *
+          100
+        ).toFixed(1);
+        console.log(
+          `Image compressed: ${originalSize} bytes -> ${compressedSize} bytes (${compressionRatio}% reduction)`
+        );
+      } catch (error) {
+        console.warn("Failed to compress image, using original:", error);
+        // Continue with original buffer if compression fails
+      }
+    }
+
+    // Convert buffer to base64 data URI
+    const base64 = buffer.toString("base64");
+    // Use WebP MIME type if image was compressed to WebP, otherwise use original
+    const mimeType =
+      isImageFile(file) && buffer.length < originalSize
+        ? "image/webp"
+        : fileType;
+    const dataURI = `data:${mimeType};base64,${base64}`;
 
     console.log(`Uploading to folder: golden-hive/${folder}`);
 

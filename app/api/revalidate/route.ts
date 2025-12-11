@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     }
 
     if (tag) {
-      revalidateTag(tag);
+      revalidateTag(tag, "default");
       return NextResponse.json({ revalidated: true, by: "tag", tag });
     }
 

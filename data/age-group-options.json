@@ -1,0 +1,22 @@
+[
+  {
+    "value": "newborn",
+    "label": "Newborn"
+  },
+  {
+    "value": "infant",
+    "label": "Infant"
+  },
+  {
+    "value": "toddler",
+    "label": "Toddler"
+  },
+  {
+    "value": "kids",
+    "label": "Kids"
+  },
+  {
+    "value": "adult",
+    "label": "Adult"
+  }
+]

@@ -1,3 +1,20 @@
+export enum ListingStatus {
+  active = "active",
+  draft = "draft",
+  archived = "archived",
+}
+
+export interface Variant {
+  id: string;
+  title: string;
+  sku?: string;
+  price: number;
+  compareAtPrice?: number;
+  inventoryQuantity: number;
+  options: string[];
+  image?: string;
+}
+
 export type ActionResponse = {
   success: boolean;
   message?: string;

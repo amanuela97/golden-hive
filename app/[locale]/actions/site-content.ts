@@ -481,15 +481,15 @@ export const getAboutData = unstable_cache(
 );
 
 export async function revalidateNavbar() {
-  revalidateTag("navbar");
+  revalidateTag("navbar", "default");
 }
 
 export async function revalidateFooter() {
-  revalidateTag("footer");
+  revalidateTag("footer", "default");
 }
 
 export async function revalidateAbout() {
-  revalidateTag("about");
+  revalidateTag("about", "default");
 }
 
 // ========================
@@ -552,7 +552,7 @@ export async function updateNavbar(data: { title?: string; logoUrl?: string }) {
     }
   }
 
-  revalidateTag("navbar");
+  revalidateTag("navbar", "default");
   return { success: true } as const;
 }
 
@@ -597,7 +597,7 @@ export async function createNavbarItem(data: {
     });
   }
 
-  revalidateTag("navbar");
+  revalidateTag("navbar", "default");
   return { success: true } as const;
 }
 
@@ -656,13 +656,13 @@ export async function updateNavbarItem(
     }
   }
 
-  revalidateTag("navbar");
+  revalidateTag("navbar", "default");
   return { success: true } as const;
 }
 
 export async function deleteNavbarItem(id: number) {
   await db.delete(navbarItems).where(eq(navbarItems.id, id));
-  revalidateTag("navbar");
+  revalidateTag("navbar", "default");
   return { success: true } as const;
 }
 
@@ -721,13 +721,13 @@ export async function upsertFooterSection(data: {
     }
   }
 
-  revalidateTag("footer");
+  revalidateTag("footer", "default");
   return { success: true } as const;
 }
 
 export async function deleteFooterSection(sectionId: number) {
   await db.delete(footerSections).where(eq(footerSections.id, sectionId));
-  revalidateTag("footer");
+  revalidateTag("footer", "default");
   return { success: true } as const;
 }
 
@@ -805,13 +805,13 @@ export async function upsertFooterItem(data: {
     }
   }
 
-  revalidateTag("footer");
+  revalidateTag("footer", "default");
   return { success: true } as const;
 }
 
 export async function deleteFooterItem(id: number) {
   await db.delete(footerItems).where(eq(footerItems.id, id));
-  revalidateTag("footer");
+  revalidateTag("footer", "default");
   return { success: true } as const;
 }
 
@@ -909,7 +909,7 @@ export async function updateAboutPageContent(data: {
     }
   }
 
-  revalidateTag("about");
+  revalidateTag("about", "default");
   revalidatePath("/about");
   return { success: true } as const;
 }
@@ -1058,7 +1058,7 @@ export async function upsertAboutSectionContent(data: {
     }
   }
 
-  revalidateTag("about");
+  revalidateTag("about", "default");
   revalidatePath("/about");
   return { success: true } as const;
 }
@@ -1079,7 +1079,7 @@ export async function deleteAboutSectionContent(id: number) {
   }
 
   await db.delete(aboutSections).where(eq(aboutSections.id, id));
-  revalidateTag("about");
+  revalidateTag("about", "default");
   revalidatePath("/about");
   return { success: true } as const;
 }
@@ -1117,7 +1117,7 @@ export async function updateNavbarLogo(formData: FormData) {
       .where(eq(navbarTable.id, existing[0].id));
   }
 
-  revalidateTag("navbar");
+  revalidateTag("navbar", "default");
   return { success: true, url: result.secure_url } as const;
 }
 
@@ -1152,7 +1152,7 @@ export async function uploadAboutSectionImage(formData: FormData) {
       .where(eq(aboutSections.id, sectionId));
   }
 
-  revalidateTag("about");
+  revalidateTag("about", "default");
   revalidatePath("/about");
   return { success: true, url: result.secure_url } as const;
 }

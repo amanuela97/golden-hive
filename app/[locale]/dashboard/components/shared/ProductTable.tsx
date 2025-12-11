@@ -25,7 +25,6 @@ import {
   Star,
   StarOff,
   Search,
-  Filter,
   ChevronLeft,
   ChevronRight,
   Plus,
@@ -33,7 +32,7 @@ import {
 import { Link } from "@/i18n/navigation";
 import Image from "next/image";
 import toast from "react-hot-toast";
-import { useCategories } from "../../../hooks/useCategoryQueries";
+// Categories are now handled via taxonomy - no longer using old category system
 
 interface ProductTableProps {
   products: Listing[];
@@ -61,9 +60,7 @@ export default function ProductTable({
   const [globalFilter, setGlobalFilter] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const { data: categoriesData, isLoading: categoriesLoading } =
-    useCategories();
-  const categories = categoriesData?.result || [];
+  // Categories are now handled via taxonomy - removed old category system
 
   const columns = useMemo<ColumnDef<Listing>[]>(
     () => [
@@ -324,32 +321,7 @@ export default function ProductTable({
               className="pl-10 w-64"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-gray-400" />
-            <select
-              value={
-                (table.getColumn("category")?.getFilterValue() as string) ?? ""
-              }
-              onChange={(e) =>
-                table
-                  .getColumn("category")
-                  ?.setFilterValue(e.target.value || undefined)
-              }
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm"
-            >
-              <option value="">Select Category</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-            {categoriesLoading && (
-              <p className="text-sm text-gray-500 mt-1">
-                Loading categories...
-              </p>
-            )}
-          </div>
+          {/* Category filter removed - now using taxonomy-based categories */}
         </div>
         <Link href={`${basePath}/products/new`}>
           <Button>

@@ -9,6 +9,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { UserRole } from "@/lib/roles";
 import { completeOnboarding } from "../../actions/auth";
 import toast from "react-hot-toast";
@@ -17,6 +19,7 @@ import { useTranslations } from "next-intl";
 
 export function OnboardingForm() {
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
+  const [storeName, setStoreName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const t = useTranslations("onboarding");
@@ -27,9 +30,18 @@ export function OnboardingForm() {
       return;
     }
 
+    // Validate store name if Seller role is selected
+    if (selectedRole === UserRole.SELLER && !storeName.trim()) {
+      toast.error("Please enter a store name");
+      return;
+    }
+
     setIsLoading(true);
     try {
-      const result = await completeOnboarding(selectedRole);
+      const result = await completeOnboarding(
+        selectedRole,
+        selectedRole === UserRole.SELLER ? storeName.trim() : undefined
+      );
 
       if (result.success) {
         toast.success(t("profileCompletedSuccess"));
@@ -88,6 +100,23 @@ export function OnboardingForm() {
           );
         })}
       </div>
+
+      {/* Store name input for Seller role */}
+      {selectedRole === UserRole.SELLER && (
+        <div className="space-y-2">
+          <Label htmlFor="storeName" className="text-sm font-medium">
+            Store Name *
+          </Label>
+          <Input
+            id="storeName"
+            value={storeName}
+            onChange={(e) => setStoreName(e.target.value)}
+            placeholder="Enter your store name"
+            required
+            className="h-11"
+          />
+        </div>
+      )}
 
       <Button
         onClick={handleRoleSelection}

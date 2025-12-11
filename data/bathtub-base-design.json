@@ -1,0 +1,18 @@
+[
+  {
+    "value": "round",
+    "label": "Round"
+  },
+  {
+    "value": "square",
+    "label": "Square"
+  },
+  {
+    "value": "rectangular",
+    "label": "Rectangular"
+  },
+  {
+    "value": "oval",
+    "label": "Oval"
+  }
+]

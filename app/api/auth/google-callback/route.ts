@@ -36,8 +36,7 @@ export async function GET(request: NextRequest) {
         .limit(1);
 
       if (userRole.length > 0) {
-        const role = userRole[0].roleName.toLowerCase();
-        return NextResponse.redirect(new URL(`/dashboard/${role}`, request.url));
+        return NextResponse.redirect(new URL(`/dashboard`, request.url));
       } else {
         // User exists but has no role, redirect to onboarding
         return NextResponse.redirect(new URL("/onboarding", request.url));

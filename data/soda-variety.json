@@ -1,0 +1,18 @@
+[
+  {
+    "value": "standard",
+    "label": "Standard"
+  },
+  {
+    "value": "premium",
+    "label": "Premium"
+  },
+  {
+    "value": "deluxe",
+    "label": "Deluxe"
+  },
+  {
+    "value": "professional",
+    "label": "Professional"
+  }
+]

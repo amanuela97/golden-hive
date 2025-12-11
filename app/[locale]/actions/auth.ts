@@ -5,7 +5,7 @@ import { APIError, User } from "better-auth";
 import { headers } from "next/headers";
 import { z } from "zod";
 import { db } from "@/db";
-import { user, roles, userRoles } from "@/db/schema";
+import { user, roles, userRoles, vendor } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { redirect } from "@/i18n/navigation";
@@ -250,23 +250,10 @@ export async function loginAction(
       }
     }
 
-    // Get user's role for redirect
-    const userRole = await db
-      .select({
-        roleName: roles.name,
-      })
-      .from(userRoles)
-      .innerJoin(roles, eq(userRoles.roleId, roles.id))
-      .where(eq(userRoles.userId, result.user.id))
-      .limit(1);
-
-    const role =
-      userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "customer";
-
     return {
       success: true,
       message: t("auth.signedInSuccess"),
-      redirectTo: `/dashboard/${role}`,
+      redirectTo: `/dashboard`,
     };
   } catch (error) {
     console.error("Sign in error:", error);
@@ -593,7 +580,8 @@ export async function deleteAccount(
 
 // Complete onboarding for Google sign-in users
 export async function completeOnboarding(
-  role: UserRole
+  role: UserRole,
+  storeName?: string
 ): Promise<ActionResponse> {
   const t = await getTranslations();
   try {
@@ -684,6 +672,14 @@ export async function completeOnboarding(
       userId: currentUser.id,
       roleId: roleId,
     });
+
+    // Create vendor record if role is Seller and storeName is provided
+    if (roleToAssign === UserRole.SELLER && storeName) {
+      await db.insert(vendor).values({
+        storeName: storeName.trim(),
+        ownerUserId: currentUser.id,
+      });
+    }
 
     return {
       success: true,

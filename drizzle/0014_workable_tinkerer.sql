@@ -1,0 +1,1 @@
+ALTER TABLE "listing" ADD COLUMN "taxonomy_category_name" text;

@@ -1,0 +1,42 @@
+[
+  {
+    "value": "cotton",
+    "label": "Cotton"
+  },
+  {
+    "value": "polyester",
+    "label": "Polyester"
+  },
+  {
+    "value": "wool",
+    "label": "Wool"
+  },
+  {
+    "value": "silk",
+    "label": "Silk"
+  },
+  {
+    "value": "linen",
+    "label": "Linen"
+  },
+  {
+    "value": "denim",
+    "label": "Denim"
+  },
+  {
+    "value": "leather",
+    "label": "Leather"
+  },
+  {
+    "value": "nylon",
+    "label": "Nylon"
+  },
+  {
+    "value": "spandex",
+    "label": "Spandex"
+  },
+  {
+    "value": "rayon",
+    "label": "Rayon"
+  }
+]
