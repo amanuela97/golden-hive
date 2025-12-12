@@ -44,7 +44,6 @@ import {
   ChevronUp,
   Search,
   MoreHorizontal,
-  SlidersHorizontal,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import colorOptions from "@/data/color-options.json";
@@ -52,6 +51,7 @@ import sizeOptions from "@/data/size-options.json";
 import ageGroupOptions from "@/data/age-group-options.json";
 import fabricOptions from "@/data/fabric-options.json";
 import type { TaxonomyAttribute } from "@/lib/taxonomy";
+import type { ListingVariant } from "@/db/schema";
 
 type OptionValue = {
   value: string;
@@ -65,17 +65,27 @@ type VariantOption = {
   values: OptionValue[];
 };
 
-type Variant = {
-  id: string;
-  options: Record<string, string>;
-  price: string;
-  quantity: string;
-  sku?: string;
-  barcode?: string;
-  package?: string;
-  weight?: string;
-  origin?: string;
-  images?: string[];
+// UI Variant type - based on ListingVariant from schema with UI-specific modifications
+
+// Extend ListingVariant for UI form handling (price as string, add quantity and other UI fields)
+type Variant = Omit<
+  ListingVariant,
+  | "listingId"
+  | "createdAt"
+  | "updatedAt"
+  | "title"
+  | "compareAtPrice"
+  | "imageUrl"
+  | "price"
+> & {
+  price: string; // String for input handling (overrides numeric price from schema)
+  quantity: string; // Inventory quantity for UI (not in schema)
+  barcode?: string; // UI-only field
+  package?: string; // UI-only field
+  weight?: string; // UI-only field
+  origin?: string; // UI-only field
+  images?: string[]; // Array of image URLs for UI (not in schema)
+  options: Record<string, string>; // Ensure options is Record type (from schema but typed explicitly)
 };
 
 const optionTypeData: Record<string, OptionValue[]> = {
@@ -131,12 +141,141 @@ export function ProductVariants({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     new Set()
   );
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
-
   const [editModal, setEditModal] = useState<EditModalType>(null);
-  const [showSearchDialog, setShowSearchDialog] = useState(false);
-  const [showFilterDialog, setShowFilterDialog] = useState(false);
+  const [hasInitialized, setHasInitialized] = useState(false);
+
+  // Create recommended options from attributes
+  const recommendedOptions = useMemo(() => {
+    return recommendedAttributes.map((attr) => ({
+      value: attr.handle,
+      label: attr.name,
+      isRecommended: true,
+    }));
+  }, [recommendedAttributes]);
+
+  // Combine all available options (standard + recommended)
+  const allAvailableOptions = useMemo(() => {
+    const standard = availableOptions.map((opt) => ({
+      ...opt,
+      isRecommended: false,
+    }));
+    const recommended = recommendedOptions;
+    // Remove duplicates (if a recommended option matches a standard one)
+    const recommendedUnique = recommended.filter(
+      (rec) => !standard.some((std) => std.value === rec.value)
+    );
+    return [...recommendedUnique, ...standard];
+  }, [recommendedOptions]);
+
+  // Extract options from initialVariants when editing
+  useEffect(() => {
+    if (initialVariants.length > 0 && !hasInitialized) {
+      // Extract unique option types and values from existing variants
+      const optionMap = new Map<string, Set<string>>();
+
+      initialVariants.forEach((variant) => {
+        if (variant.options && typeof variant.options === "object") {
+          Object.entries(variant.options).forEach(([key, value]) => {
+            // Normalize key to lowercase for consistent matching
+            const normalizedKey = key.toLowerCase();
+            if (!optionMap.has(normalizedKey)) {
+              optionMap.set(normalizedKey, new Set());
+            }
+            optionMap.get(normalizedKey)?.add(String(value));
+          });
+        }
+      });
+
+      // Convert to VariantOption format
+      const extractedOptions: VariantOption[] = Array.from(
+        optionMap.entries()
+      ).map(([optionKey, valuesSet], index) => {
+        // Try to find matching option label from available options
+        // Match by lowercase comparison
+        const matchingOption = allAvailableOptions.find(
+          (opt) =>
+            opt.value.toLowerCase() === optionKey ||
+            opt.label.toLowerCase() === optionKey ||
+            opt.value === optionKey.replace(/\s+/g, "-")
+        );
+
+        // Use the original key from the first variant to preserve casing if needed
+        const firstVariant = initialVariants.find(
+          (v) =>
+            v.options &&
+            Object.keys(v.options).some((k) => k.toLowerCase() === optionKey)
+        );
+        const originalKey =
+          firstVariant && firstVariant.options
+            ? Object.keys(firstVariant.options).find(
+                (k) => k.toLowerCase() === optionKey
+              ) || optionKey
+            : optionKey;
+
+        const optionLabel = matchingOption?.label || originalKey;
+
+        // Convert Set to OptionValue array
+        const values: OptionValue[] = Array.from(valuesSet).map((val) => {
+          // Try to find matching value from option data
+          const optionType = matchingOption?.value;
+          const optionData = (optionType && optionTypeData[optionType]) ? optionTypeData[optionType] : [];
+          const matchingValue = optionData?.find(
+            (v) =>
+              v.value === val.toLowerCase() ||
+              v.value === val.toLowerCase().replace(/\s+/g, "-") ||
+              v.label.toLowerCase() === val.toLowerCase()
+          );
+
+          return (
+            matchingValue || {
+              value: val.toLowerCase().replace(/\s+/g, "-"),
+              label: val,
+            }
+          );
+        });
+
+        return {
+          id: `option-${Date.now()}-${index}`,
+          name: optionLabel,
+          values,
+        };
+      });
+
+      if (extractedOptions.length > 0) {
+        setOptions(extractedOptions);
+        setGroupBy(extractedOptions[0].name);
+        setHasInitialized(true);
+        // Preserve existing variants - they're already set from initialVariants
+        // Don't regenerate variants as that would lose the existing IDs and data
+      } else if (initialVariants.length > 0) {
+        // Even if we can't extract options, mark as initialized to prevent re-running
+        setHasInitialized(true);
+      }
+    }
+  }, [initialVariants, hasInitialized, allAvailableOptions]);
+
+  // Sync variants state with initialVariants when they change (for edit mode)
+  // Only sync when initialVariants changes from parent, not when local variants change
+  useEffect(() => {
+    if (initialVariants.length > 0 && hasInitialized) {
+      // Use a ref-like comparison to avoid infinite loops
+      // Only update if the initialVariants have actually changed (different IDs or count)
+      setVariants((currentVariants) => {
+        const currentVariantIds = new Set(currentVariants.map((v) => v.id));
+        const initialVariantIds = new Set(initialVariants.map((v) => v.id));
+        const idsMatch =
+          currentVariantIds.size === initialVariantIds.size &&
+          Array.from(currentVariantIds).every((id) => initialVariantIds.has(id));
+
+        // Only update if IDs don't match (meaning initialVariants changed from parent)
+        if (!idsMatch) {
+          return initialVariants;
+        }
+        // Return current variants to prevent unnecessary re-renders
+        return currentVariants;
+      });
+    }
+  }, [initialVariants, hasInitialized]);
 
   // Sync variants with parent when they change
   // Only sync variants, don't include onVariantsChange in deps to avoid unnecessary re-renders
@@ -175,42 +314,25 @@ export function ProductVariants({
       return variants; // Return existing variants instead of creating new ones
     }
 
-    return combinations.map((combo, index) => ({
-      id: `variant-${index}`,
-      options: combo,
-      price:
-        variants.find(
-          (v) => JSON.stringify(v.options) === JSON.stringify(combo)
-        )?.price || "0.00",
-      quantity:
-        variants.find(
-          (v) => JSON.stringify(v.options) === JSON.stringify(combo)
-        )?.quantity || "0",
-    }));
+    return combinations.map((combo, index) => {
+      const existingVariant = variants.find(
+        (v) => JSON.stringify(v.options) === JSON.stringify(combo)
+      );
+      return {
+        id: existingVariant?.id || `variant-${index}`,
+        options: combo,
+        price: existingVariant?.price || "0.00",
+        currency: existingVariant?.currency || "NPR",
+        quantity: existingVariant?.quantity || "0",
+        sku: existingVariant?.sku || null,
+        barcode: existingVariant?.barcode,
+        package: existingVariant?.package,
+        weight: existingVariant?.weight,
+        origin: existingVariant?.origin,
+        images: existingVariant?.images,
+      } as Variant;
+    });
   };
-
-  // Create recommended options from attributes
-  const recommendedOptions = useMemo(() => {
-    return recommendedAttributes.map((attr) => ({
-      value: attr.handle,
-      label: attr.name,
-      isRecommended: true,
-    }));
-  }, [recommendedAttributes]);
-
-  // Combine all available options (standard + recommended)
-  const allAvailableOptions = useMemo(() => {
-    const standard = availableOptions.map((opt) => ({
-      ...opt,
-      isRecommended: false,
-    }));
-    const recommended = recommendedOptions;
-    // Remove duplicates (if a recommended option matches a standard one)
-    const recommendedUnique = recommended.filter(
-      (rec) => !standard.some((std) => std.value === rec.value)
-    );
-    return [...recommendedUnique, ...standard];
-  }, [recommendedOptions]);
 
   const handleAddOption = (optionType: string) => {
     // Validate max 3 options (Shopify limit)
@@ -283,6 +405,7 @@ export function ProductVariants({
     variantId: string,
     field:
       | "price"
+      | "currency"
       | "quantity"
       | "sku"
       | "barcode"
@@ -302,6 +425,18 @@ export function ProductVariants({
     setVariants((prev) =>
       prev.map((v) =>
         v.options[groupKey] === groupValue ? { ...v, price } : v
+      )
+    );
+  };
+
+  const handleGroupCurrencyChange = (
+    groupValue: string,
+    currency: "EUR" | "USD" | "NPR"
+  ) => {
+    const groupKey = groupBy.toLowerCase();
+    setVariants((prev) =>
+      prev.map((v) =>
+        v.options[groupKey] === groupValue ? { ...v, currency } : v
       )
     );
   };
@@ -356,37 +491,20 @@ export function ProductVariants({
     }));
   }, [variants, groupBy]);
 
-  // Filter variants
-  const filteredVariants = variants.filter((variant) => {
-    // Search filter
-    if (searchQuery) {
-      const searchLower = searchQuery.toLowerCase();
-      const matchesSearch = Object.entries(variant.options).some(([, value]) =>
-        value.toLowerCase().includes(searchLower)
-      );
-      if (!matchesSearch) return false;
-    }
-
-    // Option filters
-    for (const [filterKey, filterValue] of Object.entries(filterValues)) {
-      if (filterValue && variant.options[filterKey] !== filterValue) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-
   const totalInventory = variants.reduce(
     (sum, v) => sum + Number.parseInt(v.quantity || "0"),
     0
   );
 
   const usedOptionTypes = options
-    .map((opt) => availableOptions.find((ao) => ao.label === opt.name)?.value)
+    .map(
+      (opt) =>
+        allAvailableOptions.find((ao) => ao.label === opt.name)?.value ||
+        availableOptions.find((ao) => ao.label === opt.name)?.value
+    )
     .filter(Boolean);
 
-  const availableOptionTypes = availableOptions.filter(
+  const availableOptionTypes = allAvailableOptions.filter(
     (opt) => !usedOptionTypes.includes(opt.value)
   );
 
@@ -469,13 +587,21 @@ export function ProductVariants({
               <div className="max-h-80 overflow-y-auto border-t border-border">
                 {availableOptionTypes.map((opt) => (
                   <button
+                    type="button"
                     key={opt.value}
-                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-accent"
+                    className="w-full px-4 py-2.5 text-left text-sm hover:bg-accent flex items-center justify-between"
                     onClick={() => {
                       handleAddOption(opt.value);
                     }}
                   >
-                    {opt.label}
+                    <div>
+                      <div className="font-medium">{opt.label}</div>
+                    </div>
+                    {opt.isRecommended && (
+                      <Badge variant="secondary" className="ml-2 text-xs">
+                        Recommended
+                      </Badge>
+                    )}
                   </button>
                 ))}
               </div>
@@ -501,35 +627,20 @@ export function ProductVariants({
                 ))}
               </SelectContent>
             </Select>
-
-            <div className="ml-auto flex gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setShowSearchDialog(true)}
-              >
-                <Search className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setShowFilterDialog(true)}
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-              </Button>
-            </div>
           </div>
 
-          <div className="rounded-lg border border-border">
+          <div className="rounded-lg border overflow-hidden">
             {/* Table Header */}
-            <div className="grid grid-cols-[40px_1fr_200px_200px] gap-4 border-b border-border bg-muted/50 px-4 py-3 text-sm font-medium">
+            <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(200px,1.2fr)_minmax(120px,0.8fr)] gap-4 border-b border-border bg-muted/50 px-4 py-3 text-sm font-medium">
               <Checkbox
                 checked={selectedVariants.size === variants.length}
                 onCheckedChange={toggleSelectAll}
               />
               <div>Variant</div>
               <div>Price</div>
-              <div>Available</div>
+              <div className="overflow-hidden text-ellipsis whitespace-nowrap">
+                Available
+              </div>
             </div>
 
             {/* Table Body */}
@@ -544,7 +655,7 @@ export function ProductVariants({
                 return (
                   <div key={group.value}>
                     {/* Group Header */}
-                    <div className="grid grid-cols-[40px_1fr_200px_200px] gap-4 border-b border-border bg-background px-4 py-3">
+                    <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(200px,1.2fr)_minmax(120px,0.8fr)] gap-4 border-b border-border bg-background px-4 py-3">
                       <Checkbox
                         checked={group.variants.every((v) =>
                           selectedVariants.has(v.id)
@@ -565,22 +676,23 @@ export function ProductVariants({
                         }}
                       />
                       <button
-                        className="flex items-center gap-2 text-left"
+                        type="button"
+                        className="flex items-center gap-2 text-left overflow-hidden"
                         onClick={() => toggleGroupCollapse(group.value)}
                       >
-                        <Package2 className="h-4 w-4 text-blue-600" />
+                        <Package2 className="h-4 w-4 text-blue-600 flex-shrink-0" />
                         <div className="flex items-center gap-2">
                           {colorData?.hex && (
                             <div
-                              className="h-4 w-4 rounded-full border border-border"
+                              className="h-4 w-4 rounded-full border border-border flex-shrink-0"
                               style={{ backgroundColor: colorData.hex }}
                             />
                           )}
-                          <span className="font-medium capitalize">
+                          <span className="font-medium capitalize truncate">
                             {group.value}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-1 text-sm text-muted-foreground flex-shrink-0">
                           <span>{group.variants.length} variants</span>
                           {isCollapsed ? (
                             <ChevronDown className="h-4 w-4" />
@@ -589,15 +701,32 @@ export function ProductVariants({
                           )}
                         </div>
                       </button>
-                      <Input
-                        placeholder="€ 0.00"
-                        value={group.variants[0]?.price || ""}
-                        onChange={(e) =>
-                          handleGroupPriceChange(group.value, e.target.value)
-                        }
-                        className="h-9"
-                      />
-                      <div className="flex items-center text-sm text-muted-foreground">
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="0.00"
+                          value={group.variants[0]?.price || ""}
+                          onChange={(e) =>
+                            handleGroupPriceChange(group.value, e.target.value)
+                          }
+                          className="h-9 flex-1"
+                        />
+                        <Select
+                          value={group.variants[0]?.currency || "NPR"}
+                          onValueChange={(value: "EUR" | "USD" | "NPR") =>
+                            handleGroupCurrencyChange(group.value, value)
+                          }
+                        >
+                          <SelectTrigger className="h-9 w-20 flex-shrink-0">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="EUR">EUR</SelectItem>
+                            <SelectItem value="USD">USD</SelectItem>
+                            <SelectItem value="NPR">NPR</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center text-sm text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
                         {group.variants.reduce(
                           (sum, v) => sum + Number.parseInt(v.quantity || "0"),
                           0
@@ -607,84 +736,131 @@ export function ProductVariants({
 
                     {/* Group Items */}
                     {!isCollapsed &&
-                      group.variants.map((variant) => (
-                        <div
-                          key={variant.id}
-                          className="grid grid-cols-[40px_1fr_200px_200px] gap-4 border-b border-border bg-background px-4 py-3 last:border-b-0"
-                        >
-                          <Checkbox
-                            checked={selectedVariants.has(variant.id)}
-                            onCheckedChange={() =>
-                              toggleVariantSelection(variant.id)
-                            }
-                          />
-                          <div className="flex items-center gap-2 pl-6 text-sm">
-                            <Package2 className="h-4 w-4 text-blue-600" />
-                            {Object.entries(variant.options)
-                              .filter(([key]) => key !== groupBy.toLowerCase())
-                              .map(([, value]) => value)
-                              .join(" / ") ||
-                              variant.options[groupBy.toLowerCase()]}
-                          </div>
-                          <Input
-                            placeholder="€ 0.00"
-                            value={variant.price}
-                            onChange={(e) =>
-                              handleVariantChange(
-                                variant.id,
-                                "price",
-                                e.target.value
-                              )
-                            }
-                            className="h-9"
-                          />
-                          <Input
-                            placeholder="0"
-                            type="number"
-                            value={variant.quantity}
-                            onChange={(e) =>
-                              handleVariantChange(
-                                variant.id,
-                                "quantity",
-                                e.target.value
-                              )
-                            }
-                            className="h-9"
-                          />
-                          {variant.images && variant.images.length > 0 && (
-                            <div className="col-span-2 col-start-2 mt-2 flex gap-2 flex-wrap">
-                              {variant.images.map((img, idx) => (
-                                <div
-                                  key={idx}
-                                  className="relative group w-12 h-12"
-                                >
-                                  <Image
-                                    src={img || "/placeholder.svg"}
-                                    alt={`Variant ${idx + 1}`}
-                                    width={48}
-                                    height={48}
-                                    className="w-full h-full object-cover rounded border"
-                                  />
-                                  <button
-                                    onClick={() => {
-                                      const newImages =
-                                        variant.images?.filter(
-                                          (_, i) => i !== idx
-                                        ) || [];
-                                      handleVariantChange(
-                                        variant.id,
-                                        "images",
-                                        newImages
-                                      );
-                                    }}
-                                    className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              ))}
+                      group.variants.map((variant, index) => (
+                        <div key={`${group.value}-${variant.id}-${index}`}>
+                          <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(200px,1.2fr)_minmax(120px,0.8fr)] gap-4 border-b border-border bg-background px-4 py-3">
+                            <Checkbox
+                              checked={selectedVariants.has(variant.id)}
+                              onCheckedChange={() =>
+                                toggleVariantSelection(variant.id)
+                              }
+                            />
+                            <div className="flex items-center gap-2 text-sm overflow-hidden">
+                              <Package2 className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                              <span className="truncate">
+                                {Object.entries(variant.options)
+                                  .filter(
+                                    ([key]) => key !== groupBy.toLowerCase()
+                                  )
+                                  .map(([, value]) => value)
+                                  .join(" / ") ||
+                                  variant.options[groupBy.toLowerCase()]}
+                              </span>
                             </div>
-                          )}
+                            <div className="flex gap-2">
+                              <Input
+                                placeholder="0.00"
+                                value={variant.price}
+                                onChange={(e) =>
+                                  handleVariantChange(
+                                    variant.id,
+                                    "price",
+                                    e.target.value
+                                  )
+                                }
+                                className="h-9 flex-1"
+                              />
+                              <Select
+                                value={variant.currency || "NPR"}
+                                onValueChange={(value: "EUR" | "USD" | "NPR") =>
+                                  handleVariantChange(
+                                    variant.id,
+                                    "currency",
+                                    value
+                                  )
+                                }
+                              >
+                                <SelectTrigger className="h-9 w-20 flex-shrink-0">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="EUR">EUR</SelectItem>
+                                  <SelectItem value="USD">USD</SelectItem>
+                                  <SelectItem value="NPR">NPR</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="overflow-hidden">
+                              <Input
+                                placeholder="0"
+                                type="number"
+                                value={variant.quantity}
+                                onChange={(e) =>
+                                  handleVariantChange(
+                                    variant.id,
+                                    "quantity",
+                                    e.target.value
+                                  )
+                                }
+                                className="h-9 w-full min-w-0"
+                              />
+                            </div>
+                          </div>
+                          {(() => {
+                            const variantImages =
+                              variant.images ||
+                              variantImagePreviews[variant.id] ||
+                              [];
+                            return variantImages.length > 0 ? (
+                              <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(200px,1.2fr)_minmax(120px,0.8fr)] gap-4 border-b border-border bg-background px-4 py-2">
+                                <div></div>
+                                <div className="flex gap-2 flex-wrap items-center overflow-hidden">
+                                  {variantImages.map((img, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="relative group w-12 h-12 flex-shrink-0"
+                                    >
+                                      <Image
+                                        src={img || "/placeholder.svg"}
+                                        alt={`Variant ${idx + 1}`}
+                                        width={48}
+                                        height={48}
+                                        className="w-full h-full object-cover rounded border"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          if (onRemoveVariantImage) {
+                                            onRemoveVariantImage(
+                                              variant.id,
+                                              idx
+                                            );
+                                          } else {
+                                            const newImages =
+                                              variantImages.filter(
+                                                (_, i) => i !== idx
+                                              );
+                                            handleVariantChange(
+                                              variant.id,
+                                              "images",
+                                              newImages
+                                            );
+                                          }
+                                        }}
+                                        className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div></div>
+                                <div></div>
+                              </div>
+                            ) : null;
+                          })()}
                         </div>
                       ))}
                   </div>
@@ -708,6 +884,9 @@ export function ProductVariants({
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => setEditModal("prices")}>
                     Edit prices
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setEditModal("currencies")}>
+                    Edit currencies
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setEditModal("quantities")}>
                     Edit quantities
@@ -764,6 +943,7 @@ export function ProductVariants({
             <div className="max-h-80 overflow-y-auto border-t border-border">
               {allAvailableOptions.map((opt) => (
                 <button
+                  type="button"
                   key={opt.value}
                   className="w-full px-4 py-2.5 text-left text-sm hover:bg-accent flex items-center justify-between"
                   onClick={() => {
@@ -784,104 +964,6 @@ export function ProductVariants({
           </PopoverContent>
         </Popover>
       )}
-
-      <Dialog open={showSearchDialog} onOpenChange={setShowSearchDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Search variants</DialogTitle>
-            <DialogDescription>Search by variant options</DialogDescription>
-          </DialogHeader>
-          <div className="py-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            {searchQuery && (
-              <div className="mt-4 text-sm text-muted-foreground">
-                Found {filteredVariants.length} of {variants.length} variants
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setSearchQuery("");
-                setShowSearchDialog(false);
-              }}
-            >
-              Clear
-            </Button>
-            <Button onClick={() => setShowSearchDialog(false)}>Done</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showFilterDialog} onOpenChange={setShowFilterDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Filter variants</DialogTitle>
-            <DialogDescription>Filter by option values</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            {options.map((option) => (
-              <div key={option.id} className="space-y-2">
-                <Label>{option.name}</Label>
-                <Select
-                  value={filterValues[option.name] || "all"}
-                  onValueChange={(value) => {
-                    if (value === "all") {
-                      const newFilters = { ...filterValues };
-                      delete newFilters[option.name];
-                      setFilterValues(newFilters);
-                    } else {
-                      setFilterValues((prev) => ({
-                        ...prev,
-                        [option.name]: value,
-                      }));
-                    }
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={`All ${option.name.toLowerCase()}s`}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    {option.values.map((value) => (
-                      <SelectItem key={value.value} value={value.value}>
-                        {value.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ))}
-            {Object.values(filterValues).some(Boolean) && (
-              <div className="text-sm text-muted-foreground">
-                Showing {filteredVariants.length} of {variants.length} variants
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setFilterValues({});
-              }}
-            >
-              Clear all
-            </Button>
-            <Button onClick={() => setShowFilterDialog(false)}>Done</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {editModal && (
         <EditVariantsModal
@@ -905,6 +987,7 @@ export function ProductVariants({
 
 type EditModalType =
   | "prices"
+  | "currencies"
   | "quantities"
   | "skus"
   | "barcodes"
@@ -934,8 +1017,15 @@ function EditVariantsModal({
       title: "Edit prices",
       description: "Update prices for selected variants",
       field: "price",
-      placeholder: "€ 0.00",
+      placeholder: "0.00",
       type: "text",
+    },
+    currencies: {
+      title: "Edit currencies",
+      description: "Update currencies for selected variants",
+      field: "currency",
+      placeholder: "NPR",
+      type: "select",
     },
     quantities: {
       title: "Edit quantities",
@@ -1004,6 +1094,15 @@ function EditVariantsModal({
         prev.map((v) => ({ ...v, [config.field]: bulkValue }))
       );
     }
+  };
+
+  const handleCurrencyChange = (
+    variantId: string,
+    currency: "EUR" | "USD" | "NPR"
+  ) => {
+    setEditedVariants((prev) =>
+      prev.map((v) => (v.id === variantId ? { ...v, currency } : v))
+    );
   };
 
   const handleAddImages = () => {
@@ -1168,9 +1267,12 @@ function EditVariantsModal({
                                   height={48}
                                 />
                                 <button
-                                  onClick={() =>
-                                    handleRemoveImage(variant.id, idx)
-                                  }
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleRemoveImage(variant.id, idx);
+                                  }}
                                   className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                                 >
                                   <X className="h-3 w-3" />
@@ -1185,6 +1287,59 @@ function EditVariantsModal({
                 </div>
               </div>
             </>
+          ) : type === "currencies" ? (
+            <>
+              <div className="flex gap-2">
+                <Select
+                  value={bulkValue || ""}
+                  onValueChange={(value) => {
+                    setBulkValue(value);
+                    if (value) {
+                      setEditedVariants((prev) =>
+                        prev.map((v) => ({
+                          ...v,
+                          currency: value as "EUR" | "USD" | "NPR",
+                        }))
+                      );
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-48">
+                    <SelectValue placeholder="Apply to all" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="EUR">EUR</SelectItem>
+                    <SelectItem value="USD">USD</SelectItem>
+                    <SelectItem value="NPR">NPR</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                {editedVariants.map((variant) => (
+                  <div key={variant.id} className="flex items-center gap-2">
+                    <Label className="flex-1 text-sm">
+                      {Object.values(variant.options).join(" / ")}
+                    </Label>
+                    <Select
+                      value={variant.currency || "NPR"}
+                      onValueChange={(value: "EUR" | "USD" | "NPR") =>
+                        handleCurrencyChange(variant.id, value)
+                      }
+                    >
+                      <SelectTrigger className="w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="EUR">EUR</SelectItem>
+                        <SelectItem value="USD">USD</SelectItem>
+                        <SelectItem value="NPR">NPR</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+            </>
           ) : (
             <>
               <div className="flex gap-2">
@@ -1194,7 +1349,7 @@ function EditVariantsModal({
                   onChange={(e) => setBulkValue(e.target.value)}
                   placeholder={`Apply to all: ${config.placeholder}`}
                 />
-                <Button onClick={handleApplyToAll}>Apply to all</Button>
+                <Button type="button" onClick={handleApplyToAll}>Apply to all</Button>
               </div>
 
               <div className="space-y-2">
@@ -1222,10 +1377,10 @@ function EditVariantsModal({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => onSave(editedVariants)}>Save changes</Button>
+          <Button type="button" onClick={() => onSave(editedVariants)}>Save changes</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1398,6 +1553,7 @@ function OptionEditor({
                     {searchQuery && (
                       <div className="border-b border-border px-3 py-2">
                         <button
+                          type="button"
                           className="flex w-full items-center gap-2 text-sm hover:bg-accent"
                           onClick={() => {
                             const trimmedQuery = searchQuery.trim();
@@ -1428,6 +1584,7 @@ function OptionEditor({
                       )}
                       {filteredValues.map((value) => (
                         <button
+                          type="button"
                           key={value.value}
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
                           onClick={() => {
@@ -1436,7 +1593,9 @@ function OptionEditor({
                             setShowDropdown(false);
                           }}
                         >
-                          <Checkbox checked={false} />
+                          <div className="h-4 w-4 rounded border border-border flex items-center justify-center">
+                            {/* Empty checkbox visual indicator */}
+                          </div>
                           {value.hex && (
                             <div
                               className="h-5 w-5 rounded-full border border-border"
@@ -1498,10 +1657,10 @@ function OptionEditor({
         </div>
 
         <div className="flex items-center justify-between pt-2">
-          <Button variant="destructive" size="sm" onClick={onDelete}>
+          <Button type="button" variant="destructive" size="sm" onClick={onDelete}>
             Delete
           </Button>
-          <Button size="sm" onClick={onDone}>
+          <Button type="button" size="sm" onClick={onDone}>
             Done
           </Button>
         </div>

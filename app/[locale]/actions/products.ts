@@ -14,7 +14,7 @@ import {
 } from "@/lib/listing";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { listing } from "@/db/schema";
+import { listing, userRoles, roles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 async function getCurrentUser() {
@@ -208,16 +208,41 @@ export async function toggleProductFeaturedAction(id: string) {
   try {
     const user = await getCurrentUser();
 
-    // Verify the product belongs to the current user
+    // Only admins can toggle featured status
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session?.user?.id) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    // Get user's role
+    const userRole = await db
+      .select({
+        roleName: roles.name,
+      })
+      .from(userRoles)
+      .innerJoin(roles, eq(userRoles.roleId, roles.id))
+      .where(eq(userRoles.userId, session.user.id))
+      .limit(1);
+
+    if (userRole.length === 0) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    const roleName = userRole[0].roleName.toLowerCase();
+
+    if (roleName !== "admin") {
+      return { success: false, error: "Only admins can toggle featured status" };
+    }
+
+    // Verify the product exists
     const { getListingById } = await import("@/lib/listing");
     const existingProduct = await getListingById(id);
 
     if (!existingProduct) {
       return { success: false, error: "Product not found" };
-    }
-
-    if (existingProduct.producerId !== user.id) {
-      return { success: false, error: "Unauthorized" };
     }
 
     const product = await toggleListingFeatured(id);

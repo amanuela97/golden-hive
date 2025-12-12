@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,11 +20,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Listing,
-  type CreateListingData,
-  type UpdateListingData,
-} from "@/lib/listing";
+import type { Listing, ListingVariant, InventoryLocation } from "@/db/schema";
+import type { CreateListingData, UpdateListingData } from "@/lib/listing";
 import { Save, ArrowLeft, Image as ImageIcon, X } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import toast from "react-hot-toast";
@@ -39,34 +36,59 @@ import { getInventoryLocations } from "../../../actions/inventory";
 import type { VariantData } from "@/lib/listing";
 import { getCategoryAttributes, type TaxonomyAttribute } from "@/lib/taxonomy";
 
-const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP"];
+const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP", "JFIF"];
 
 interface ProductFormProps {
   mode: "create" | "edit";
   initialData?: Partial<Listing>;
+  initialVariants?: Array<{
+    id: string;
+    title: string;
+    sku: string | null;
+    price: string | null;
+    currency: string | null;
+    compareAtPrice: string | null;
+    imageUrl: string | null;
+    options: Record<string, string> | null;
+    inventoryItemId: string | null;
+    costPerItem: string | null;
+    locationId: string | null;
+    available: number | null;
+    committed: number | null;
+    incoming: number | null;
+  }>;
   onSubmit: (data: CreateListingData | UpdateListingData) => Promise<void>;
   isLoading?: boolean;
   basePath: string; // e.g., "/dashboard/admin" or "/dashboard/seller"
   isAdmin?: boolean; // Whether the current user is an admin
 }
 
-// Variant type matching product-variants.tsx
-type Variant = {
-  id: string;
-  options: Record<string, string>;
-  price: string;
-  quantity: string;
-  sku?: string;
-  barcode?: string;
-  package?: string;
-  weight?: string;
-  origin?: string;
-  images?: string[];
+// UI Variant type - based on ListingVariant from schema with UI-specific modifications
+// Extend ListingVariant for UI form handling (price as string, add quantity and other UI fields)
+type Variant = Omit<
+  ListingVariant,
+  | "listingId"
+  | "createdAt"
+  | "updatedAt"
+  | "title"
+  | "compareAtPrice"
+  | "imageUrl"
+  | "price"
+> & {
+  price: string; // String for input handling (overrides numeric price from schema)
+  quantity: string; // Inventory quantity for UI (not in schema)
+  barcode?: string; // UI-only field
+  package?: string; // UI-only field
+  weight?: string; // UI-only field
+  origin?: string; // UI-only field
+  images?: string[]; // Array of image URLs for UI (not in schema)
+  options: Record<string, string>; // Ensure options is Record type (from schema but typed explicitly)
 };
 
 export default function ProductForm({
   mode,
   initialData,
+  initialVariants = [],
   onSubmit,
   isLoading = false,
   basePath,
@@ -98,7 +120,7 @@ export default function ProductForm({
 
   // Fetch inventory locations
   const [inventoryLocations, setInventoryLocations] = useState<
-    Array<{ id: string; name: string }>
+    Pick<InventoryLocation, "id" | "name">[]
   >([]);
   const [loadingLocations, setLoadingLocations] = useState(false);
 
@@ -108,22 +130,92 @@ export default function ProductForm({
   >([]);
 
   useEffect(() => {
-    if (mode === "create") {
-      setLoadingLocations(true);
-      getInventoryLocations()
-        .then((result) => {
-          if (result.success && result.result) {
-            setInventoryLocations(result.result);
-          }
-        })
-        .catch((error) => {
-          console.error("Error fetching inventory locations:", error);
-        })
-        .finally(() => {
-          setLoadingLocations(false);
-        });
+    // Fetch inventory locations for both create and edit modes
+    // When editing, use the product's producerId to get the seller's locations
+    setLoadingLocations(true);
+    const producerId = mode === "edit" ? initialData?.producerId : undefined;
+    getInventoryLocations(producerId)
+      .then((result) => {
+        if (result.success && result.result) {
+          setInventoryLocations(result.result);
+        }
+      })
+      .catch((error) => {
+        console.error("Error fetching inventory locations:", error);
+      })
+      .finally(() => {
+        setLoadingLocations(false);
+      });
+  }, [mode, initialData?.producerId]);
+
+  // Fetch category attributes when editing a product with an existing category
+  // or when category changes
+  useEffect(() => {
+    if (formData.taxonomyCategoryId) {
+      const attributes = getCategoryAttributes(formData.taxonomyCategoryId);
+      setCategoryAttributes(attributes);
+    } else {
+      setCategoryAttributes([]);
     }
-  }, [mode]);
+  }, [formData.taxonomyCategoryId]);
+
+  // Initialize variants and inventory data when editing
+  useEffect(() => {
+    if (mode === "edit" && initialVariants.length > 0) {
+      // Convert initialVariants to Variant format for ProductVariants component
+      // Normalize option keys to lowercase for consistent grouping
+      const convertedVariants: Variant[] = initialVariants.map((v) => {
+        const normalizedOptions: Record<string, string> = {};
+        if (v.options && typeof v.options === "object") {
+          Object.entries(v.options).forEach(([key, value]) => {
+            normalizedOptions[key.toLowerCase()] = String(value);
+          });
+        }
+
+        return {
+          id: v.id,
+          options: normalizedOptions,
+          price: v.price ? v.price.toString() : "0",
+          currency: (v.currency || "NPR") as "EUR" | "USD" | "NPR",
+          quantity: v.available?.toString() || "0",
+          sku: v.sku || null,
+          images: v.imageUrl ? [v.imageUrl] : undefined,
+        };
+      });
+
+      setVariants(convertedVariants);
+
+      // Set variant image previews
+      const previews: Record<string, string[]> = {};
+      initialVariants.forEach((v) => {
+        if (v.imageUrl) {
+          previews[v.id] = [v.imageUrl];
+        }
+      });
+      setVariantImagePreviews(previews);
+
+      // Determine if product tracks inventory (has inventory items)
+      const hasInventory = initialVariants.some(
+        (v) => v.inventoryItemId !== null
+      );
+      if (hasInventory) {
+        // Get locationId and costPerItem from first variant with inventory
+        const firstWithInventory = initialVariants.find(
+          (v) => v.inventoryItemId !== null && v.locationId
+        );
+        if (firstWithInventory?.locationId) {
+          setFormData((prev) => ({
+            ...prev,
+            tracksInventory: true,
+            inventoryLocationId: firstWithInventory.locationId || "",
+            costPerItem: firstWithInventory?.costPerItem
+              ? parseFloat(firstWithInventory.costPerItem)
+              : 0,
+          }));
+        }
+      }
+    }
+  }, [mode, initialVariants]);
 
   const [tags, setTags] = useState<string[]>(initialData?.tags || []);
 
@@ -183,7 +275,7 @@ export default function ProductForm({
     // Validate file type
     if (!fileTypes.includes(file.name.split(".").pop()?.toUpperCase() || "")) {
       toast.error(
-        "Please select a valid image file (JPG, PNG, GIF, JPEG, WEBP)"
+        "Please select a valid image file (JPG, PNG, GIF, JPEG, WEBP, JFIF)"
       );
       return;
     }
@@ -210,7 +302,7 @@ export default function ProductForm({
         !fileTypes.includes(file.name.split(".").pop()?.toUpperCase() || "")
       ) {
         toast.error(
-          `File ${file.name} is not a valid image file (JPG, PNG, GIF, JPEG, WEBP)`
+          `File ${file.name} is not a valid image file (JPG, PNG, GIF, JPEG, WEBP, JFIF)`
         );
         return;
       }
@@ -275,7 +367,7 @@ export default function ProductForm({
           !fileTypes.includes(file.name.split(".").pop()?.toUpperCase() || "")
         ) {
           toast.error(
-            `File ${file.name} is not a valid image file (JPG, PNG, GIF, JPEG, WEBP)`
+            `File ${file.name} is not a valid image file (JPG, PNG, GIF, JPEG, WEBP, JFIF)`
           );
           return;
         }
@@ -312,12 +404,28 @@ export default function ProductForm({
     });
     setVariantImagePreviews((prev) => {
       const previews = prev[variantId] || [];
-      URL.revokeObjectURL(previews[index]);
+      // Only revoke object URLs (blob URLs), not regular URLs
+      if (previews[index] && previews[index].startsWith('blob:')) {
+        URL.revokeObjectURL(previews[index]);
+      }
+      const newPreviews = previews.filter((_, i) => i !== index);
       return {
         ...prev,
-        [variantId]: previews.filter((_, i) => i !== index),
+        [variantId]: newPreviews,
       };
     });
+    // Also update the variant's images array to keep them in sync
+    setVariants((prev) =>
+      prev.map((variant) => {
+        if (variant.id === variantId && variant.images) {
+          return {
+            ...variant,
+            images: variant.images.filter((_, i) => i !== index),
+          };
+        }
+        return variant;
+      })
+    );
   };
 
   // Get variants from ProductVariants component
@@ -329,6 +437,58 @@ export default function ProductForm({
   const handleVariantsChange = useCallback((newVariants: Variant[]) => {
     setVariants(newVariants);
   }, []);
+
+  // Calculate margin and profit based on cost per item
+  const marginAndProfit = useMemo(() => {
+    const cost = formData.costPerItem;
+    if (!cost || cost <= 0) {
+      return null;
+    }
+
+    // If variants exist, calculate for each variant
+    if (variants.length > 0) {
+      return variants
+        .map((variant) => {
+          const price = parseFloat(variant.price) || 0;
+          if (price <= 0) return null;
+
+          const profit = price - cost;
+          const margin = (profit / price) * 100;
+
+          return {
+            variant: Object.values(variant.options).join(" / ") || "Default",
+            price,
+            currency: variant.currency || formData.currency,
+            profit,
+            margin,
+          };
+        })
+        .filter(Boolean) as Array<{
+        variant: string;
+        price: number;
+        currency: string;
+        profit: number;
+        margin: number;
+      }>;
+    } else {
+      // Use main price if no variants
+      const price = formData.price;
+      if (price <= 0) return null;
+
+      const profit = price - cost;
+      const margin = (profit / price) * 100;
+
+      return [
+        {
+          variant: "Main Product",
+          price,
+          currency: formData.currency,
+          profit,
+          margin,
+        },
+      ];
+    }
+  }, [formData.costPerItem, formData.price, formData.currency, variants]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -397,6 +557,28 @@ export default function ProductForm({
         return;
       }
 
+      // Validate variants: price and currency are required for each variant
+      if (variants.length > 0) {
+        for (const variant of variants) {
+          const price = parseFloat(variant.price);
+          if (!variant.price || isNaN(price) || price <= 0) {
+            toast.error(
+              `Price is required and must be greater than 0 for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+          if (
+            !variant.currency ||
+            !["EUR", "USD", "NPR"].includes(variant.currency)
+          ) {
+            toast.error(
+              `Currency is required and must be EUR, USD, or NPR for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+        }
+      }
+
       // Validate inventory location if tracking inventory
       if (formData.tracksInventory && !formData.inventoryLocationId) {
         toast.error(
@@ -406,21 +588,82 @@ export default function ProductForm({
       }
 
       try {
+        // Helper function to convert base64 to File
+        const base64ToFile = (base64String: string, filename: string): File => {
+          const arr = base64String.split(",");
+          const mime = arr[0].match(/:(.*?);/)?.[1] || "image/jpeg";
+          const bstr = atob(arr[1]);
+          let n = bstr.length;
+          const u8arr = new Uint8Array(n);
+          while (n--) {
+            u8arr[n] = bstr.charCodeAt(n);
+          }
+          return new File([u8arr], filename, { type: mime });
+        };
+
         // Convert variants from ProductVariants format to VariantData format
-        const variantData: VariantData[] = variants.map((variant) => ({
-          id: variant.id,
-          title: Object.values(variant.options).join(" / ") || "Default",
-          sku: variant.sku,
-          price: parseFloat(variant.price) || formData.price,
-          compareAtPrice: undefined, // Can be added later if needed
-          imageUrl: variant.images?.[0],
-          options: variant.options,
-          initialStock: formData.tracksInventory
-            ? parseInt(variant.quantity) || 0
-            : undefined,
-          costPerItem:
-            formData.costPerItem > 0 ? formData.costPerItem : undefined,
-        }));
+        const variantData: VariantData[] = [];
+        // Only include new File objects for upload, not existing URLs
+        const newVariantImages: Record<string, File[]> = {};
+
+        for (const variant of variants) {
+          let imageUrl = variant.images?.[0];
+
+          // Check if imageUrl is a base64 data URL
+          if (imageUrl && imageUrl.startsWith("data:image/")) {
+            // Convert base64 to File and add to variantImages for upload
+            try {
+              const file = base64ToFile(
+                imageUrl,
+                `variant-${variant.id}-image.jpg`
+              );
+              if (!newVariantImages[variant.id]) {
+                newVariantImages[variant.id] = [];
+              }
+              newVariantImages[variant.id].push(file);
+              // Don't set imageUrl - let it be uploaded from variantImages
+              imageUrl = undefined;
+            } catch (error) {
+              console.error("Error converting base64 to file:", error);
+              // If conversion fails, don't set imageUrl
+              imageUrl = undefined;
+            }
+          }
+
+          // Check if there are new File objects to upload for this variant
+          // Only include File objects, not URLs (URLs are already uploaded)
+          if (variantImages[variant.id] && variantImages[variant.id].length > 0) {
+            // Filter to only include File objects (new uploads)
+            const newFiles = variantImages[variant.id].filter(
+              (item): item is File => item instanceof File
+            );
+            if (newFiles.length > 0) {
+              newVariantImages[variant.id] = newFiles;
+            }
+          }
+
+          variantData.push({
+            id: variant.id,
+            title: Object.values(variant.options).join(" / ") || "Default",
+            sku: variant.sku || undefined,
+            price: parseFloat(variant.price) || formData.price,
+            currency: (variant.currency || "NPR") as "EUR" | "USD" | "NPR",
+            compareAtPrice: undefined,
+            // Only set imageUrl if it's an existing URL (not base64, not a File)
+            imageUrl:
+              imageUrl && 
+              !imageUrl.startsWith("data:") && 
+              !(imageUrl instanceof File)
+                ? imageUrl 
+                : undefined,
+            options: variant.options,
+            initialStock: formData.tracksInventory
+              ? parseInt(variant.quantity) || 0
+              : undefined,
+            costPerItem:
+              formData.costPerItem > 0 ? formData.costPerItem : undefined,
+          });
+        }
 
         const baseData = {
           ...formData,
@@ -435,8 +678,11 @@ export default function ProductForm({
           variants: variantData.length > 0 ? variantData : undefined,
           tracksInventory: formData.tracksInventory,
           inventoryLocationId: formData.inventoryLocationId || undefined,
+          // Only include variantImages if there are actual new files to upload
           variantImages:
-            Object.keys(variantImages).length > 0 ? variantImages : undefined,
+            Object.keys(newVariantImages).length > 0
+              ? newVariantImages
+              : undefined,
         };
 
         const submitData: CreateListingData = {
@@ -458,17 +704,113 @@ export default function ProductForm({
         return;
       }
 
+      // Validate variants: price and currency are required for each variant
+      if (variants.length > 0) {
+        for (const variant of variants) {
+          const price = parseFloat(variant.price);
+          if (!variant.price || isNaN(price) || price <= 0) {
+            toast.error(
+              `Price is required and must be greater than 0 for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+          if (
+            !variant.currency ||
+            !["EUR", "USD", "NPR"].includes(variant.currency)
+          ) {
+            toast.error(
+              `Currency is required and must be EUR, USD, or NPR for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+        }
+      }
+
+      // Validate inventory location if tracking inventory
+      if (formData.tracksInventory && !formData.inventoryLocationId) {
+        toast.error(
+          "Please select an inventory location when tracking inventory"
+        );
+        return;
+      }
+
       try {
+        // Helper function to convert base64 to File
+        const base64ToFile = (base64String: string, filename: string): File => {
+          const arr = base64String.split(",");
+          const mime = arr[0].match(/:(.*?);/)?.[1] || "image/jpeg";
+          const bstr = atob(arr[1]);
+          let n = bstr.length;
+          const u8arr = new Uint8Array(n);
+          while (n--) {
+            u8arr[n] = bstr.charCodeAt(n);
+          }
+          return new File([u8arr], filename, { type: mime });
+        };
+
         // Convert variants from ProductVariants format to VariantData format
-        const variantData: VariantData[] = variants.map((variant) => ({
-          id: variant.id,
-          title: Object.values(variant.options).join(" / ") || "Default",
-          sku: variant.sku,
-          price: parseFloat(variant.price) || formData.price,
-          compareAtPrice: undefined,
-          imageUrl: variant.images?.[0],
-          options: variant.options,
-        }));
+        const variantData: VariantData[] = [];
+        // Only include new File objects for upload, not existing URLs
+        const newVariantImages: Record<string, File[]> = {};
+
+        for (const variant of variants) {
+          let imageUrl = variant.images?.[0];
+
+          // Check if imageUrl is a base64 data URL
+          if (imageUrl && imageUrl.startsWith("data:image/")) {
+            // Convert base64 to File and add to variantImages for upload
+            try {
+              const file = base64ToFile(
+                imageUrl,
+                `variant-${variant.id}-image.jpg`
+              );
+              if (!newVariantImages[variant.id]) {
+                newVariantImages[variant.id] = [];
+              }
+              newVariantImages[variant.id].push(file);
+              // Don't set imageUrl - let it be uploaded from variantImages
+              imageUrl = undefined;
+            } catch (error) {
+              console.error("Error converting base64 to file:", error);
+              // If conversion fails, don't set imageUrl
+              imageUrl = undefined;
+            }
+          }
+
+          // Check if there are new File objects to upload for this variant
+          // Only include File objects, not URLs (URLs are already uploaded)
+          if (variantImages[variant.id] && variantImages[variant.id].length > 0) {
+            // Filter to only include File objects (new uploads)
+            const newFiles = variantImages[variant.id].filter(
+              (item): item is File => item instanceof File
+            );
+            if (newFiles.length > 0) {
+              newVariantImages[variant.id] = newFiles;
+            }
+          }
+
+          variantData.push({
+            id: variant.id,
+            title: Object.values(variant.options).join(" / ") || "Default",
+            sku: variant.sku || undefined,
+            price: parseFloat(variant.price) || formData.price,
+            currency: (variant.currency || "NPR") as "EUR" | "USD" | "NPR",
+            compareAtPrice: undefined,
+            // Only set imageUrl if it's an existing URL (not base64, not a File)
+            imageUrl:
+              imageUrl && 
+              !imageUrl.startsWith("data:") && 
+              !(imageUrl instanceof File)
+                ? imageUrl 
+                : undefined,
+            options: variant.options,
+            initialStock: formData.tracksInventory
+              ? parseInt(variant.quantity) || 0
+              : undefined,
+            costPerItem:
+              formData.costPerItem > 0 ? formData.costPerItem : undefined,
+          });
+        }
 
         const baseData = {
           ...formData,
@@ -478,8 +820,13 @@ export default function ProductForm({
             ? new Date(formData.harvestDate)
             : undefined,
           variants: variantData.length > 0 ? variantData : undefined,
+          tracksInventory: formData.tracksInventory,
+          inventoryLocationId: formData.inventoryLocationId || undefined,
+          // Only include variantImages if there are actual new files to upload
           variantImages:
-            Object.keys(variantImages).length > 0 ? variantImages : undefined,
+            Object.keys(newVariantImages).length > 0
+              ? newVariantImages
+              : undefined,
         };
 
         // If taxonomyCategoryId changed, try to fetch new categoryRuleId (optional)
@@ -525,7 +872,7 @@ export default function ProductForm({
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 py-6">
+    <div className="max-w-7xl mx-auto space-y-6 py-6">
       {/* Header */}
       <div className="flex items-center gap-4">
         <Link href={`${basePath}/products`}>
@@ -705,84 +1052,139 @@ export default function ProductForm({
             </Card>
 
             {/* Inventory Settings */}
-            {mode === "create" && (
-              <Card className="p-6">
-                <h2 className="text-lg font-semibold mb-4">
-                  Inventory Settings
-                </h2>
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      id="tracksInventory"
-                      name="tracksInventory"
-                      checked={formData.tracksInventory}
-                      onChange={handleCheckboxChange}
-                      className="rounded border-gray-300"
-                    />
-                    <Label htmlFor="tracksInventory">
-                      Track inventory for this product
-                    </Label>
-                  </div>
-
-                  {formData.tracksInventory && (
-                    <>
-                      <div>
-                        <Label htmlFor="inventoryLocationId">
-                          Inventory Location *
-                        </Label>
-                        <select
-                          id="inventoryLocationId"
-                          name="inventoryLocationId"
-                          value={formData.inventoryLocationId}
-                          onChange={handleInputChange}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          required={formData.tracksInventory}
-                          disabled={loadingLocations}
-                        >
-                          <option value="">
-                            {loadingLocations
-                              ? "Loading locations..."
-                              : "Select location"}
-                          </option>
-                          {inventoryLocations.map((location) => (
-                            <option key={location.id} value={location.id}>
-                              {location.name}
-                            </option>
-                          ))}
-                        </select>
-                        {inventoryLocations.length === 0 &&
-                          !loadingLocations && (
-                            <p className="text-sm text-gray-500 mt-1">
-                              No inventory locations found. Please create one in
-                              Settings.
-                            </p>
-                          )}
-                      </div>
-
-                      <div>
-                        <Label htmlFor="costPerItem">
-                          Cost per Item (Optional)
-                        </Label>
-                        <Input
-                          id="costPerItem"
-                          name="costPerItem"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={formData.costPerItem}
-                          onChange={handleInputChange}
-                          placeholder="0.00"
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                          Cost of goods sold (COGS) for accounting
-                        </p>
-                      </div>
-                    </>
-                  )}
+            <Card className="p-6">
+              <h2 className="text-lg font-semibold mb-4">Inventory Settings</h2>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="tracksInventory"
+                    name="tracksInventory"
+                    checked={formData.tracksInventory}
+                    onChange={handleCheckboxChange}
+                    className="rounded border-gray-300"
+                  />
+                  <Label htmlFor="tracksInventory">
+                    Track inventory for this product
+                  </Label>
                 </div>
-              </Card>
-            )}
+
+                {formData.tracksInventory && (
+                  <>
+                    <div>
+                      <Label htmlFor="inventoryLocationId">
+                        Inventory Location *
+                      </Label>
+                      <select
+                        id="inventoryLocationId"
+                        name="inventoryLocationId"
+                        value={formData.inventoryLocationId}
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        required={formData.tracksInventory}
+                        disabled={loadingLocations}
+                      >
+                        <option value="">
+                          {loadingLocations
+                            ? "Loading locations..."
+                            : "Select location"}
+                        </option>
+                        {inventoryLocations.map((location) => (
+                          <option key={location.id} value={location.id}>
+                            {location.name}
+                          </option>
+                        ))}
+                      </select>
+                      {inventoryLocations.length === 0 && !loadingLocations && (
+                        <p className="text-sm text-gray-500 mt-1">
+                          No inventory locations found. Please create one in
+                          Settings &gt; Vendor.
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <Label htmlFor="costPerItem">
+                        Cost per Item (Optional)
+                      </Label>
+                      <Input
+                        id="costPerItem"
+                        name="costPerItem"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={formData.costPerItem}
+                        onChange={handleInputChange}
+                        placeholder="0.00"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Cost of goods sold (COGS) for accounting - Price it
+                        costs you to make or purchase one of this product.
+                      </p>
+
+                      {/* Margin and Profit Display */}
+                      {marginAndProfit && marginAndProfit.length > 0 && (
+                        <div className="mt-4 p-4 bg-muted/50 rounded-lg border border-border">
+                          <h4 className="text-sm font-semibold mb-3 text-foreground">
+                            Profit & Margin Analysis
+                          </h4>
+                          <div className="space-y-3">
+                            {marginAndProfit.map((item, index) => (
+                              <div
+                                key={index}
+                                className="flex items-center justify-between py-2 border-b border-border last:border-b-0"
+                              >
+                                <div className="flex-1">
+                                  <p className="text-sm font-medium text-foreground">
+                                    {item.variant}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Selling Price: {item.currency}{" "}
+                                    {item.price.toFixed(2)}
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <div className="flex items-center gap-4">
+                                    <div>
+                                      <p className="text-xs text-muted-foreground">
+                                        Profit
+                                      </p>
+                                      <p
+                                        className={`text-sm font-semibold ${
+                                          item.profit >= 0
+                                            ? "text-green-600"
+                                            : "text-red-600"
+                                        }`}
+                                      >
+                                        {item.currency} {item.profit.toFixed(2)}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-muted-foreground">
+                                        Margin
+                                      </p>
+                                      <p
+                                        className={`text-sm font-semibold ${
+                                          item.margin >= 0
+                                            ? "text-green-600"
+                                            : "text-red-600"
+                                        }`}
+                                      >
+                                        {item.margin.toFixed(1)}%
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </Card>
 
             {/* Variants */}
             <Card className="p-6">
@@ -842,19 +1244,21 @@ export default function ProductForm({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="isFeatured"
-                    name="isFeatured"
-                    checked={formData.isFeatured}
-                    onChange={handleCheckboxChange}
-                    className="rounded border-gray-300"
-                  />
-                  <Label htmlFor="isFeatured">
-                    Featured (show on homepage)
-                  </Label>
-                </div>
+                {isAdmin && (
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="isFeatured"
+                      name="isFeatured"
+                      checked={formData.isFeatured}
+                      onChange={handleCheckboxChange}
+                      className="rounded border-gray-300"
+                    />
+                    <Label htmlFor="isFeatured">
+                      Featured (show on homepage)
+                    </Label>
+                  </div>
+                )}
               </div>
             </Card>
           </div>
@@ -898,7 +1302,7 @@ export default function ProductForm({
                       Drag & drop image here or click to browse
                     </p>
                     <p className="text-xs text-gray-400 mt-2">
-                      JPG, PNG, GIF, JPEG, WEBP (max 5MB)
+                      JPG, PNG, GIF, JPEG, WEBP, JFIF (max 5MB)
                     </p>
                   </div>
                 </FileUploader>
@@ -974,7 +1378,7 @@ export default function ProductForm({
                       Drag & drop images here or click to browse
                     </p>
                     <p className="text-xs text-gray-400 mt-2">
-                      JPG, PNG, GIF, JPEG, WEBP (max 5MB each)
+                      JPG, PNG, GIF, JPEG, WEBP, JFIF (max 5MB each)
                     </p>
                   </div>
                 </FileUploader>

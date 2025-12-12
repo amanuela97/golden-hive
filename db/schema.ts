@@ -314,6 +314,7 @@ export const listingVariants = pgTable("listing_variants", {
   title: text("title").notNull(), // Example: "500g / Premium"
   sku: text("sku"),
   price: numeric("price", { precision: 10, scale: 2 }),
+  currency: varchar("currency", { length: 3 }), // EUR, USD, NPR
   compareAtPrice: numeric("compare_at_price", { precision: 10, scale: 2 }),
   imageUrl: text("image_url"),
   // For multiple options (size, weight, gram, color)
@@ -369,6 +370,8 @@ export const inventoryLocations = pgTable("inventory_locations", {
     .references(() => vendor.id, { onDelete: "cascade" }),
   name: text("name").notNull(), // e.g. "Kathmandu Warehouse"
   address: text("address"),
+  phone: text("phone"), // Phone / contact (optional)
+  fulfillmentRules: text("fulfillment_rules"), // Fulfillment rules (optional)
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at")

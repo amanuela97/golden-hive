@@ -10,9 +10,30 @@ import toast from "react-hot-toast";
 
 interface EditProductFormProps {
   initialData: Listing;
+  initialVariants?: Array<{
+    id: string;
+    title: string;
+    sku: string | null;
+    price: string | null;
+    currency: string | null;
+    compareAtPrice: string | null;
+    imageUrl: string | null;
+    options: Record<string, string> | null;
+    inventoryItemId: string | null;
+    costPerItem: string | null;
+    locationId: string | null;
+    available: number | null;
+    committed: number | null;
+    incoming: number | null;
+  }>;
+  isAdmin: boolean;
 }
 
-export default function EditProductForm({ initialData }: EditProductFormProps) {
+export default function EditProductForm({ 
+  initialData,
+  initialVariants = [],
+  isAdmin
+}: EditProductFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
@@ -46,10 +67,11 @@ export default function EditProductForm({ initialData }: EditProductFormProps) {
     <ProductForm
       mode="edit"
       initialData={initialData}
+      initialVariants={initialVariants}
       onSubmit={handleSubmit}
       isLoading={isLoading}
       basePath="/dashboard"
-      isAdmin={true}
+      isAdmin={isAdmin}
     />
   );
 }

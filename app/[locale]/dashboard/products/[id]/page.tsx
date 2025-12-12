@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { userRoles, roles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
-import { getListingById } from "@/lib/listing";
+import { getListingById, getListingVariantsWithInventory } from "@/lib/listing";
 import { notFound } from "next/navigation";
 import EditProductForm from "./EditProductForm";
 import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
@@ -66,9 +66,18 @@ export default async function EditProductPage({
     redirect({ href: "/dashboard/products", locale });
   }
 
+  // Fetch variants with inventory data
+  const variantsWithInventory = await getListingVariantsWithInventory(id);
+
+  const isAdmin = roleName === "admin";
+
   return (
     <DashboardWrapper userRole={roleName}>
-      <EditProductForm initialData={product} />
+      <EditProductForm 
+        initialData={product} 
+        initialVariants={variantsWithInventory}
+        isAdmin={isAdmin}
+      />
     </DashboardWrapper>
   );
 }

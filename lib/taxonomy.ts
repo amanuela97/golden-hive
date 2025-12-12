@@ -4,7 +4,7 @@
  * and find categories by ID.
  */
 
-import taxonomyData from "@/data/taxonomy.json";
+import taxonomyData from "@/data/categories/taxonomy.json";
 
 export interface TaxonomyAttribute {
   id: string;

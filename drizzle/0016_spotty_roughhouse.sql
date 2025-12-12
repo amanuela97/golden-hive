@@ -1,0 +1,1 @@
+ALTER TABLE "listing_variants" ADD COLUMN "currency" varchar(3);

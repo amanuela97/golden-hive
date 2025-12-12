@@ -7,7 +7,11 @@ import { createProductAction } from "../../../actions/products";
 import { type CreateListingData, type UpdateListingData } from "@/lib/listing";
 import toast from "react-hot-toast";
 
-export default function NewProductForm() {
+interface NewProductFormProps {
+  isAdmin: boolean;
+}
+
+export default function NewProductForm({ isAdmin }: NewProductFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
@@ -36,7 +40,7 @@ export default function NewProductForm() {
       onSubmit={handleSubmit}
       isLoading={isLoading}
       basePath="/dashboard"
-      isAdmin={true}
+      isAdmin={isAdmin}
     />
   );
 }

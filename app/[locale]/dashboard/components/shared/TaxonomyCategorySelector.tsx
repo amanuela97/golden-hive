@@ -61,19 +61,31 @@ export function TaxonomyCategorySelector({
     if (!newQuery && value) {
       onChange("");
     }
+    
+    // If user is typing and the query matches the selected category's display label,
+    // don't clear it - let them search
+    if (newQuery && selectedCategory?.displayLabel && newQuery === selectedCategory.displayLabel) {
+      // User is starting to type - clear the selection to allow new search
+      if (newQuery.length < selectedCategory.displayLabel.length) {
+        onChange("");
+      }
+    }
   };
 
   const handleSelectCategory = (categoryId: string, categoryLabel: string) => {
     onChange(categoryId);
-    // Extract short name from full path for display
-    const shortName = categoryLabel.split(" > ").pop() || categoryLabel;
-    setSearchQuery(shortName);
+    // Clear search query when selecting - the input will show the selected category's display label
+    setSearchQuery("");
     setIsOpen(false);
   };
 
   const handleInputFocus = () => {
     setIsOpen(true);
-    // Don't trigger search on focus - wait for user to type
+    // Clear search query on focus if there's a selected category
+    // This prevents searching for the short name when user focuses
+    if (selectedCategory) {
+      setSearchQuery("");
+    }
   };
 
   // Close dropdown when clicking outside
@@ -105,7 +117,11 @@ export function TaxonomyCategorySelector({
         <Input
           id="taxonomy-category-selector"
           type="text"
-          value={searchQuery || selectedCategory?.displayLabel || ""}
+          value={
+            searchQuery !== "" 
+              ? searchQuery 
+              : selectedCategory?.displayLabel || ""
+          }
           onChange={handleInputChange}
           onFocus={handleInputFocus}
           placeholder={placeholder}

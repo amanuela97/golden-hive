@@ -42,9 +42,11 @@ export default async function NewProductPage() {
     redirect({ href: "/dashboard", locale });
   }
 
+  const isAdmin = roleName === "admin";
+
   return (
     <DashboardWrapper userRole={roleName}>
-      <NewProductForm />
+      <NewProductForm isAdmin={isAdmin} />
     </DashboardWrapper>
   );
 }

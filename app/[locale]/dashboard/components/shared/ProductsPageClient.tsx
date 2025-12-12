@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
-import { Listing } from "@/db/schema";
+import type { Listing } from "@/db/schema";
 import ProductTable from "./ProductTable";
 import ImportExportButtons from "./ImportExportButtons";
 import {
@@ -11,13 +11,15 @@ import {
 } from "../../../actions/products";
 
 interface ProductsPageClientProps {
-  products: Listing[];
+  products: (Listing & { variantCount?: number; totalStock?: number })[];
   basePath: string; // e.g., "/dashboard/admin" or "/dashboard/seller"
+  isAdmin?: boolean; // Whether current user is admin
 }
 
 export default function ProductsPageClient({
   products,
   basePath,
+  isAdmin = false,
 }: ProductsPageClientProps) {
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
 
@@ -46,6 +48,7 @@ export default function ProductsPageClient({
         onToggleFeatured={toggleProductFeaturedAction}
         onSelectionChange={handleSelectionChange}
         basePath={basePath}
+        isAdmin={isAdmin}
       />
     </div>
   );

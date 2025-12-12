@@ -48,7 +48,7 @@ const allNavItems: NavItem[] = [
     label: "Products",
     href: "/dashboard/products",
     icon: Package,
-    children: [{ label: "Inventory", href: "/dashboard/products/inventory" }],
+    children: [{ label: "Inventory", href: "/dashboard/inventory" }],
     roles: ["admin", "seller"], // S, A
   },
   {

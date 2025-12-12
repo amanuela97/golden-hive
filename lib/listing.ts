@@ -13,7 +13,7 @@ import {
 // Re-export the Listing type for use in components
 export type { Listing };
 import { uploadFile, uploadFiles, deleteFile, deleteFiles } from "./cloudinary";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { translateText } from "./translate";
 import { findCategoryById } from "./taxonomy";
@@ -88,6 +88,7 @@ export type VariantData = {
   title: string;
   sku?: string;
   price: number;
+  currency: "EUR" | "USD" | "NPR"; // Required currency for variant
   compareAtPrice?: number;
   imageUrl?: string;
   options?: Record<string, string>; // e.g., { size: "500g", color: "red" }
@@ -143,8 +144,15 @@ export type UpdateListingData = Partial<
 export async function createListing(data: CreateListingData): Promise<Listing> {
   try {
     // Validate required fields
-    if (!data.name || !data.price || !data.producerId || !data.taxonomyCategoryId) {
-      throw new Error("Name, price, producerId, and taxonomyCategoryId are required");
+    if (
+      !data.name ||
+      !data.price ||
+      !data.producerId ||
+      !data.taxonomyCategoryId
+    ) {
+      throw new Error(
+        "Name, price, producerId, and taxonomyCategoryId are required"
+      );
     }
 
     // Validate variants: max 100 variants, max 3 options
@@ -152,16 +160,32 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
       throw new Error("Maximum 100 variants allowed per product");
     }
 
-    // Check options count across all variants
+    // Check options count across all variants and validate required fields
     if (data.variants) {
       const allOptionKeys = new Set<string>();
       for (const variant of data.variants) {
+        // Validate that price and currency are provided for each variant
+        if (!variant.price || variant.price <= 0) {
+          throw new Error(
+            "Price is required for all variants and must be greater than 0"
+          );
+        }
+        if (
+          !variant.currency ||
+          !["EUR", "USD", "NPR"].includes(variant.currency)
+        ) {
+          throw new Error(
+            "Currency is required for all variants and must be EUR, USD, or NPR"
+          );
+        }
         if (variant.options) {
           Object.keys(variant.options).forEach((key) => allOptionKeys.add(key));
         }
       }
       if (allOptionKeys.size > 3) {
-        throw new Error("Maximum 3 option types allowed per product (e.g., size, color, weight)");
+        throw new Error(
+          "Maximum 3 option types allowed per product (e.g., size, color, weight)"
+        );
       }
     }
 
@@ -178,7 +202,9 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
       .limit(1);
 
     if (vendorResult.length === 0) {
-      throw new Error("Vendor not found. Please set up your vendor information in Settings > Vendor before creating a listing.");
+      throw new Error(
+        "Vendor not found. Please set up your vendor information in Settings > Vendor before creating a listing."
+      );
     }
 
     const vendorId = vendorResult[0].id;
@@ -200,10 +226,22 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
       gallery = [...gallery, ...galleryUrls];
     }
 
+    // Extract taxonomy category short name if category is provided
+    let taxonomyCategoryName: string | null = null;
+    if (data.taxonomyCategoryId) {
+      const category = findCategoryById(data.taxonomyCategoryId);
+      if (category) {
+        taxonomyCategoryName = category.name; // Short name (e.g., "Honey")
+      }
+    }
+    // Use provided taxonomyCategoryName if available, otherwise use extracted one
+    const finalTaxonomyCategoryName =
+      data.taxonomyCategoryName || taxonomyCategoryName;
+
     // Step 1: Create listing in database
     const listingId = uuidv4();
     const publishedAt = data.status === "active" ? new Date() : null;
-    
+
     const newListing = await db
       .insert(listing)
       .values({
@@ -213,8 +251,11 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
         vendorId: vendorId,
         categoryRuleId: data.categoryRuleId || null,
         taxonomyCategoryId: data.taxonomyCategoryId,
+        taxonomyCategoryName: finalTaxonomyCategoryName || null,
         price: data.price.toString(),
-        compareAtPrice: data.compareAtPrice ? data.compareAtPrice.toString() : null,
+        compareAtPrice: data.compareAtPrice
+          ? data.compareAtPrice.toString()
+          : null,
         currency: data.currency || "NPR",
         unit: data.unit || "kg",
         producerId: data.producerId,
@@ -230,54 +271,50 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
       })
       .returning();
 
-    // Step 2: Create variants (Shopify always creates at least one variant)
-    const variantsToCreate = data.variants && data.variants.length > 0
-      ? data.variants
-      : [
-          {
-            title: "Default",
-            price: data.price,
-            compareAtPrice: data.compareAtPrice,
-            sku: undefined,
-            imageUrl: undefined,
-            options: undefined,
-            initialStock: data.tracksInventory ? 0 : undefined,
-            costPerItem: undefined,
-          } as VariantData,
-        ];
+    // Step 2: Create variants (only if variants are provided)
+    const variantsToCreate =
+      data.variants && data.variants.length > 0 ? data.variants : [];
 
     const createdVariants = [];
 
-    for (const variantData of variantsToCreate) {
-      // Upload variant image if provided
-      let variantImageUrl = variantData.imageUrl;
-      if (variantData.id && data.variantImages?.[variantData.id]) {
-        const variantImageFiles = data.variantImages[variantData.id];
-        if (variantImageFiles && variantImageFiles.length > 0) {
-          const variantImageUrls = await uploadFiles(
-            variantImageFiles,
-            `listings/variants/${listingId}/${variantData.id}`
-          );
-          variantImageUrl = variantImageUrls[0] || variantImageUrl;
+    // Only create variant records if variants exist
+    if (variantsToCreate.length > 0) {
+      for (const variantData of variantsToCreate) {
+        // Upload variant image if provided
+        let variantImageUrl = variantData.imageUrl;
+        if (variantData.id && data.variantImages?.[variantData.id]) {
+          const variantImageFiles = data.variantImages[variantData.id];
+          if (variantImageFiles && variantImageFiles.length > 0) {
+            const variantImageUrls = await uploadFiles(
+              variantImageFiles,
+              `/listings/${listingId}/${variantData.id}`
+            );
+            variantImageUrl = variantImageUrls[0] || variantImageUrl;
+          }
         }
+
+        const variant = await db
+          .insert(listingVariants)
+          .values({
+            listingId,
+            title: variantData.title,
+            sku: variantData.sku || null,
+            price: variantData.price ? variantData.price.toString() : null,
+            currency: variantData.currency || null,
+            compareAtPrice: variantData.compareAtPrice
+              ? variantData.compareAtPrice.toString()
+              : null,
+            imageUrl: variantImageUrl || null,
+            options: variantData.options || null,
+          })
+          .returning();
+
+        createdVariants.push({
+          ...variant[0],
+          initialStock: variantData.initialStock,
+          costPerItem: variantData.costPerItem,
+        });
       }
-
-      const variant = await db
-        .insert(listingVariants)
-        .values({
-          listingId,
-          title: variantData.title,
-          sku: variantData.sku || null,
-          price: variantData.price ? variantData.price.toString() : null,
-          compareAtPrice: variantData.compareAtPrice
-            ? variantData.compareAtPrice.toString()
-            : null,
-          imageUrl: variantImageUrl || null,
-          options: variantData.options || null,
-        })
-        .returning();
-
-      createdVariants.push({ ...variant[0], initialStock: variantData.initialStock, costPerItem: variantData.costPerItem });
     }
 
     // Step 3 & 4: Create inventory items and levels (if tracking inventory)
@@ -351,7 +388,7 @@ export async function getListingById(id: string): Promise<Listing | null> {
     if (!id || id.trim() === "" || id === "products" || id === "new") {
       return null;
     }
-    
+
     // Fetch listing with English translations (admin/seller dashboard uses English)
     const result = await db
       .select({
@@ -436,6 +473,122 @@ export async function getListingById(id: string): Promise<Listing | null> {
     throw new Error(
       `Failed to fetch listing: ${error instanceof Error ? error.message : "Unknown error"}`
     );
+  }
+}
+
+/**
+ * Get variants with inventory data for a listing
+ */
+export async function getListingVariantsWithInventory(
+  listingId: string
+): Promise<
+  Array<{
+    id: string;
+    title: string;
+    sku: string | null;
+    price: string | null;
+    currency: string | null;
+    compareAtPrice: string | null;
+    imageUrl: string | null;
+    options: Record<string, string> | null;
+    inventoryItemId: string | null;
+    costPerItem: string | null;
+    locationId: string | null;
+    available: number | null;
+    committed: number | null;
+    incoming: number | null;
+  }>
+> {
+  try {
+    const result = await db
+      .select({
+        id: listingVariants.id,
+        title: listingVariants.title,
+        sku: listingVariants.sku,
+        price: listingVariants.price,
+        currency: listingVariants.currency,
+        compareAtPrice: listingVariants.compareAtPrice,
+        imageUrl: listingVariants.imageUrl,
+        options: listingVariants.options,
+        inventoryItemId: inventoryItems.id,
+        costPerItem: inventoryItems.costPerItem,
+        locationId: inventoryLevels.locationId,
+        available: inventoryLevels.available,
+        committed: inventoryLevels.committed,
+        incoming: inventoryLevels.incoming,
+      })
+      .from(listingVariants)
+      .leftJoin(
+        inventoryItems,
+        eq(inventoryItems.variantId, listingVariants.id)
+      )
+      .leftJoin(
+        inventoryLevels,
+        eq(inventoryLevels.inventoryItemId, inventoryItems.id)
+      )
+      .where(eq(listingVariants.listingId, listingId))
+      .orderBy(listingVariants.createdAt);
+
+    return result.map((r) => ({
+      id: r.id,
+      title: r.title,
+      sku: r.sku,
+      price: r.price,
+      currency: r.currency,
+      compareAtPrice: r.compareAtPrice,
+      imageUrl: r.imageUrl,
+      options: (r.options as Record<string, string> | null) || null,
+      inventoryItemId: r.inventoryItemId,
+      costPerItem: r.costPerItem,
+      locationId: r.locationId,
+      available: r.available,
+      committed: r.committed,
+      incoming: r.incoming,
+    }));
+  } catch (error) {
+    console.error("Error fetching listing variants with inventory:", error);
+    return [];
+  }
+}
+
+/**
+ * Get variant and inventory counts for a listing
+ */
+export async function getListingInventoryInfo(listingId: string): Promise<{
+  variantCount: number;
+  totalStock: number;
+}> {
+  try {
+    // Get variant count
+    const variantCountResult = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(listingVariants)
+      .where(eq(listingVariants.listingId, listingId));
+
+    const variantCount = variantCountResult[0]?.count || 0;
+
+    // Get total stock across all variants
+    const stockResult = await db
+      .select({
+        total: sql<number>`COALESCE(SUM(${inventoryLevels.available})::int, 0)`,
+      })
+      .from(listingVariants)
+      .leftJoin(
+        inventoryItems,
+        eq(inventoryItems.variantId, listingVariants.id)
+      )
+      .leftJoin(
+        inventoryLevels,
+        eq(inventoryLevels.inventoryItemId, inventoryItems.id)
+      )
+      .where(eq(listingVariants.listingId, listingId));
+
+    const totalStock = stockResult[0]?.total || 0;
+
+    return { variantCount, totalStock };
+  } catch (error) {
+    console.error("Error fetching listing inventory info:", error);
+    return { variantCount: 0, totalStock: 0 };
   }
 }
 
@@ -534,6 +687,7 @@ export async function getAllListingsWithUsers(): Promise<
       producerName: string;
       producerEmail: string;
       isAdminCreated: boolean;
+      vendorName?: string | null;
     }
   >
 > {
@@ -569,6 +723,7 @@ export async function getAllListingsWithUsers(): Promise<
         updatedAt: listing.updatedAt,
         producerName: user.name,
         producerEmail: user.email,
+        vendorName: vendor.storeName,
         // Fallback fields from base table
         nameFallback: listing.name,
         descriptionFallback: listing.description,
@@ -577,6 +732,7 @@ export async function getAllListingsWithUsers(): Promise<
       })
       .from(listing)
       .innerJoin(user, eq(listing.producerId, user.id))
+      .leftJoin(vendor, eq(listing.vendorId, vendor.id))
       .leftJoin(
         listingTranslations,
         and(
@@ -588,6 +744,33 @@ export async function getAllListingsWithUsers(): Promise<
 
     // Check if producer is admin
     const adminEmails = process.env.ADMIN_LIST?.split(",") || [];
+
+    // Get inventory info for all listings in parallel
+    const inventoryPromises = result.map((r) =>
+      getListingInventoryInfo(r.id).then((info) => ({ id: r.id, ...info }))
+    );
+    const inventoryData = await Promise.all(inventoryPromises);
+    const inventoryMap = new Map(
+      inventoryData.map((d) => [
+        d.id,
+        { variantCount: d.variantCount, totalStock: d.totalStock },
+      ])
+    );
+
+    // Get first variant image for listings without main image
+    const listingsWithoutImage = result.filter((r) => !r.imageUrl);
+    const variantImagePromises = listingsWithoutImage.map(async (r) => {
+      const firstVariant = await db
+        .select({ imageUrl: listingVariants.imageUrl })
+        .from(listingVariants)
+        .where(eq(listingVariants.listingId, r.id))
+        .limit(1);
+      return { id: r.id, imageUrl: firstVariant[0]?.imageUrl || null };
+    });
+    const variantImageData = await Promise.all(variantImagePromises);
+    const variantImageMap = new Map(
+      variantImageData.map((d) => [d.id, d.imageUrl])
+    );
 
     return result.map((r) => {
       // Ensure gallery is an array
@@ -605,26 +788,32 @@ export async function getAllListingsWithUsers(): Promise<
       } else if (r.tags) {
         tags = [r.tags as unknown as string];
       }
-      
-      const tagsFallback: string[] = Array.isArray(r.tagsFallback) 
-        ? r.tagsFallback 
-        : r.tagsFallback 
-          ? [r.tagsFallback as unknown as string] 
+
+      const tagsFallback: string[] = Array.isArray(r.tagsFallback)
+        ? r.tagsFallback
+        : r.tagsFallback
+          ? [r.tagsFallback as unknown as string]
           : [];
+
+      const inventory = inventoryMap.get(r.id) || {
+        variantCount: 0,
+        totalStock: 0,
+      };
 
       return {
         id: r.id,
         producerId: r.producerId,
         name: r.name || r.nameFallback || "",
         description: r.description || r.descriptionFallback || null,
-        vendorId: r.vendorId || null,
+        vendorId: (r.vendorId || "") as string,
         categoryRuleId: r.categoryRuleId,
         taxonomyCategoryId: r.taxonomyCategoryId || null,
+        taxonomyCategoryName: r.taxonomyCategoryName || null,
         price: r.price,
         compareAtPrice: r.compareAtPrice || null,
         currency: r.currency || "NPR",
         unit: r.unit || "kg",
-        imageUrl: r.imageUrl || null,
+        imageUrl: r.imageUrl || variantImageMap.get(r.id) || null,
         gallery,
         tags: tags.length > 0 ? tags : tagsFallback,
         status: r.status || "draft",
@@ -641,27 +830,37 @@ export async function getAllListingsWithUsers(): Promise<
         producerName: r.producerName || "",
         producerEmail: r.producerEmail || "",
         isAdminCreated: adminEmails.includes(r.producerEmail || ""),
+        vendorName: r.vendorName || null,
+        variantCount: inventory.variantCount,
+        totalStock: inventory.totalStock,
+      } as Listing & {
+        producerName: string;
+        producerEmail: string;
+        isAdminCreated: boolean;
+        vendorName?: string | null;
+        variantCount: number;
+        totalStock: number;
       };
     });
   } catch (error) {
     console.error("Error fetching listings with users:", error);
     const errorMessage = error instanceof Error ? error.message : String(error);
-    
+
     // Check if the error is specifically about missing category_rule_id column (PostgreSQL error code 42703)
-    const pgError = error as any;
+    const pgError = error as { code?: string };
     if (
-      (pgError?.code === "42703" && errorMessage.includes("category_rule_id")) ||
-      (errorMessage.includes("category_rule_id") && errorMessage.includes("does not exist"))
+      (pgError?.code === "42703" &&
+        errorMessage.includes("category_rule_id")) ||
+      (errorMessage.includes("category_rule_id") &&
+        errorMessage.includes("does not exist"))
     ) {
       throw new Error(
         `Database schema is out of sync. The 'category_rule_id' column is missing from the 'listing' table. ` +
-        `Please run: npx tsx scripts/add-category-rule-id-column.ts to add this column.`
+          `Please run: npx tsx scripts/add-category-rule-id-column.ts to add this column.`
       );
     }
-    
-    throw new Error(
-      `Failed to fetch listings with users: ${errorMessage}`
-    );
+
+    throw new Error(`Failed to fetch listings with users: ${errorMessage}`);
   }
 }
 
@@ -718,34 +917,69 @@ export async function getListingsByProducer(
       .where(eq(listing.producerId, producerId))
       .orderBy(listing.createdAt);
 
-    return result.map((r) => ({
-      id: r.id,
-      producerId: r.producerId,
-      name: r.name || r.nameFallback || "",
-      description: r.description || r.descriptionFallback || null,
-      vendorId: r.vendorId || null,
-      categoryRuleId: r.categoryRuleId,
-      taxonomyCategoryId: r.taxonomyCategoryId || null,
-      taxonomyCategoryName: r.taxonomyCategoryName || null,
-      price: r.price,
-      compareAtPrice: r.compareAtPrice || null,
-      currency: r.currency,
-      unit: r.unit,
-      imageUrl: r.imageUrl,
-      gallery: r.gallery,
-      tags: r.tags || r.tagsFallback || [],
-      status: r.status || "draft",
-      isFeatured: r.isFeatured,
-      marketType: r.marketType,
-      publishedAt: r.publishedAt || null,
-      originVillage: r.originVillage || r.originVillageFallback || null,
-      harvestDate: r.harvestDate,
-      ratingAverage: r.ratingAverage,
-      ratingCount: r.ratingCount,
-      salesCount: r.salesCount,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    })) as Listing[];
+    // Get inventory info for all listings in parallel
+    const inventoryPromises = result.map((r) =>
+      getListingInventoryInfo(r.id).then((info) => ({ id: r.id, ...info }))
+    );
+    const inventoryData = await Promise.all(inventoryPromises);
+    const inventoryMap = new Map(
+      inventoryData.map((d) => [
+        d.id,
+        { variantCount: d.variantCount, totalStock: d.totalStock },
+      ])
+    );
+
+    // Get first variant image for listings without main image
+    const listingsWithoutImage = result.filter((r) => !r.imageUrl);
+    const variantImagePromises = listingsWithoutImage.map(async (r) => {
+      const firstVariant = await db
+        .select({ imageUrl: listingVariants.imageUrl })
+        .from(listingVariants)
+        .where(eq(listingVariants.listingId, r.id))
+        .limit(1);
+      return { id: r.id, imageUrl: firstVariant[0]?.imageUrl || null };
+    });
+    const variantImageData = await Promise.all(variantImagePromises);
+    const variantImageMap = new Map(
+      variantImageData.map((d) => [d.id, d.imageUrl])
+    );
+
+    return result.map((r) => {
+      const inventory = inventoryMap.get(r.id) || {
+        variantCount: 0,
+        totalStock: 0,
+      };
+      return {
+        id: r.id,
+        producerId: r.producerId,
+        name: r.name || r.nameFallback || "",
+        description: r.description || r.descriptionFallback || null,
+        vendorId: r.vendorId || null,
+        categoryRuleId: r.categoryRuleId,
+        taxonomyCategoryId: r.taxonomyCategoryId || null,
+        taxonomyCategoryName: r.taxonomyCategoryName || null,
+        price: r.price,
+        compareAtPrice: r.compareAtPrice || null,
+        currency: r.currency,
+        unit: r.unit,
+        imageUrl: r.imageUrl || variantImageMap.get(r.id) || null,
+        gallery: r.gallery,
+        tags: r.tags || r.tagsFallback || [],
+        status: r.status || "draft",
+        isFeatured: r.isFeatured,
+        marketType: r.marketType,
+        publishedAt: r.publishedAt || null,
+        originVillage: r.originVillage || r.originVillageFallback || null,
+        harvestDate: r.harvestDate,
+        ratingAverage: r.ratingAverage,
+        ratingCount: r.ratingCount,
+        salesCount: r.salesCount,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        variantCount: inventory.variantCount,
+        totalStock: inventory.totalStock,
+      };
+    }) as Listing[];
   } catch (error) {
     console.error("Error fetching producer listings:", error);
     throw new Error(
@@ -790,7 +1024,6 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
       gallery = [...gallery, ...newGalleryUrls];
     }
 
-
     // Extract taxonomy category short name if category is being updated
     let taxonomyCategoryName: string | null = null;
     if (updateData.taxonomyCategoryId) {
@@ -805,28 +1038,39 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
         .from(listing)
         .where(eq(listing.id, id))
         .limit(1);
-      taxonomyCategoryName = existingListingWithName[0]?.taxonomyCategoryName || null;
+      taxonomyCategoryName =
+        existingListingWithName[0]?.taxonomyCategoryName || null;
     }
 
     // Determine publishedAt based on status
-    const publishedAt = updateData.status === "active" && !existingListing.publishedAt
-      ? new Date()
-      : updateData.status === "active"
-      ? existingListing.publishedAt
-      : updateData.status === "draft" || updateData.status === "archived"
-      ? null
-      : existingListing.publishedAt;
+    const publishedAt =
+      updateData.status === "active" && !existingListing.publishedAt
+        ? new Date()
+        : updateData.status === "active"
+          ? existingListing.publishedAt
+          : updateData.status === "draft" || updateData.status === "archived"
+            ? null
+            : existingListing.publishedAt;
 
     // Update base listing table (non-translatable fields)
     const baseUpdateData: Partial<typeof listing.$inferInsert> = {
-      categoryRuleId: updateData.categoryRuleId !== undefined ? updateData.categoryRuleId : existingListing.categoryRuleId || null,
-      taxonomyCategoryId: updateData.taxonomyCategoryId || existingListing.taxonomyCategoryId || null, // Taxonomy category ID
-      taxonomyCategoryName: taxonomyCategoryName !== null ? taxonomyCategoryName : undefined, // Short name
+      categoryRuleId:
+        updateData.categoryRuleId !== undefined
+          ? updateData.categoryRuleId
+          : existingListing.categoryRuleId || null,
+      taxonomyCategoryId:
+        updateData.taxonomyCategoryId ||
+        existingListing.taxonomyCategoryId ||
+        null, // Taxonomy category ID
+      taxonomyCategoryName:
+        taxonomyCategoryName !== null ? taxonomyCategoryName : undefined, // Short name
       imageUrl: imageUrl || undefined,
       gallery,
       updatedAt: new Date(),
       price: updateData.price ? String(updateData.price) : undefined,
-      compareAtPrice: updateData.compareAtPrice ? String(updateData.compareAtPrice) : undefined,
+      compareAtPrice: updateData.compareAtPrice
+        ? String(updateData.compareAtPrice)
+        : undefined,
       currency: updateData.currency,
       unit: updateData.unit,
       status: updateData.status || existingListing.status || "draft",
@@ -947,6 +1191,277 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
       }
     }
 
+    // Handle variants update
+    if (updateData.variants !== undefined) {
+      // Get existing variants
+      const existingVariants = await db
+        .select()
+        .from(listingVariants)
+        .where(eq(listingVariants.listingId, id));
+
+      const existingVariantIds = new Set(existingVariants.map((v) => v.id));
+      const incomingVariantIds = new Set(
+        updateData.variants.map((v) => v.id).filter((id): id is string => !!id)
+      );
+
+      // Delete variants that are no longer in the update
+      const variantsToDelete = existingVariants.filter(
+        (v) => !incomingVariantIds.has(v.id)
+      );
+      for (const variantToDelete of variantsToDelete) {
+        // Delete associated inventory items and levels (cascade should handle this, but we'll do it explicitly)
+        const inventoryItemsToDelete = await db
+          .select()
+          .from(inventoryItems)
+          .where(eq(inventoryItems.variantId, variantToDelete.id));
+
+        for (const item of inventoryItemsToDelete) {
+          await db
+            .delete(inventoryLevels)
+            .where(eq(inventoryLevels.inventoryItemId, item.id));
+        }
+        await db
+          .delete(inventoryItems)
+          .where(eq(inventoryItems.variantId, variantToDelete.id));
+
+        // Delete variant image if exists
+        if (variantToDelete.imageUrl) {
+          await deleteFile(variantToDelete.imageUrl, `/listings/${id}`);
+        }
+
+        // Delete variant
+        await db
+          .delete(listingVariants)
+          .where(eq(listingVariants.id, variantToDelete.id));
+      }
+
+      // Update or create variants
+      for (const variantData of updateData.variants) {
+        // Upload variant image if provided
+        let variantImageUrl = variantData.imageUrl;
+
+        // Skip base64 data URLs - they should be converted to Files and uploaded via variantImages
+        if (variantImageUrl && variantImageUrl.startsWith("data:image/")) {
+          variantImageUrl = undefined;
+        }
+
+        if (variantData.id && updateData.variantImages?.[variantData.id]) {
+          const variantImageFiles = updateData.variantImages[variantData.id];
+          if (variantImageFiles && variantImageFiles.length > 0) {
+            // Delete old variant image if exists
+            const existingVariant = existingVariants.find(
+              (v) => v.id === variantData.id
+            );
+            if (
+              existingVariant?.imageUrl &&
+              !existingVariant.imageUrl.startsWith("data:image/")
+            ) {
+              await deleteFile(existingVariant.imageUrl, `/listings/${id}`);
+            }
+            // Upload new variant images
+            const variantImageUrls = await uploadFiles(
+              variantImageFiles,
+              `/listings/${id}/${variantData.id}`
+            );
+            variantImageUrl = variantImageUrls[0] || variantImageUrl;
+          }
+        }
+
+        if (variantData.id && existingVariantIds.has(variantData.id)) {
+          // Update existing variant
+          await db
+            .update(listingVariants)
+            .set({
+              title: variantData.title,
+              sku: variantData.sku || null,
+              price: variantData.price ? variantData.price.toString() : null,
+              currency: variantData.currency || null,
+              compareAtPrice: variantData.compareAtPrice
+                ? variantData.compareAtPrice.toString()
+                : null,
+              imageUrl: variantImageUrl || null,
+              options: variantData.options || null,
+              updatedAt: new Date(),
+            })
+            .where(eq(listingVariants.id, variantData.id));
+        } else {
+          // Create new variant
+          // Upload variant image if provided (variantData.id should exist for client-generated variants)
+          let finalVariantImageUrl = variantImageUrl;
+
+          // Skip base64 data URLs - they should be converted to Files and uploaded via variantImages
+          if (
+            finalVariantImageUrl &&
+            finalVariantImageUrl.startsWith("data:image/")
+          ) {
+            finalVariantImageUrl = undefined;
+          }
+
+          if (
+            !finalVariantImageUrl &&
+            variantData.id &&
+            updateData.variantImages?.[variantData.id]
+          ) {
+            const variantImageFiles = updateData.variantImages[variantData.id];
+            if (variantImageFiles && variantImageFiles.length > 0) {
+              const uploadedUrls = await uploadFiles(
+                variantImageFiles,
+                `/listings/${id}/${variantData.id}`
+              );
+              finalVariantImageUrl = uploadedUrls[0] || undefined;
+            }
+          }
+
+          const newVariant = await db
+            .insert(listingVariants)
+            .values({
+              listingId: id,
+              title: variantData.title,
+              sku: variantData.sku || null,
+              price: variantData.price ? variantData.price.toString() : null,
+              currency: variantData.currency || null,
+              compareAtPrice: variantData.compareAtPrice
+                ? variantData.compareAtPrice.toString()
+                : null,
+              imageUrl: finalVariantImageUrl || null,
+              options: variantData.options || null,
+            })
+            .returning();
+
+          // If tracking inventory, create inventory item and level
+          if (
+            updateData.tracksInventory &&
+            updateData.inventoryLocationId &&
+            newVariant[0]
+          ) {
+            const inventoryItem = await db
+              .insert(inventoryItems)
+              .values({
+                variantId: newVariant[0].id,
+                costPerItem: variantData.costPerItem
+                  ? variantData.costPerItem.toString()
+                  : "0",
+                requiresShipping: true,
+                weightGrams: 0,
+              })
+              .returning();
+
+            await db.insert(inventoryLevels).values({
+              inventoryItemId: inventoryItem[0].id,
+              locationId: updateData.inventoryLocationId,
+              available: variantData.initialStock || 0,
+              committed: 0,
+              incoming: 0,
+            });
+          }
+        }
+
+        // Update inventory for existing variants if tracking inventory
+        if (
+          variantData.id &&
+          existingVariantIds.has(variantData.id) &&
+          updateData.tracksInventory &&
+          updateData.inventoryLocationId
+        ) {
+          // Check if inventory item exists
+          const existingInventoryItem = await db
+            .select()
+            .from(inventoryItems)
+            .where(eq(inventoryItems.variantId, variantData.id))
+            .limit(1);
+
+          if (existingInventoryItem.length > 0) {
+            // Update cost per item
+            await db
+              .update(inventoryItems)
+              .set({
+                costPerItem: variantData.costPerItem
+                  ? variantData.costPerItem.toString()
+                  : "0",
+                updatedAt: new Date(),
+              })
+              .where(eq(inventoryItems.id, existingInventoryItem[0].id));
+
+            // Update inventory level
+            const existingLevel = await db
+              .select()
+              .from(inventoryLevels)
+              .where(
+                and(
+                  eq(
+                    inventoryLevels.inventoryItemId,
+                    existingInventoryItem[0].id
+                  ),
+                  eq(inventoryLevels.locationId, updateData.inventoryLocationId)
+                )
+              )
+              .limit(1);
+
+            if (existingLevel.length > 0) {
+              await db
+                .update(inventoryLevels)
+                .set({
+                  available: variantData.initialStock || 0,
+                  updatedAt: new Date(),
+                })
+                .where(eq(inventoryLevels.id, existingLevel[0].id));
+            } else {
+              // Create new inventory level
+              await db.insert(inventoryLevels).values({
+                inventoryItemId: existingInventoryItem[0].id,
+                locationId: updateData.inventoryLocationId,
+                available: variantData.initialStock || 0,
+                committed: 0,
+                incoming: 0,
+              });
+            }
+          } else {
+            // Create inventory item and level
+            const inventoryItem = await db
+              .insert(inventoryItems)
+              .values({
+                variantId: variantData.id,
+                costPerItem: variantData.costPerItem
+                  ? variantData.costPerItem.toString()
+                  : "0",
+                requiresShipping: true,
+                weightGrams: 0,
+              })
+              .returning();
+
+            await db.insert(inventoryLevels).values({
+              inventoryItemId: inventoryItem[0].id,
+              locationId: updateData.inventoryLocationId,
+              available: variantData.initialStock || 0,
+              committed: 0,
+              incoming: 0,
+            });
+          }
+        }
+
+        // Remove inventory if tracking is disabled
+        if (
+          variantData.id &&
+          existingVariantIds.has(variantData.id) &&
+          !updateData.tracksInventory
+        ) {
+          const inventoryItemsToRemove = await db
+            .select()
+            .from(inventoryItems)
+            .where(eq(inventoryItems.variantId, variantData.id));
+
+          for (const item of inventoryItemsToRemove) {
+            await db
+              .delete(inventoryLevels)
+              .where(eq(inventoryLevels.inventoryItemId, item.id));
+          }
+          await db
+            .delete(inventoryItems)
+            .where(eq(inventoryItems.variantId, variantData.id));
+        }
+      }
+    }
+
     return updatedListing[0];
   } catch (error) {
     console.error("Error updating listing:", error);
@@ -1045,9 +1560,10 @@ export async function toggleListingStatus(id: string): Promise<Listing> {
 
     // Toggle between active and draft
     const newStatus = existingListing.status === "active" ? "draft" : "active";
-    const publishedAt = newStatus === "active" && !existingListing.publishedAt
-      ? new Date()
-      : existingListing.publishedAt;
+    const publishedAt =
+      newStatus === "active" && !existingListing.publishedAt
+        ? new Date()
+        : existingListing.publishedAt;
 
     const updatedListing = await db
       .update(listing)

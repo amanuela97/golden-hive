@@ -13,7 +13,7 @@ Code Style and Structure
 - Structure files: exported component, subcomponents, helpers, static content, types.
 - Create custom components in /app/components folder.
 - Always use Shadcn ui components from /components/ui folder.
-Naming Conventions
+  Naming Conventions
 
 - Use lowercase with dashes for directories (e.g., components/auth-wizard).
 - Favor named exports for components.
@@ -23,6 +23,7 @@ TypeScript Usage
 - Use TypeScript for all code; prefer interfaces over types.
 - Avoid enums; use maps instead.
 - Use functional components with TypeScript interfaces.
+- When defining types for table make sure to use the types from the schema.ts so when the fields change in the database it automatically updates in the code.
 
 Syntax and Formatting
 

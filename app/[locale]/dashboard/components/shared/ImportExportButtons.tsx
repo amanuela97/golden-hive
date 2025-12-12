@@ -145,9 +145,9 @@ export default function ImportExportButtons({
 
       <div className="mt-2 text-sm text-gray-600">
         {selectedProductIds.length > 0 ? (
-          <span>Export {selectedProductIds.length} selected listings</span>
+          <span>Export {selectedProductIds.length} selected products</span>
         ) : (
-          <span>Export all listings</span>
+          <span>Export all products</span>
         )}
       </div>
 

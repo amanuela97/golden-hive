@@ -7,7 +7,6 @@ import { db } from "@/db";
 import { userRoles, roles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
-import AdminProductsPageClient from "../components/shared/AdminProductsPageClient";
 import ProductsPageClient from "../components/shared/ProductsPageClient";
 import { DashboardWrapper } from "../components/shared/DashboardWrapper";
 
@@ -45,46 +44,35 @@ export default async function ProductsPage() {
     redirect({ href: "/dashboard", locale });
   }
 
-  // Render different content based on role
-  if (roleName === "admin") {
-    // Get all products with user information
-    const products = await getAllListingsWithUsers();
+  const isAdmin = roleName === "admin";
 
-    return (
-      <DashboardWrapper userRole={roleName}>
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold">All Products</h1>
-              <p className="text-gray-600 mt-2">
-                Manage all product listings across the platform
-              </p>
-            </div>
+  // Get products based on role
+  const products = isAdmin
+    ? await getAllListingsWithUsers()
+    : await getListingsByProducer(session?.user?.id ?? "");
+
+  return (
+    <DashboardWrapper userRole={roleName}>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">
+              {isAdmin ? "All Products" : "Products"}
+            </h1>
+            <p className="text-gray-600 mt-2">
+              {isAdmin
+                ? "Manage all products across the platform"
+                : "Manage your products and inventory"}
+            </p>
           </div>
-
-          <AdminProductsPageClient products={products} />
         </div>
-      </DashboardWrapper>
-    );
-  } else {
-    // Seller: Get products for the current user (producer)
-    const products = await getListingsByProducer(session?.user?.id ?? "");
 
-    return (
-      <DashboardWrapper userRole={roleName}>
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold">Products</h1>
-              <p className="text-gray-600 mt-2">
-                Manage your product listings and inventory
-              </p>
-            </div>
-          </div>
-
-          <ProductsPageClient products={products} basePath="/dashboard" />
-        </div>
-      </DashboardWrapper>
-    );
-  }
+        <ProductsPageClient
+          products={products}
+          basePath="/dashboard"
+          isAdmin={isAdmin}
+        />
+      </div>
+    </DashboardWrapper>
+  );
 }
