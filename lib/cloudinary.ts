@@ -373,7 +373,7 @@ export async function deleteFilesByPublicIds(
  * @param url - Cloudinary URL
  * @returns string | null - Public ID or null if invalid
  */
-function extractPublicId(url: string): string | null {
+export function extractPublicId(url: string): string | null {
   try {
     // Example URL: https://res.cloudinary.com/demo/image/upload/v1728402325/folder/subfolder/sample.jpg
     const uploadIndex = url.indexOf("/upload/");

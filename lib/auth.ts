@@ -46,6 +46,23 @@ export const auth = betterAuth({
         console.error("Error deleting seller documents:", error);
         // Don't throw error to prevent account deletion failure
       }
+
+      // Delete profile image from Cloudinary
+      try {
+        if (user.image) {
+          const { deleteFileByPublicId, extractPublicId } = await import(
+            "@/lib/cloudinary"
+          );
+          const publicId = extractPublicId(user.image);
+          if (publicId) {
+            await deleteFileByPublicId(publicId);
+            console.log(`Deleted profile image for user: ${user.email}`);
+          }
+        }
+      } catch (error) {
+        console.error("Error deleting profile image:", error);
+        // Don't throw error to prevent account deletion failure
+      }
     },
   },
   emailAndPassword: {

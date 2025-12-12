@@ -38,10 +38,6 @@ const allNavItems: NavItem[] = [
     label: "Orders",
     href: "/dashboard/orders",
     icon: ShoppingCart,
-    children: [
-      { label: "Drafts", href: "/dashboard/orders/drafts" },
-      { label: "Abandoned checkout", href: "/dashboard/orders/abandoned" },
-    ],
     roles: ["admin", "seller", "customer"], // C, S, A
   },
   {

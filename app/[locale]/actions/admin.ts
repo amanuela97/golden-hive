@@ -329,7 +329,34 @@ export async function deleteUser(userId: string): Promise<ActionResponse> {
       };
     }
 
+    // Get user image before deletion
+    const userData = await db
+      .select({ image: user.image })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+
+    const userImage = userData[0]?.image;
+
+    // Delete user from database
     await db.delete(user).where(eq(user.id, userId));
+
+    // Delete profile image from Cloudinary if it exists
+    if (userImage) {
+      try {
+        const { deleteFileByPublicId, extractPublicId } = await import(
+          "@/lib/cloudinary"
+        );
+        const publicId = extractPublicId(userImage);
+        if (publicId) {
+          await deleteFileByPublicId(publicId);
+          console.log(`Deleted profile image for user: ${userId}`);
+        }
+      } catch (error) {
+        console.error("Error deleting profile image:", error);
+        // Don't fail the operation if image deletion fails
+      }
+    }
 
     return {
       success: true,

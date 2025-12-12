@@ -34,7 +34,7 @@ type SettingsSection =
   | "policies"
   | "profile"
   | "security"
-  | "shipping"
+  | "shipping-billing"
   | "vendor";
 
 interface SettingsContentProps {
@@ -117,7 +117,7 @@ export default function SettingsContent({
       return <ProfileTab />;
     case "payments":
       return <PaymentsTab />;
-    case "shipping":
+    case "shipping-billing":
       return <ShippingTab />;
     case "vendor":
       return <VendorTab />;
@@ -202,6 +202,8 @@ export default function SettingsContent({
         </div>
       );
     default:
+      // Log unknown section for debugging
+      console.warn("Unknown settings section:", section);
       return (
         <div className="rounded-lg border border-border bg-card p-8 text-center">
           <p className="text-muted-foreground">

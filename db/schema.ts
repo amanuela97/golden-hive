@@ -30,6 +30,31 @@ export const listingStatusEnum = pgEnum("listing_status", [
   "archived",
 ]);
 
+// Order status enums
+export const orderPaymentStatusEnum = pgEnum("order_payment_status", [
+  "pending",
+  "paid",
+  "partially_refunded",
+  "refunded",
+  "failed",
+  "void",
+]);
+
+export const orderFulfillmentStatusEnum = pgEnum("order_fulfillment_status", [
+  "unfulfilled",
+  "partial",
+  "fulfilled",
+  "canceled",
+  "on_hold",
+]);
+
+export const orderStatusEnum = pgEnum("order_status", [
+  "open",
+  "draft",
+  "archived",
+  "canceled",
+]);
+
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -415,11 +440,182 @@ export const inventoryLevels = pgTable("inventory_levels", {
 });
 
 // ===================================
+// CUSTOMERS
+// ===================================
+export const customers = pgTable("customers", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  vendorId: uuid("vendor_id").references(() => vendor.id, {
+    onDelete: "set null",
+  }),
+  userId: text("user_id").references(() => user.id, { onDelete: "set null" }), // optional link to auth user
+  email: text("email").notNull(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  phone: text("phone"),
+  // Optional default address snapshot
+  addressLine1: text("address_line_1"),
+  addressLine2: text("address_line_2"),
+  city: text("city"),
+  region: text("region"),
+  postalCode: text("postal_code"),
+  country: text("country"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// ORDERS
+// ===================================
+export const orders = pgTable("orders", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  // Human-friendly incremental number, e.g. 1001, 1002
+  orderNumber: serial("order_number").notNull(), // Use this as "order_id" in UI
+
+  vendorId: uuid("vendor_id").references(() => vendor.id, {
+    onDelete: "set null",
+  }),
+  customerId: uuid("customer_id").references(() => customers.id, {
+    onDelete: "set null",
+  }),
+
+  // Customer snapshot (denormalized)
+  customerEmail: text("customer_email"),
+  customerFirstName: text("customer_first_name"),
+  customerLastName: text("customer_last_name"),
+
+  // Currency and totals
+  currency: text("currency").notNull(), // reuse 'EUR' | 'USD' | 'NPR'
+  subtotalAmount: numeric("subtotal_amount", { precision: 10, scale: 2 })
+    .default("0")
+    .notNull(),
+  discountAmount: numeric("discount_amount", { precision: 10, scale: 2 })
+    .default("0")
+    .notNull(),
+  shippingAmount: numeric("shipping_amount", { precision: 10, scale: 2 })
+    .default("0")
+    .notNull(),
+  taxAmount: numeric("tax_amount", { precision: 10, scale: 2 })
+    .default("0")
+    .notNull(),
+  totalAmount: numeric("total_amount", { precision: 10, scale: 2 })
+    .default("0")
+    .notNull(),
+
+  // Statuses
+  status: orderStatusEnum("status").default("open").notNull(),
+  paymentStatus: orderPaymentStatusEnum("payment_status")
+    .default("pending")
+    .notNull(),
+  fulfillmentStatus: orderFulfillmentStatusEnum("fulfillment_status")
+    .default("unfulfilled")
+    .notNull(),
+
+  // Shipping & billing snapshots (flat fields for now)
+  shippingName: text("shipping_name"),
+  shippingPhone: text("shipping_phone"),
+  shippingAddressLine1: text("shipping_address_line_1"),
+  shippingAddressLine2: text("shipping_address_line_2"),
+  shippingCity: text("shipping_city"),
+  shippingRegion: text("shipping_region"),
+  shippingPostalCode: text("shipping_postal_code"),
+  shippingCountry: text("shipping_country"),
+
+  billingName: text("billing_name"),
+  billingPhone: text("billing_phone"),
+  billingAddressLine1: text("billing_address_line_1"),
+  billingAddressLine2: text("billing_address_line_2"),
+  billingCity: text("billing_city"),
+  billingRegion: text("billing_region"),
+  billingPostalCode: text("billing_postal_code"),
+  billingCountry: text("billing_country"),
+
+  // Meta
+  notes: text("notes"),
+  tags: text("tags"), // comma-separated for now
+
+  // Important timestamps
+  placedAt: timestamp("placed_at").defaultNow(), // when the order is placed
+  paidAt: timestamp("paid_at"),
+  fulfilledAt: timestamp("fulfilled_at"),
+  canceledAt: timestamp("canceled_at"),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// ORDER ITEMS
+// ===================================
+export const orderItems = pgTable("order_items", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  listingId: uuid("listing_id").references(() => listing.id, {
+    onDelete: "set null",
+  }),
+  variantId: uuid("variant_id").references(() => listingVariants.id, {
+    onDelete: "set null",
+  }),
+
+  // Snapshot at time of order
+  title: text("title").notNull(), // e.g. product name + variant
+  sku: text("sku"),
+  quantity: integer("quantity").notNull(),
+  unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
+  currency: text("currency").notNull(),
+  lineSubtotal: numeric("line_subtotal", { precision: 10, scale: 2 }).notNull(), // quantity * unitPrice before discounts
+  lineTotal: numeric("line_total", { precision: 10, scale: 2 }).notNull(), // after discounts
+
+  // For future expansion
+  discountAmount: numeric("discount_amount", {
+    precision: 10,
+    scale: 2,
+  }).default("0"),
+  taxAmount: numeric("tax_amount", { precision: 10, scale: 2 }).default("0"),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// ORDER PAYMENTS (Optional for future)
+// ===================================
+export const orderPayments = pgTable("order_payments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  currency: text("currency").notNull(),
+  provider: text("provider"), // 'stripe', 'paypal', 'cash', etc.
+  providerPaymentId: text("provider_payment_id"), // Stripe payment intent ID, etc.
+  status: text("status").default("pending"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
 // FULFILLMENTS
 // ===================================
 export const fulfillments = pgTable("fulfillments", {
   id: uuid("id").defaultRandom().primaryKey(),
-  orderId: uuid("order_id"),
+  orderId: uuid("order_id").references(() => orders.id, {
+    onDelete: "cascade",
+  }),
   vendorId: uuid("vendor_id").references(() => vendor.id, {
     onDelete: "set null",
   }),
@@ -812,3 +1008,7 @@ export type InventoryLocationTranslation = InferSelectModel<
 export type InventoryLevel = InferSelectModel<typeof inventoryLevels>;
 export type Fulfillment = InferSelectModel<typeof fulfillments>;
 export type InventoryAdjustment = InferSelectModel<typeof inventoryAdjustments>;
+export type Customer = InferSelectModel<typeof customers>;
+export type Order = InferSelectModel<typeof orders>;
+export type OrderItem = InferSelectModel<typeof orderItems>;
+export type OrderPayment = InferSelectModel<typeof orderPayments>;

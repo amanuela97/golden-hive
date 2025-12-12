@@ -41,7 +41,7 @@ type SettingsSection =
   | "policies"
   | "profile"
   | "security"
-  | "shipping"
+  | "shipping-billing"
   | "vendor";
 
 interface SettingsSectionConfig {
@@ -77,7 +77,7 @@ export function SettingsModal({
     "policies",
     "profile",
     "security",
-    "shipping",
+    "shipping-billing",
     "vendor",
   ];
 
@@ -88,17 +88,26 @@ export function SettingsModal({
     const settingsMatch = pathname.match(/\/dashboard\/settings\/([^\/]+)/);
     if (settingsMatch) {
       const section = settingsMatch[1];
+      // Check if section is valid
       if (section && validSections.includes(section as SettingsSection)) {
         setActiveSection(section as SettingsSection);
+        return;
+      } else {
+        // If section is in URL but not valid, log for debugging
+        console.warn(
+          "Invalid settings section in URL:",
+          section,
+          "Valid sections:",
+          validSections
+        );
+        // Don't change activeSection if invalid - this prevents unwanted redirects
         return;
       }
     }
 
-    // Default to profile if no valid section found or if just /dashboard/settings
-    if (
-      pathname === "/dashboard/settings" ||
-      pathname.endsWith("/dashboard/settings")
-    ) {
+    // Only default to profile if pathname is exactly /dashboard/settings (no section specified)
+    // Don't change if we're already on a settings page with a section
+    if (pathname === "/dashboard/settings") {
       setActiveSection("profile");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -191,8 +200,8 @@ export function SettingsModal({
     },
     // Shipping (A, S) - keeping for admin/seller
     {
-      id: "shipping",
-      label: "Shipping",
+      id: "shipping-billing",
+      label: "Shipping & Billing",
       icon: Truck,
       roles: ["admin", "seller"], // A, S
     },

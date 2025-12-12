@@ -120,6 +120,13 @@
       "when": 1765479240347,
       "tag": "0016_spotty_roughhouse",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1765562451977,
+      "tag": "0017_perpetual_northstar",
+      "breakpoints": true
     }
   ]
 }

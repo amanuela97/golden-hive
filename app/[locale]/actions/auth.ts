@@ -428,6 +428,59 @@ async function getCurrentUser(): Promise<User> {
   return session?.user as User;
 }
 
+// Get full user profile data
+export async function getUserProfile(): Promise<
+  ActionResponse & {
+    result?: {
+      id: string;
+      name: string;
+      email: string;
+      phone: string | null;
+      address: string | null;
+      city: string | null;
+      country: string | null;
+      image: string | null;
+    };
+  }
+> {
+  try {
+    const currentUser = await getCurrentUser();
+
+    const userData = await db
+      .select({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        address: user.address,
+        city: user.city,
+        country: user.country,
+        image: user.image,
+      })
+      .from(user)
+      .where(eq(user.id, currentUser.id))
+      .limit(1);
+
+    if (userData.length === 0) {
+      return {
+        success: false,
+        error: "User not found",
+      };
+    }
+
+    return {
+      success: true,
+      result: userData[0],
+    };
+  } catch (error) {
+    console.error("Error fetching user profile:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to fetch profile",
+    };
+  }
+}
+
 // Update user profile action
 export async function updateUserProfile(data: {
   name: string;
@@ -436,6 +489,7 @@ export async function updateUserProfile(data: {
   address?: string | null;
   city?: string | null;
   country?: string | null;
+  image?: string | null;
 }): Promise<ActionResponse> {
   const t = await getTranslations();
   try {
@@ -451,6 +505,7 @@ export async function updateUserProfile(data: {
         address: data.address,
         city: data.city,
         country: data.country,
+        image: data.image,
         updatedAt: new Date(),
       })
       .where(eq(user.id, currentUser.id));
@@ -465,6 +520,84 @@ export async function updateUserProfile(data: {
       success: false,
       error:
         error instanceof Error ? error.message : t("errors.failedToUpdate"),
+    };
+  }
+}
+
+// Upload profile image action
+export async function uploadProfileImage(
+  formData: FormData
+): Promise<ActionResponse & { imageUrl?: string }> {
+  try {
+    const currentUser = await getCurrentUser();
+    const file = formData.get("image") as File | null;
+
+    if (!file) {
+      return {
+        success: false,
+        error: "No image file provided",
+      };
+    }
+
+    // Validate file type
+    if (!file.type.startsWith("image/")) {
+      return {
+        success: false,
+        error: "File must be an image",
+      };
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      return {
+        success: false,
+        error: "Image size must be less than 5MB",
+      };
+    }
+
+    // Get current user image to delete old one
+    const currentUserData = await db
+      .select({ image: user.image })
+      .from(user)
+      .where(eq(user.id, currentUser.id))
+      .limit(1);
+
+    const oldImageUrl = currentUserData[0]?.image;
+
+    // Upload to Cloudinary
+    const { uploadFile, deleteFileByPublicId } = await import(
+      "@/lib/cloudinary"
+    );
+    const imageUrl = await uploadFile(
+      file,
+      `profilePictures/${currentUser.id}`
+    );
+
+    // Delete old image from Cloudinary if it exists
+    if (oldImageUrl) {
+      try {
+        const { extractPublicId } = await import("@/lib/cloudinary");
+        const publicId = extractPublicId(oldImageUrl);
+        if (publicId) {
+          await deleteFileByPublicId(publicId);
+        }
+      } catch (deleteError) {
+        console.warn("Failed to delete old profile image:", deleteError);
+        // Continue even if deletion fails
+      }
+    }
+
+    return {
+      success: true,
+      imageUrl,
+    };
+  } catch (error) {
+    console.error("Error uploading profile image:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to upload image",
     };
   }
 }

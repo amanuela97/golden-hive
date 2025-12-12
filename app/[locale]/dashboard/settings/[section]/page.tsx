@@ -58,7 +58,7 @@ export default async function SettingsSectionPage({
     "policies",
     "profile",
     "security",
-    "shipping",
+    "shipping-billing",
     "vendor",
   ];
 

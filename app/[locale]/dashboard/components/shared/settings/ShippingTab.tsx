@@ -6,13 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Truck } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { CountrySelect } from "@/components/ui/country-select";
 import {
   saveShippingBillingInfo,
   getShippingBillingInfo,
@@ -173,24 +167,14 @@ export default function ShippingTab() {
 
             <div className="space-y-2">
               <Label htmlFor="billingCountry">Country / Region</Label>
-              <Select
+              <CountrySelect
+                id="billingCountry"
                 value={formData.billingCountry}
                 onValueChange={(value) =>
                   handleCountryChange("billingCountry", value)
                 }
-              >
-                <SelectTrigger id="billingCountry">
-                  <SelectValue placeholder="Select a country" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="us">United States</SelectItem>
-                  <SelectItem value="uk">United Kingdom</SelectItem>
-                  <SelectItem value="ca">Canada</SelectItem>
-                  <SelectItem value="au">Australia</SelectItem>
-                  <SelectItem value="np">Nepal</SelectItem>
-                  <SelectItem value="in">India</SelectItem>
-                </SelectContent>
-              </Select>
+                placeholder="Select a country"
+              />
             </div>
 
             <div className="space-y-2">
@@ -304,24 +288,14 @@ export default function ShippingTab() {
 
             <div className="space-y-2">
               <Label htmlFor="shippingCountry">Country / Region</Label>
-              <Select
+              <CountrySelect
+                id="shippingCountry"
                 value={formData.shippingCountry}
                 onValueChange={(value) =>
                   handleCountryChange("shippingCountry", value)
                 }
-              >
-                <SelectTrigger id="shippingCountry">
-                  <SelectValue placeholder="Select a country" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="us">United States</SelectItem>
-                  <SelectItem value="uk">United Kingdom</SelectItem>
-                  <SelectItem value="ca">Canada</SelectItem>
-                  <SelectItem value="au">Australia</SelectItem>
-                  <SelectItem value="np">Nepal</SelectItem>
-                  <SelectItem value="in">India</SelectItem>
-                </SelectContent>
-              </Select>
+                placeholder="Select a country"
+              />
             </div>
 
             <div className="space-y-2">
