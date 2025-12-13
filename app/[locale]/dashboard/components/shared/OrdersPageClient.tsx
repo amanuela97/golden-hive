@@ -58,7 +58,7 @@ export default function OrdersPageClient({
             : undefined,
         page,
         pageSize: 50,
-        sortBy: "orderNumber",
+        sortBy: "date",
         sortDirection: "desc",
       };
 

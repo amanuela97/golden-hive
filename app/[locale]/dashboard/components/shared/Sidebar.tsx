@@ -13,6 +13,7 @@ import {
   BarChart3,
   Settings,
   ChevronDown,
+  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -39,6 +40,12 @@ const allNavItems: NavItem[] = [
     href: "/dashboard/orders",
     icon: ShoppingCart,
     roles: ["admin", "seller", "customer"], // C, S, A
+  },
+  {
+    label: "Customers",
+    href: "/dashboard/customers",
+    icon: Users,
+    roles: ["admin", "seller"], // S, A
   },
   {
     label: "Products",

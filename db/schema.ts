@@ -442,30 +442,36 @@ export const inventoryLevels = pgTable("inventory_levels", {
 // ===================================
 // CUSTOMERS
 // ===================================
-export const customers = pgTable("customers", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  vendorId: uuid("vendor_id").references(() => vendor.id, {
-    onDelete: "set null",
-  }),
-  userId: text("user_id").references(() => user.id, { onDelete: "set null" }), // optional link to auth user
-  email: text("email").notNull(),
-  firstName: text("first_name"),
-  lastName: text("last_name"),
-  phone: text("phone"),
-  // Optional default address snapshot
-  addressLine1: text("address_line_1"),
-  addressLine2: text("address_line_2"),
-  city: text("city"),
-  region: text("region"),
-  postalCode: text("postal_code"),
-  country: text("country"),
-  notes: text("notes"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at")
-    .defaultNow()
-    .$onUpdate(() => new Date())
-    .notNull(),
-});
+export const customers = pgTable(
+  "customers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    vendorId: uuid("vendor_id").references(() => vendor.id, {
+      onDelete: "set null",
+    }),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }), // optional link to auth user
+    email: text("email").notNull(),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    phone: text("phone"),
+    // Optional default address snapshot
+    addressLine1: text("address_line_1"),
+    addressLine2: text("address_line_2"),
+    city: text("city"),
+    region: text("region"),
+    postalCode: text("postal_code"),
+    country: text("country"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => ({
+    vendorEmailUnique: unique().on(table.vendorId, table.email),
+  })
+);
 
 // ===================================
 // ORDERS

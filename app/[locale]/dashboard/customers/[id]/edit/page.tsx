@@ -5,11 +5,18 @@ import { db } from "@/db";
 import { userRoles, roles, vendor } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
-import { DashboardWrapper } from "../components/shared/DashboardWrapper";
-import OrdersPageClient from "../components/shared/OrdersPageClient";
-import { listOrders } from "@/app/[locale]/actions/orders";
+import { getCustomer, getVendorsForFilter } from "@/app/[locale]/actions/customers";
+import { DashboardWrapper } from "@/app/[locale]/dashboard/components/shared/DashboardWrapper";
+import { CustomerForm } from "@/app/[locale]/dashboard/components/shared/CustomerForm";
+import { notFound } from "next/navigation";
 
-export default async function OrdersPage() {
+interface EditCustomerPageProps {
+  params: Promise<{ id: string }>;
+}
+
+export default async function EditCustomerPage({
+  params,
+}: EditCustomerPageProps) {
   const locale = await getLocale();
   const session = await auth.api.getSession({
     headers: await headers(),
@@ -38,7 +45,12 @@ export default async function OrdersPage() {
     | "seller"
     | "customer";
 
-  // Check if user has vendor (for sellers) or is admin
+  // Only admin and seller can access customers
+  if (roleName !== "admin" && roleName !== "seller") {
+    redirect({ href: "/dashboard", locale });
+  }
+
+  // Check if vendor exists (only required for sellers, not admins)
   if (roleName !== "admin") {
     const vendorResult = await db
       .select({ id: vendor.id })
@@ -48,35 +60,25 @@ export default async function OrdersPage() {
 
     if (vendorResult.length === 0) {
       // User doesn't have vendor setup, but we'll still show the page
-      // They just won't see any orders until they set up a vendor
+      // They just won't see any customers until they set up a vendor
     }
   }
 
-  // Fetch initial orders - sorted by latest (date, descending)
-  const initialResult = await listOrders({
-    page: 1,
-    pageSize: 50,
-    sortBy: "date",
-    sortDirection: "desc",
-  });
+  const { id } = await params;
+  const customerResult = await getCustomer(id);
+  const vendorsResult = await getVendorsForFilter();
+  const isAdmin = vendorsResult.success;
 
-  if (!initialResult.success) {
-    return (
-      <DashboardWrapper userRole={roleName}>
-        <div className="p-6">
-          <div className="text-red-600">
-            {initialResult.error || "Failed to load orders"}
-          </div>
-        </div>
-      </DashboardWrapper>
-    );
+  if (!customerResult.success || !customerResult.data) {
+    notFound();
   }
 
   return (
     <DashboardWrapper userRole={roleName}>
-      <OrdersPageClient
-        initialData={initialResult.data || []}
-        initialTotalCount={initialResult.totalCount || 0}
+      <CustomerForm
+        initialData={customerResult.data}
+        isEdit={true}
+        isAdmin={isAdmin}
       />
     </DashboardWrapper>
   );

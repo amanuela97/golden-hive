@@ -1,276 +1,423 @@
-Below is instruction on how to improve the CreateOrderForm, the word vendor is interchangeable with seller in this context and make sure to use server actions always instead of api route:
-
-> **When the seller/admin manually types customer info on `/orders/new` and the email already exists in the customers table, what should happen?**
-
-This updated version is designed so you can _copy/paste it directly into an AI agent_, fully self-contained.
+Below is a **COMPLETE** Customer Management Page Specification — including **explicit handling** of the case where **multiple vendors have customers with the same email**.
 
 ---
 
-# ✅ **FINAL UPDATED SPECIFICATION FOR `/orders/new` AND CUSTOMER AUTO-FILL LOGIC**
+# ✅ **CUSTOMERS MANAGEMENT SYSTEM — FULL SPEC (WITH MULTI-VENDOR EMAIL HANDLING)**
 
-_(Includes new edge case handling)_
+This specification defines everything required to build a **Shopify-like Customer Management Page** for your multi-vendor marketplace, including:
 
----
-
-# 🎯 **Goal**
-
-Allow admins and vendors to easily create orders using:
-
-1. **Auto-filled customer information** from their own saved profile
-2. **OR manually typed customer info** for creating an order on behalf of someone else
-
-The system must:
-
-- Respect vendor permissions
-- Correctly create or reuse customers
-- Avoid duplicate customer records
-- Handle the edge case where manually entered email already exists in the database
-- Auto-fill addresses using the `user` table and `shipping_billing_info`
+- Vendor vs Admin permissions
+- How to store customers when multiple vendors share the same email
+- Full list, search, sort, pagination
+- Customer detail page + order history
+- Creating & editing customers
+- Backend API structure
+- Preventing vendor data conflicts
+- Future-proofing
 
 ---
 
-# 🧱 **1. Customer Auto-Fill Behavior on `/orders/new`**
+# 1. **SCHEMA RECAP & REQUIRED BEHAVIOR**
 
-When loading the order creation page, the system checks:
-
-```sql
-SELECT * FROM customers WHERE userId = currentUser.id LIMIT 1;
-```
-
-### **Case A — Customer exists for this user**
-
-→ Auto-fill the form with their existing customer record.
-
-### **Case B — No customer exists for this user**
-
-→ Create a customer using `users` table + `shipping_billing_info`:
-
-- email
-- first name
-- last name
-- phone
-- shipping/billing fields
-
-→ Insert into `customers`
-→ Auto-fill using this new customer.
-
----
-
-# 🧩 **2. UI Choice on `/orders/new`**
-
-User sees:
-
-### **Customer Source Selector**
+Your `customers` table includes fields:
 
 ```
-(o) Use my saved customer info
-( ) Enter customer info manually
+id (uuid)
+vendorId (uuid, nullable) — identifies which vendor owns this customer
+userId (text, nullable) — links the customer to a user account (for autofill)
+email (text)
+firstName (text)
+lastName (text)
+phone (text)
+address fields…
+notes (text)
+createdAt
+updatedAt
 ```
 
-- Selecting **Use my info** → auto-fill with saved profile
-- Selecting **Manual entry** → clears fields, user types info manually
-
----
-
-# 🔥 **3. CRITICAL EDGE CASE (NEW)**
-
-### ❓ _What if the seller/admin manually enters customer info and the email already exists?_
-
-This is the correct, Shopify-like handling:
-
----
-
-## 🟩 Step 1 — When saving the order, check if the email exists:
-
-```sql
-SELECT * FROM customers WHERE email = inputCustomerEmail LIMIT 1;
-```
-
-There are **three possible outcomes**:
-
----
-
-## **Outcome 1: Email exists AND belongs to _another_ customer**
-
-(Meaning: user typed info for someone who is already a customer)
-
-### → System should:
-
-- **NOT create a new customer**
-- **Use the existing customer record**
-- **Ignore or overwrite the manually typed name/address**? Decision below 👇
-- Link the order to that existing customer's ID
-
-### How to handle name/address mismatch?
-
-**BEST PRACTICE (Shopify-style)**
-Use the manually typed name/address **only inside the order snapshot**, but **do not update the existing customer record**.
-
-### Example:
-
-A vendor types:
+Your `orders` table references:
 
 ```
-John Doe
-john@example.com
-123 Main Street
+customerId → customers.id
 ```
 
-But `customers` table already has:
+### 🔥 **IMPORTANT Multi-Vendor Rule**
+
+Two different vendors **can** have customers with the same email.
+
+But each vendor must have **their own separate customer record** so they can edit customer info without affecting other vendors.
+
+### Add uniqueness constraint:
 
 ```
-Customer ID 50
-Email: john@example.com
-Name: Jonathan Doe
-Address: 88 Sunset Blvd
+UNIQUE (vendorId, email)
 ```
-
-**System behavior:**
-
-- Order → uses the _typed_ values (snapshot)
-- Customer record → remains unchanged
-- Order references `customerId = 50`
-
-This avoids corrupting or overwriting real customer data.
-
----
-
-## **Outcome 2: Email exists AND belongs to the same user (self-order)**
-
-If admin/vendor manually types their own email again:
-
-### → Use the existing customer record
-
-### → Order snapshot fields use the typed values (if any difference)
-
-No customer record change.
-
----
-
-## **Outcome 3: Email does NOT exist in the customers table**
-
-### → Create a new customer record using the manually entered fields
-
-### → Link the order to this new customer
-
----
-
-# 🟦 Summary of Edge Case Logic
-
-| Condition                               | What System Should Do                                                                          |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Email exists in customers table         | Use existing customerId, DO NOT update customer record, DO save typed values in order snapshot |
-| Email exists and matches current userId | Use existing customerId, treat as self-order                                                   |
-| Email does not exist                    | Create new customer record from typed fields                                                   |
 
 This ensures:
 
-- No duplicates
-- Customer integrity is preserved
-- Sellers can create orders on behalf of existing customers
-- Orders always show correct data even if the customer record isn't updated
+- Vendor A’s customer `john@example.com`
+- Vendor B’s customer `john@example.com`
+- … are separate records with independent data.
+
+Admin customers (vendorId = NULL) may also exist.
 
 ---
 
-# 🔐 **4. Vendor vs Admin Permissions**
+# 2. **ROLE PERMISSIONS**
 
-### Vendor:
+### 🟩 **Admin**:
 
-- Can only select products where:
+- Can view **all customers** in marketplace
+- Can filter by vendor
+- Can edit any customer
+- Can view all orders made by that customer (across all vendors)
 
-  ```
-  listing.vendorId = currentUser.vendorId
-  ```
+### 🟦 **Vendor/Seller**:
 
-- Has “Use My Info” option
-- Can manually type info to create an order for _another_ customer
-
-### Admin:
-
-- Can use _any_ product
-- Can use their own auto-fill
-- Can manually enter for any customer
-- Auto-matching customer emails works globally across marketplace
+- Can view **only customers where `vendorId = currentVendorId`**
+- Cannot view other vendors' customers (privacy/security)
+- Can edit only their own customers
+- Customer order history is limited to orders attached to their own vendor products
+- Cannot modify global/admin-level customers
 
 ---
 
-# 🏗️ **5. Customer Info Saved in Order (Snapshot Fields)**
+# 3. **CUSTOMER PAGE URLs**
 
-Orders always save a copy of the customer info at the time of purchase:
-
-- customerEmail
-- customerFirstName
-- customerLastName
-- shipping name/address fields
-- billing name/address fields
-
-Regardless of whether customer exists or not.
-
-This allows order history to remain accurate even if a customer later changes their profile.
+| Page            | URL                            |
+| --------------- | ------------------------------ |
+| Customer List   | `/customers`                   |
+| New Customer    | `/customers/new`               |
+| Customer Detail | `/customers/[customerId]`      |
+| Edit Customer   | `/customers/[customerId]/edit` |
 
 ---
 
-# 🔄 **6. Full Customer Selection Logic (Copy-Paste for Agent)**
+# 4. **CUSTOMERS INDEX PAGE (`/customers`)**
+
+## 4.1 Header
 
 ```
-CUSTOMER SELECTION WORKFLOW
---------------------------------------------
+Title: Customers
+Button: Add Customer → /customers/new
+```
 
-When user visits /orders/new:
-  1. Show toggle:
-       (o) Use my saved customer info
-       ( ) Enter customer info manually
+**Admin sees:**
 
-  2. If "Use my saved customer info":
-        - Check customers table WHERE customers.userId = currentUser.id
-        - If exists → load customer into form
-        - If not exists:
-             - Create customer from user table + shipping_billing_info
-             - Load into form
+- Vendor filter dropdown (“All vendors”, “Vendor A”, “Vendor B”, …)
 
-  3. If "Enter customer info manually":
-        - Show empty fields
-        - User fills:
-            name, email, shipping, billing, etc.
+**Vendors DO NOT see this filter.**
 
-        On submit:
-            - Check customers.email = typedEmail
+---
 
-            CASE A: email exists → use existing customerId
-                    - Snapshot order data uses typed values
-                    - Do NOT update customer record
+## 4.2 Filters Section
 
-            CASE B: email exists and userId == currentUser.id
-                    - Same as A (self-order case)
-                    - Do NOT update customer record
+- **Search bar** → filters:
+  - firstName
+  - lastName
+  - email
+  - phone
 
-            CASE C: email does not exist → create new customer row
-                    - Insert manually typed values
-                    - Link order to this new customerId
+- **Sort dropdown**:
+  - Newest customers
+  - Oldest customers
+  - Highest total spend
+  - Most orders
+  - Name A–Z
+  - Name Z–A
+
+- **Date range filter (optional)**
+
+---
+
+## 4.3 Customers Table Columns
+
+| Column      | Description                                            |
+| ----------- | ------------------------------------------------------ |
+| Customer    | Name, email, phone                                     |
+| Total Spent | SUM(orders.totalAmount) restricted to vendor if vendor |
+| Orders      | COUNT(orders.id)                                       |
+| Last Order  | MAX(orders.createdAt) (formatDistanceToNow)            |
+| Created At  | Customer created date                                  |
+
+### Backend SQL logic (grouping + aggregates):
+
+```
+SELECT customers.*,
+       COUNT(orders.id) AS ordersCount,
+       COALESCE(SUM(orders.totalAmount), 0) AS totalSpent,
+       MAX(orders.createdAt) AS lastOrderDate
+FROM customers
+LEFT JOIN orders ON orders.customerId = customers.id
+WHERE
+  IF vendor → customers.vendorId = currentVendorId
+  IF admin → vendorId matches filter or all
+  AND matches search
+GROUP BY customers.id
+ORDER BY selectedSort
+LIMIT pageSize OFFSET page * pageSize
 ```
 
 ---
 
-# 📦 **7. Example Scenario Walkthroughs**
+# 5. **NEW CUSTOMER CREATION (`/customers/new`)**
 
-## Scenario A – Vendor creating order for a new buyer
+Form fields:
 
-- Vendor selects “Manual entry”
-- Types email that does not exist
-- System creates new customer
-- Order saved normally
+- First Name
+- Last Name
+- Email (required)
+- Phone
+- Shipping address
+- Billing address
+- Notes
+- Admin only → Vendor selector (for which vendor the customer belongs to)
 
-## Scenario B – Vendor creating order for returning customer
+### Saving:
 
-- Vendor selects “Manual entry”
-- Types email that already exists in customers table
-- System:
-  - Uses existing customerID
-  - Saves order snapshot from typed info
-  - Does NOT modify the existing customer record
+- If vendor is creating:
 
-## Scenario C – Admin wants to order for themself
+  ```
+  vendorId = currentVendorId
+  ```
 
-- Admin selects “Use my info”
-- Auto-populated from stored customer entry
-- Order saved
+- If admin is creating:
+  - If vendor is selected → assign vendorId
+  - If no vendor is selected → vendorId = NULL (global customer)
+
+### Multi-vendor rule:
+
+Before creating a new customer:
+
+```
+Check if (email, vendorId) already exists:
+SELECT * FROM customers WHERE email = input.email AND vendorId = currentVendorId
+```
+
+- If exists → return error: "Customer with this email already exists for your store"
+- If not → create customer
+
+This prevents a vendor from accidentally making duplicates for themselves while still allowing other vendors to reuse the same email.
+
+---
+
+# 6. **CUSTOMER DETAIL PAGE (`/customers/[id]`)**
+
+Layout sections:
+
+## 6.1 Header
+
+- Customer Name
+- Email
+- Phone
+- Buttons:
+  - **Edit** (vendor/admin only if belongs to them)
+  - **Delete** (admin only)
+
+---
+
+## 6.2 Contact Information Section
+
+Displays:
+
+- Email
+- Phone
+- Shipping address
+- Billing address
+- Notes
+
+---
+
+## 6.3 Statistics
+
+Show computed metrics (scoped by vendor):
+
+- Total Spent
+- Total Orders
+- First Order Date
+- Last Order Date
+- Average Order Value
+
+---
+
+## 6.4 Order History Table
+
+Columns:
+
+- Order Number
+- Date
+- Payment Status
+- Fulfillment Status
+- Total Amount
+- Item Count
+
+**Vendor:** Only sees orders for that vendor's products.
+**Admin:** Sees all orders for that customer.
+
+---
+
+# 7. **EDIT CUSTOMER (`/customers/[id]/edit`)**
+
+Editable fields:
+
+- First Name
+- Last Name
+- Email
+- Phone
+- Addresses
+- Notes
+
+### Multi-vendor rule applies here too:
+
+Vendors can only edit customers:
+
+```
+WHERE customer.vendorId = currentVendorId
+```
+
+Admin can edit all customers.
+
+---
+
+# 8. **ORDER CREATION & CUSTOMER SELECTION INTEGRATION**
+
+On `/orders/new`, customer selection must ORIGINATE from the customers table.
+
+There are **two main methods**:
+
+---
+
+## 🟢 Method 1 — Search for existing customer
+
+You provide:
+
+- Search box → finds customers for this vendor (`vendorId = currentVendorId`)
+- Selecting a customer autofills their info into the order
+
+Vendor only sees their own customers.
+Admin sees all.
+
+---
+
+## 🔵 Method 2 — Manual entry (typed email)
+
+### MULTI-VENDOR EMAIL HANDLING (IMPORTANT)
+
+When admin or vendor types an email manually:
+
+```
+Check if customer exists with SAME email AND SAME vendorId:
+  SELECT * FROM customers WHERE email = input.email AND vendorId = currentVendorId LIMIT 1
+```
+
+### Case A — Found a match for same vendor
+
+→ Use that customerId
+→ Fill order snapshot with manually-typed info
+→ Do NOT update the customer record unless edited separately
+
+### Case B — Email exists under a DIFFERENT vendor
+
+Example:
+
+- Vendor A types email `john@example.com`
+- But Vendor B already has a customer with that email
+
+**Vendor A MUST NOT reuse Vendor B’s customer record.**
+
+Instead:
+✓ Create a _new customer_ for Vendor A with that email
+✓ Save order under Vendor A’s new customer
+✓ No conflict occurs
+
+This ensures complete vendor isolation.
+
+### Case C — No customer exists at all
+
+→ Create new customer for this vendor with the typed email
+→ Use them for the order
+
+---
+
+# 9. **CUSTOMER RECORD ISOLATION LOGIC**
+
+This MUST be enforced everywhere:
+
+```
+A vendor can only read, edit, or use customers WHERE customer.vendorId = currentVendorId.
+An admin can read/edit/use all customers.
+Duplicate emails across different vendors are allowed and safe.
+```
+
+---
+
+# 10. **BACKEND ENDPOINTS**
+
+Implement:
+
+### `GET /api/customers`
+
+- list view with search, sort, pagination
+
+### `POST /api/customers`
+
+- create customer with vendorId scoping
+- reject duplicates within same vendor
+
+### `GET /api/customers/[id]`
+
+- fetch detail page
+
+### `PUT /api/customers/[id]`
+
+- update customer (vendor or admin only)
+
+### `DELETE /api/customers/[id]`
+
+- admin only
+
+### Utility:
+
+`GET /api/customers/search?query=x`
+
+- for selecting customers inside `/orders/new`
+
+---
+
+# 11. **IMPLEMENTATION CHECKLIST**
+
+### Backend
+
+- [ ] Verify uniqueness constraint `(vendorId, email)`
+- [ ] Ensure vendor isolation
+- [ ] Implement filters + search + sorts
+- [ ] Implement aggregated computed fields
+
+### UI
+
+- [ ] Customers list page
+- [ ] Customer detail
+- [ ] Customer create
+- [ ] Customer edit
+- [ ] Customer delete (admin)
+
+### Orders Integration
+
+- [ ] Customer search modal
+- [ ] Manual entry with multi-vendor-safe logic
+- [ ] Auto-fill customer info
+- [ ] Automatically create customer on order creation if needed
+
+---
+
+# 🎉 DONE — THIS IS THE COMPLETE SPEC
+
+This version includes:
+
+✔ Full customers module
+✔ Multivendor email handling
+✔ Correct linking between orders & customers
+✔ Vendor isolation rules
+✔ Admin full access
+✔ Duplicate email safety logic
+✔ UI, backend, and data flow instructions

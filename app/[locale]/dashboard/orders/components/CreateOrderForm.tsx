@@ -53,6 +53,7 @@ import {
   getOrCreateCustomerForUser,
   type LineItemInput,
 } from "@/app/[locale]/actions/orders";
+import { searchCustomers } from "@/app/[locale]/actions/customers";
 import toast from "react-hot-toast";
 import Image from "next/image";
 
@@ -63,6 +64,7 @@ type LineItem = LineItemInput & {
   imageUrl?: string | null;
   variantImageUrl?: string | null;
   currency: string;
+  available: number; // Track available stock
 };
 
 type ProductVariant = {
@@ -93,9 +95,25 @@ export default function CreateOrderForm() {
   const [loadingCustomer, setLoadingCustomer] = useState(false);
 
   // Customer source selector
-  const [customerSource, setCustomerSource] = useState<"myInfo" | "manual">(
+  const [customerSource, setCustomerSource] = useState<"myInfo" | "search" | "manual">(
     "myInfo"
   );
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+
+  // Customer search modal
+  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState("");
+  const [customerSearchResults, setCustomerSearchResults] = useState<
+    Array<{
+      id: string;
+      email: string;
+      firstName: string | null;
+      lastName: string | null;
+      phone: string | null;
+    }>
+  >([]);
+  const [searchingCustomers, setSearchingCustomers] = useState(false);
+  const debouncedCustomerSearch = useDebounce(customerSearchQuery, 500);
 
   // Customer info
   const [customerEmail, setCustomerEmail] = useState("");
@@ -194,8 +212,12 @@ export default function CreateOrderForm() {
         } finally {
           setLoadingCustomer(false);
         }
+      } else if (customerSource === "search") {
+        // Search mode - open search modal
+        setCustomerSearchOpen(true);
       } else {
         // Manual entry - clear all fields
+        setSelectedCustomerId(null);
         setCustomerEmail("");
         setCustomerFirstName("");
         setCustomerLastName("");
@@ -221,6 +243,24 @@ export default function CreateOrderForm() {
 
     loadCustomerInfo();
   }, [customerSource]);
+
+  // Handle customer selection from search
+  const handleSelectCustomer = (customer: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    phone: string | null;
+  }) => {
+    setSelectedCustomerId(customer.id);
+    setCustomerEmail(customer.email);
+    setCustomerFirstName(customer.firstName || "");
+    setCustomerLastName(customer.lastName || "");
+    setCustomerPhone(customer.phone || "");
+    setCustomerSearchOpen(false);
+    setCustomerSearchQuery("");
+    setCustomerSearchResults([]);
+  };
 
   // Product picker modal
   const [productPickerOpen, setProductPickerOpen] = useState(false);
@@ -423,18 +463,29 @@ export default function CreateOrderForm() {
   // Add selected products to line items
   const handleAddSelectedProducts = () => {
     const variantsToAdd: ProductVariant[] = [];
+    const outOfStockVariants: ProductVariant[] = [];
 
     groupedProducts.forEach((product) => {
       product.variants.forEach((variant) => {
         if (selectedVariants.has(variant.variantId)) {
-          variantsToAdd.push(variant);
+          if (variant.available <= 0) {
+            outOfStockVariants.push(variant);
+          } else {
+            variantsToAdd.push(variant);
+          }
         }
       });
     });
 
-    if (variantsToAdd.length === 0) {
+    if (variantsToAdd.length === 0 && outOfStockVariants.length === 0) {
       toast.error("Please select at least one product");
       return;
+    }
+
+    if (outOfStockVariants.length > 0) {
+      toast.error(
+        `Cannot add ${outOfStockVariants.length} item(s) - out of stock`
+      );
     }
 
     variantsToAdd.forEach((variant) => {
@@ -459,6 +510,7 @@ export default function CreateOrderForm() {
           imageUrl: displayImageUrl,
           variantImageUrl: variant.variantImageUrl,
           currency: variant.currency,
+          available: variant.available,
         };
         setLineItems((prev) => [...prev, newItem]);
       }
@@ -466,7 +518,9 @@ export default function CreateOrderForm() {
 
     setProductPickerOpen(false);
     setSelectedVariants(new Set());
-    toast.success(`Added ${variantsToAdd.length} item(s)`);
+    if (variantsToAdd.length > 0) {
+      toast.success(`Added ${variantsToAdd.length} item(s)`);
+    }
   };
 
   // Remove line item
@@ -480,7 +534,14 @@ export default function CreateOrderForm() {
       prev.map((item) => {
         if (item.id === id) {
           const newQuantity = Math.max(1, item.quantity + delta);
-          return { ...item, quantity: newQuantity };
+          // Don't allow quantity to exceed available stock
+          const maxQuantity = Math.min(newQuantity, item.available);
+          if (maxQuantity < newQuantity) {
+            toast.error(
+              `Only ${item.available} available in stock for ${item.variantTitle}`
+            );
+          }
+          return { ...item, quantity: maxQuantity };
         }
         return item;
       })
@@ -490,9 +551,20 @@ export default function CreateOrderForm() {
   const handleSetQuantity = (id: string, value: string) => {
     const numValue = parseInt(value) || 1;
     setLineItems((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, quantity: Math.max(1, numValue) } : item
-      )
+      prev.map((item) => {
+        if (item.id === id) {
+          const requestedQuantity = Math.max(1, numValue);
+          // Don't allow quantity to exceed available stock
+          const maxQuantity = Math.min(requestedQuantity, item.available);
+          if (maxQuantity < requestedQuantity) {
+            toast.error(
+              `Only ${item.available} available in stock for ${item.variantTitle}`
+            );
+          }
+          return { ...item, quantity: maxQuantity };
+        }
+        return item;
+      })
     );
   };
 
@@ -510,9 +582,25 @@ export default function CreateOrderForm() {
       return;
     }
 
+    // Validate stock availability before submitting
+    const outOfStockItems = lineItems.filter(
+      (item) => item.available < item.quantity
+    );
+    if (outOfStockItems.length > 0) {
+      const itemNames = outOfStockItems
+        .map(
+          (item) =>
+            `${item.variantTitle}: ${item.available} available, ${item.quantity} requested`
+        )
+        .join(", ");
+      toast.error(`Insufficient stock: ${itemNames}`);
+      return;
+    }
+
     setLoading(true);
     try {
       const result = await createOrder({
+        customerId: selectedCustomerId || null,
         customerEmail: customerEmail.trim(),
         customerFirstName: customerFirstName.trim() || null,
         customerLastName: customerLastName.trim() || null,
@@ -605,7 +693,7 @@ export default function CreateOrderForm() {
               {/* Customer Source Selector */}
               <div className="mb-6 space-y-3">
                 <Label>Customer Source</Label>
-                <div className="flex gap-6">
+                <div className="flex flex-wrap gap-6">
                   <label className="flex items-center space-x-2 cursor-pointer">
                     <input
                       type="radio"
@@ -613,7 +701,7 @@ export default function CreateOrderForm() {
                       value="myInfo"
                       checked={customerSource === "myInfo"}
                       onChange={(e) =>
-                        setCustomerSource(e.target.value as "myInfo" | "manual")
+                        setCustomerSource(e.target.value as "myInfo" | "search" | "manual")
                       }
                       className="w-4 h-4"
                     />
@@ -623,10 +711,23 @@ export default function CreateOrderForm() {
                     <input
                       type="radio"
                       name="customerSource"
+                      value="search"
+                      checked={customerSource === "search"}
+                      onChange={(e) =>
+                        setCustomerSource(e.target.value as "myInfo" | "search" | "manual")
+                      }
+                      className="w-4 h-4"
+                    />
+                    <span className="text-sm">Search for existing customer</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="customerSource"
                       value="manual"
                       checked={customerSource === "manual"}
                       onChange={(e) =>
-                        setCustomerSource(e.target.value as "myInfo" | "manual")
+                        setCustomerSource(e.target.value as "myInfo" | "search" | "manual")
                       }
                       className="w-4 h-4"
                     />
@@ -635,6 +736,11 @@ export default function CreateOrderForm() {
                     </span>
                   </label>
                 </div>
+                {customerSource === "search" && selectedCustomerId && (
+                  <p className="text-sm text-green-600">
+                    Customer selected: {customerEmail}
+                  </p>
+                )}
                 {loadingCustomer && (
                   <p className="text-sm text-muted-foreground">
                     Loading customer info...
@@ -734,10 +840,25 @@ export default function CreateOrderForm() {
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-sm">
                             {item.variantTitle}
+                            {item.available < item.quantity && (
+                              <span className="ml-2 text-xs text-red-600 font-normal">
+                                (Insufficient stock: {item.available} available)
+                              </span>
+                            )}
+                            {item.available === 0 && (
+                              <span className="ml-2 text-xs text-red-600 font-normal">
+                                (Out of stock)
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-muted-foreground mt-1">
                             {item.currency}{" "}
                             {parseFloat(item.unitPrice).toFixed(2)}
+                            {item.available > 0 && (
+                              <span className="ml-2">
+                                • {item.available} in stock
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -767,6 +888,7 @@ export default function CreateOrderForm() {
                             size="icon"
                             className="h-8 w-8"
                             onClick={() => handleUpdateQuantity(item.id, 1)}
+                            disabled={item.quantity >= item.available}
                           >
                             <Plus className="h-4 w-4" />
                           </Button>
@@ -1263,14 +1385,15 @@ export default function CreateOrderForm() {
                               const isAdded = addedVariantIds.has(
                                 variant.variantId
                               );
-                              const isDisabled = isAdded;
+                              const isOutOfStock = variant.available <= 0;
+                              const isDisabled = isAdded || isOutOfStock;
 
                               return (
                                 <TableRow
                                   key={variant.variantId}
                                   className={`cursor-pointer hover:bg-muted/50 ${
                                     isDisabled ? "opacity-50" : ""
-                                  }`}
+                                  } ${isOutOfStock ? "bg-red-50" : ""}`}
                                   onClick={() =>
                                     !isDisabled &&
                                     toggleVariantSelection(variant.variantId)
@@ -1298,10 +1421,23 @@ export default function CreateOrderForm() {
                                           (Already added)
                                         </span>
                                       )}
+                                      {isOutOfStock && !isAdded && (
+                                        <span className="ml-2 text-xs text-red-600 font-medium">
+                                          (Out of stock)
+                                        </span>
+                                      )}
                                     </span>
                                   </TableCell>
                                   <TableCell className="text-right">
-                                    {variant.available}
+                                    <span
+                                      className={
+                                        variant.available <= 0
+                                          ? "text-red-600 font-medium"
+                                          : ""
+                                      }
+                                    >
+                                      {variant.available}
+                                    </span>
                                   </TableCell>
                                   <TableCell className="text-right">
                                     {variant.currency}{" "}
@@ -1384,6 +1520,93 @@ export default function CreateOrderForm() {
               disabled={selectedVariants.size === 0}
             >
               Add ({selectedVariants.size})
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Customer Search Modal */}
+      <Dialog open={customerSearchOpen} onOpenChange={setCustomerSearchOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Search Customer</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 flex flex-col space-y-4 overflow-hidden">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by name, email, or phone..."
+                value={customerSearchQuery}
+                onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {searchingCustomers ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  Searching...
+                </div>
+              ) : customerSearchResults.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  {customerSearchQuery.trim()
+                    ? "No customers found"
+                    : "Enter a search term to find customers"}
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Phone</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {customerSearchResults.map((customer) => (
+                      <TableRow
+                        key={customer.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => handleSelectCustomer(customer)}
+                      >
+                        <TableCell>
+                          {customer.firstName || customer.lastName
+                            ? `${customer.firstName || ""} ${customer.lastName || ""}`.trim()
+                            : "No name"}
+                        </TableCell>
+                        <TableCell>{customer.email}</TableCell>
+                        <TableCell>{customer.phone || "—"}</TableCell>
+                        <TableCell>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectCustomer(customer);
+                            }}
+                          >
+                            Select
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCustomerSearchOpen(false);
+                setCustomerSearchQuery("");
+                setCustomerSearchResults([]);
+              }}
+            >
+              Cancel
             </Button>
           </DialogFooter>
         </DialogContent>
