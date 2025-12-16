@@ -6,11 +6,23 @@ import {
   orders,
   orderItems,
   listing,
-  vendor,
+  store,
+  storeMembers,
   userRoles,
   roles,
 } from "@/db/schema";
-import { eq, and, sql, like, or, desc, asc, isNull, isNotNull, ne } from "drizzle-orm";
+import {
+  eq,
+  and,
+  sql,
+  like,
+  or,
+  desc,
+  asc,
+  isNull,
+  isNotNull,
+  ne,
+} from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
@@ -20,7 +32,7 @@ export type CustomerRow = {
   firstName: string | null;
   lastName: string | null;
   phone: string | null;
-  vendorId: string | null;
+  storeId: string | null;
   ordersCount: number;
   totalSpent: string;
   lastOrderDate: Date | null;
@@ -29,7 +41,7 @@ export type CustomerRow = {
 
 export type CustomerFilters = {
   search?: string;
-  vendorId?: string | null;
+  storeId?: string | null;
   sortBy?: string;
   sortDirection?: "asc" | "desc";
   page?: number;
@@ -37,10 +49,10 @@ export type CustomerFilters = {
 };
 
 /**
- * Get vendor ID and admin status for current user
+ * Get store ID and admin status for current user
  */
-async function getVendorIdForUser(): Promise<{
-  vendorId: string | null;
+async function getStoreIdForUser(): Promise<{
+  storeId: string | null;
   isAdmin: boolean;
   error?: string;
 }> {
@@ -49,7 +61,7 @@ async function getVendorIdForUser(): Promise<{
   });
 
   if (!session?.user?.id) {
-    return { vendorId: null, isAdmin: false, error: "Unauthorized" };
+    return { storeId: null, isAdmin: false, error: "Unauthorized" };
   }
 
   // Check if user is admin
@@ -64,76 +76,77 @@ async function getVendorIdForUser(): Promise<{
 
   const isAdmin = userRole.some((r) => r.roleName === "Admin");
 
-  // Get vendor ID if not admin
-  let vendorId: string | null = null;
+  // Get store ID if not admin
+  let storeId: string | null = null;
   if (!isAdmin) {
-    const vendorData = await db
-      .select({ id: vendor.id })
-      .from(vendor)
-      .where(eq(vendor.ownerUserId, session.user.id))
+    const storeData = await db
+      .select({ id: store.id })
+      .from(storeMembers)
+      .innerJoin(store, eq(storeMembers.storeId, store.id))
+      .where(eq(storeMembers.userId, session.user.id))
       .limit(1);
 
-    if (vendorData.length > 0) {
-      vendorId = vendorData[0].id;
+    if (storeData.length > 0) {
+      storeId = storeData[0].id;
     }
   }
 
-  return { vendorId, isAdmin };
+  return { storeId, isAdmin };
 }
 
 /**
  * List customers with search, filters, sort, and pagination
  */
-export async function listCustomers(
-  filters: CustomerFilters = {}
-): Promise<{
+export async function listCustomers(filters: CustomerFilters = {}): Promise<{
   success: boolean;
   data?: CustomerRow[];
   totalCount?: number;
   error?: string;
 }> {
   try {
-    const { vendorId, isAdmin } = await getVendorIdForUser();
+    const { storeId, isAdmin } = await getStoreIdForUser();
 
-    if (!isAdmin && !vendorId) {
-      return { success: false, error: "Vendor not found" };
+    if (!isAdmin && !storeId) {
+      return { success: false, error: "Store not found" };
     }
 
     const page = filters.page || 0;
     const pageSize = filters.pageSize || 20;
 
     // Build where conditions
-    const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof or> | ReturnType<typeof sql>> = [];
+    const conditions: Array<
+      ReturnType<typeof eq> | ReturnType<typeof or> | ReturnType<typeof sql>
+    > = [];
 
-    // Vendor isolation: vendors see customers who have orders with their products
-    // This includes customers created by admins (vendorId = null) who ordered from this vendor
-    if (!isAdmin && vendorId) {
+    // Store isolation: stores see customers who have orders with their products
+    // This includes customers created by admins (storeId = null) who ordered from this store
+    if (!isAdmin && storeId) {
       // Show customers who either:
-      // 1. Have vendorId = currentVendorId (explicitly assigned to this vendor)
-      // 2. Have orders with items from this vendor's listings (even if customer.vendorId is null or different)
+      // 1. Have storeId = currentStoreId (explicitly assigned to this store)
+      // 2. Have orders with items from this store's listings (even if customer.storeId is null or different)
       // We'll handle this in the join and where clause
       conditions.push(
         or(
-          eq(customers.vendorId, vendorId),
-          // Customer has orders with items from this vendor's listings
+          eq(customers.storeId, storeId),
+          // Customer has orders with items from this store's listings
           sql`EXISTS (
             SELECT 1 
             FROM ${orders} o
             INNER JOIN ${orderItems} oi ON o.id = oi.order_id
             INNER JOIN ${listing} l ON oi.listing_id = l.id
             WHERE o.customer_id = ${customers.id}
-            AND l.vendor_id = ${vendorId}
+            AND l.store_id = ${storeId}
           )`
         )
       );
     }
 
-    // Admin vendor filter
-    if (isAdmin && filters.vendorId) {
-      if (filters.vendorId === "null") {
-        conditions.push(isNull(customers.vendorId));
+    // Admin store filter
+    if (isAdmin && filters.storeId) {
+      if (filters.storeId === "null") {
+        conditions.push(isNull(customers.storeId));
       } else {
-        conditions.push(eq(customers.vendorId, filters.vendorId));
+        conditions.push(eq(customers.storeId, filters.storeId));
       }
     }
 
@@ -183,11 +196,11 @@ export async function listCustomers(
         orderBy = desc(customers.createdAt);
     }
 
-    // For vendors, we need to filter orders to only count orders with their products
+    // For stores, we need to filter orders to only count orders with their products
     // For admins, count all orders
     let ordersJoinCondition = eq(customers.id, orders.customerId);
-    if (!isAdmin && vendorId) {
-      // Only count orders that have items from this vendor's listings
+    if (!isAdmin && storeId) {
+      // Only count orders that have items from this store's listings
       ordersJoinCondition = and(
         eq(customers.id, orders.customerId),
         sql`EXISTS (
@@ -195,7 +208,7 @@ export async function listCustomers(
           FROM ${orderItems} oi
           INNER JOIN ${listing} l ON oi.listing_id = l.id
           WHERE oi.order_id = ${orders.id}
-          AND l.vendor_id = ${vendorId}
+          AND l.store_id = ${storeId}
         )`
       );
     }
@@ -212,7 +225,7 @@ export async function listCustomers(
     const totalCount = countResult[0]?.count || 0;
 
     // Get customers with aggregated data
-    // For vendors, only aggregate orders that have items from their listings
+    // For stores, only aggregate orders that have items from their listings
     const customersData = await db
       .select({
         id: customers.id,
@@ -220,7 +233,7 @@ export async function listCustomers(
         firstName: customers.firstName,
         lastName: customers.lastName,
         phone: customers.phone,
-        vendorId: customers.vendorId,
+        storeId: customers.storeId,
         createdAt: customers.createdAt,
         ordersCount: sql<number>`COUNT(DISTINCT ${orders.id})::int`,
         totalSpent: sql<string>`COALESCE(SUM(${orders.totalAmount}), 0)::text`,
@@ -242,7 +255,7 @@ export async function listCustomers(
         firstName: row.firstName,
         lastName: row.lastName,
         phone: row.phone,
-        vendorId: row.vendorId,
+        storeId: row.storeId,
         ordersCount: row.ordersCount || 0,
         totalSpent: row.totalSpent || "0",
         lastOrderDate: row.lastOrderDate || null,
@@ -254,7 +267,8 @@ export async function listCustomers(
     console.error("Error listing customers:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to list customers",
+      error:
+        error instanceof Error ? error.message : "Failed to list customers",
     };
   }
 }
@@ -262,9 +276,7 @@ export async function listCustomers(
 /**
  * Get customer by ID with detailed stats
  */
-export async function getCustomer(
-  customerId: string
-): Promise<{
+export async function getCustomer(customerId: string): Promise<{
   success: boolean;
   data?: {
     id: string;
@@ -279,7 +291,7 @@ export async function getCustomer(
     postalCode: string | null;
     country: string | null;
     notes: string | null;
-    vendorId: string | null;
+    storeId: string | null;
     createdAt: Date;
     updatedAt: Date;
     stats: {
@@ -293,7 +305,7 @@ export async function getCustomer(
   error?: string;
 }> {
   try {
-    const { vendorId, isAdmin } = await getVendorIdForUser();
+    const { storeId, isAdmin } = await getStoreIdForUser();
 
     // Get customer
     const customerData = await db
@@ -309,13 +321,13 @@ export async function getCustomer(
     const customer = customerData[0];
 
     // Check permissions
-    // Vendors can view customers who:
-    // 1. Have vendorId matching their vendorId, OR
-    // 2. Have orders with items from their listings (even if customer.vendorId is null)
-    if (!isAdmin && vendorId) {
-      if (customer.vendorId !== vendorId) {
-        // Check if customer has orders with items from this vendor's listings
-        const hasVendorOrders = await db
+    // Stores can view customers who:
+    // 1. Have storeId matching their storeId, OR
+    // 2. Have orders with items from their listings (even if customer.storeId is null)
+    if (!isAdmin && storeId) {
+      if (customer.storeId !== storeId) {
+        // Check if customer has orders with items from this store's listings
+        const hasStoreOrders = await db
           .select({ count: sql<number>`COUNT(*)::int` })
           .from(orders)
           .innerJoin(orderItems, eq(orders.id, orderItems.orderId))
@@ -323,12 +335,12 @@ export async function getCustomer(
           .where(
             and(
               eq(orders.customerId, customerId),
-              eq(listing.vendorId, vendorId)
+              eq(listing.storeId, storeId)
             )
           )
           .limit(1);
 
-        if (!hasVendorOrders[0] || hasVendorOrders[0].count === 0) {
+        if (!hasStoreOrders[0] || hasStoreOrders[0].count === 0) {
           return {
             success: false,
             error: "You don't have permission to view this customer",
@@ -373,7 +385,7 @@ export async function getCustomer(
         postalCode: customer.postalCode,
         country: customer.country,
         notes: customer.notes,
-        vendorId: customer.vendorId,
+        storeId: customer.storeId,
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
         stats: {
@@ -389,7 +401,8 @@ export async function getCustomer(
     console.error("Error fetching customer:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to fetch customer",
+      error:
+        error instanceof Error ? error.message : "Failed to fetch customer",
     };
   }
 }
@@ -409,37 +422,39 @@ export async function createCustomer(input: {
   postalCode?: string | null;
   country?: string | null;
   notes?: string | null;
-  vendorId?: string | null; // Admin can set this, vendors use their own
+  storeId?: string | null; // Admin can set this, stores use their own
 }): Promise<{
   success: boolean;
   data?: { id: string };
   error?: string;
 }> {
   try {
-    const { vendorId: currentVendorId, isAdmin } = await getVendorIdForUser();
+    const { storeId: currentStoreId, isAdmin } = await getStoreIdForUser();
 
-    if (!isAdmin && !currentVendorId) {
-      return { success: false, error: "Vendor not found" };
+    if (!isAdmin && !currentStoreId) {
+      return { success: false, error: "Store not found" };
     }
 
-    // Determine vendorId
-    let finalVendorId: string | null = null;
+    // Determine storeId
+    let finalStoreId: string | null = null;
     if (isAdmin) {
-      // Admin can set vendorId or leave it null (global customer)
-      finalVendorId = input.vendorId || null;
+      // Admin can set storeId or leave it null (global customer)
+      finalStoreId = input.storeId || null;
     } else {
-      // Vendor always uses their own vendorId
-      finalVendorId = currentVendorId;
+      // Store always uses their own storeId
+      finalStoreId = currentStoreId;
     }
 
-    // Check for duplicate email within same vendor
+    // Check for duplicate email within same store
     const existingCustomer = await db
       .select({ id: customers.id })
       .from(customers)
       .where(
         and(
           eq(customers.email, input.email),
-          finalVendorId ? eq(customers.vendorId, finalVendorId) : isNull(customers.vendorId)
+          finalStoreId
+            ? eq(customers.storeId, finalStoreId)
+            : isNull(customers.storeId)
         )
       )
       .limit(1);
@@ -466,7 +481,7 @@ export async function createCustomer(input: {
         postalCode: input.postalCode,
         country: input.country,
         notes: input.notes,
-        vendorId: finalVendorId,
+        storeId: finalStoreId,
       })
       .returning({ id: customers.id });
 
@@ -485,7 +500,8 @@ export async function createCustomer(input: {
     }
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to create customer",
+      error:
+        error instanceof Error ? error.message : "Failed to create customer",
     };
   }
 }
@@ -513,11 +529,11 @@ export async function updateCustomer(
   error?: string;
 }> {
   try {
-    const { vendorId, isAdmin } = await getVendorIdForUser();
+    const { storeId, isAdmin } = await getStoreIdForUser();
 
     // Get customer to check permissions
     const customerData = await db
-      .select({ vendorId: customers.vendorId })
+      .select({ storeId: customers.storeId })
       .from(customers)
       .where(eq(customers.id, customerId))
       .limit(1);
@@ -527,7 +543,7 @@ export async function updateCustomer(
     }
 
     // Check permissions
-    if (!isAdmin && customerData[0].vendorId !== vendorId) {
+    if (!isAdmin && customerData[0].storeId !== storeId) {
       return {
         success: false,
         error: "You don't have permission to edit this customer",
@@ -543,9 +559,9 @@ export async function updateCustomer(
           and(
             eq(customers.email, input.email),
             ne(customers.id, customerId),
-            customerData[0].vendorId
-              ? eq(customers.vendorId, customerData[0].vendorId)
-              : isNull(customers.vendorId)
+            customerData[0].storeId
+              ? eq(customers.storeId, customerData[0].storeId)
+              : isNull(customers.storeId)
           )
         )
         .limit(1);
@@ -578,7 +594,8 @@ export async function updateCustomer(
     }
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to update customer",
+      error:
+        error instanceof Error ? error.message : "Failed to update customer",
     };
   }
 }
@@ -586,14 +603,12 @@ export async function updateCustomer(
 /**
  * Delete customer (admin only)
  */
-export async function deleteCustomer(
-  customerId: string
-): Promise<{
+export async function deleteCustomer(customerId: string): Promise<{
   success: boolean;
   error?: string;
 }> {
   try {
-    const { isAdmin } = await getVendorIdForUser();
+    const { isAdmin } = await getStoreIdForUser();
 
     if (!isAdmin) {
       return { success: false, error: "Only admins can delete customers" };
@@ -618,7 +633,8 @@ export async function deleteCustomer(
     console.error("Error deleting customer:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to delete customer",
+      error:
+        error instanceof Error ? error.message : "Failed to delete customer",
     };
   }
 }
@@ -638,19 +654,19 @@ export async function searchCustomers(query: string): Promise<{
   error?: string;
 }> {
   try {
-    const { vendorId, isAdmin } = await getVendorIdForUser();
+    const { storeId, isAdmin } = await getStoreIdForUser();
 
-    if (!isAdmin && !vendorId) {
-      return { success: false, error: "Vendor not found" };
+    if (!isAdmin && !storeId) {
+      return { success: false, error: "Store not found" };
     }
 
     const searchTerm = `%${query}%`;
 
     const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof or>> = [];
 
-    // Vendor isolation
-    if (!isAdmin && vendorId) {
-      conditions.push(eq(customers.vendorId, vendorId));
+    // Store isolation
+    if (!isAdmin && storeId) {
+      conditions.push(eq(customers.storeId, storeId));
     }
 
     const searchCondition = or(
@@ -685,7 +701,8 @@ export async function searchCustomers(query: string): Promise<{
     console.error("Error searching customers:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to search customers",
+      error:
+        error instanceof Error ? error.message : "Failed to search customers",
     };
   }
 }
@@ -693,9 +710,7 @@ export async function searchCustomers(query: string): Promise<{
 /**
  * Get orders for a customer
  */
-export async function getCustomerOrders(
-  customerId: string
-): Promise<{
+export async function getCustomerOrders(customerId: string): Promise<{
   success: boolean;
   data?: Array<{
     id: string;
@@ -711,11 +726,11 @@ export async function getCustomerOrders(
   error?: string;
 }> {
   try {
-    const { vendorId, isAdmin } = await getVendorIdForUser();
+    const { storeId, isAdmin } = await getStoreIdForUser();
 
     // Get customer to check permissions
     const customerData = await db
-      .select({ vendorId: customers.vendorId })
+      .select({ storeId: customers.storeId })
       .from(customers)
       .where(eq(customers.id, customerId))
       .limit(1);
@@ -725,13 +740,13 @@ export async function getCustomerOrders(
     }
 
     // Check permissions
-    // Vendors can view customers who:
-    // 1. Have vendorId matching their vendorId, OR
-    // 2. Have orders with items from their listings (even if customer.vendorId is null)
-    if (!isAdmin && vendorId) {
-      if (customerData[0].vendorId !== vendorId) {
-        // Check if customer has orders with items from this vendor's listings
-        const hasVendorOrders = await db
+    // Stores can view customers who:
+    // 1. Have storeId matching their storeId, OR
+    // 2. Have orders with items from their listings (even if customer.storeId is null)
+    if (!isAdmin && storeId) {
+      if (customerData[0].storeId !== storeId) {
+        // Check if customer has orders with items from this store's listings
+        const hasStoreOrders = await db
           .select({ count: sql<number>`COUNT(*)::int` })
           .from(orders)
           .innerJoin(orderItems, eq(orders.id, orderItems.orderId))
@@ -739,12 +754,12 @@ export async function getCustomerOrders(
           .where(
             and(
               eq(orders.customerId, customerId),
-              eq(listing.vendorId, vendorId)
+              eq(listing.storeId, storeId)
             )
           )
           .limit(1);
 
-        if (!hasVendorOrders[0] || hasVendorOrders[0].count === 0) {
+        if (!hasStoreOrders[0] || hasStoreOrders[0].count === 0) {
           return {
             success: false,
             error: "You don't have permission to view this customer's orders",
@@ -790,44 +805,46 @@ export async function getCustomerOrders(
     console.error("Error fetching customer orders:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to fetch customer orders",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch customer orders",
     };
   }
 }
 
 /**
- * Get all vendors (for admin filter dropdown)
+ * Get all stores (for admin filter dropdown)
  */
-export async function getVendorsForFilter(): Promise<{
+export async function getStoresForFilter(): Promise<{
   success: boolean;
   data?: Array<{ id: string; name: string }>;
   error?: string;
 }> {
   try {
-    const { isAdmin } = await getVendorIdForUser();
+    const { isAdmin } = await getStoreIdForUser();
 
     if (!isAdmin) {
-      return { success: false, error: "Only admins can view vendors" };
+      return { success: false, error: "Only admins can view stores" };
     }
 
-    const vendors = await db
+    const stores = await db
       .select({
-        id: vendor.id,
-        name: vendor.storeName,
+        id: store.id,
+        name: store.storeName,
       })
-      .from(vendor)
-      .orderBy(asc(vendor.storeName));
+      .from(store)
+      .orderBy(asc(store.storeName));
 
     return {
       success: true,
-      data: vendors,
+      data: stores,
     };
   } catch (error) {
-    console.error("Error fetching vendors:", error);
+    console.error("Error fetching stores:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to fetch vendors",
+      error: error instanceof Error ? error.message : "Failed to fetch stores",
     };
   }
 }
-

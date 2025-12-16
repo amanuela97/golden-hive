@@ -28,15 +28,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowUpDown, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { formatDistanceToNow } from "date-fns";
 import toast from "react-hot-toast";
 import {
-  updatePaymentStatus,
-  updateFulfillmentStatus,
-  updateOrderStatus,
   deleteOrders,
+  archiveOrders,
+  unarchiveOrders,
 } from "@/app/[locale]/actions/orders";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -50,9 +49,9 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
     { id: "date", desc: true }, // Sort by date, latest first
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
 
   const paymentStatusOptions = useMemo(
     () => [
@@ -87,85 +86,7 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
     []
   );
 
-  const handlePaymentStatusChange = useCallback(
-    async (
-      orderId: string,
-      newStatus:
-        | "pending"
-        | "paid"
-        | "partially_refunded"
-        | "refunded"
-        | "failed"
-        | "void"
-    ) => {
-      setUpdatingStatus(orderId);
-      try {
-        const result = await updatePaymentStatus(orderId, newStatus);
-        if (result.success) {
-          toast.success("Payment status updated");
-          onDataChange();
-        } else {
-          toast.error(result.error || "Failed to update payment status");
-        }
-      } catch {
-        toast.error("Failed to update payment status");
-      } finally {
-        setUpdatingStatus(null);
-      }
-    },
-    [onDataChange]
-  );
 
-  const handleFulfillmentStatusChange = useCallback(
-    async (
-      orderId: string,
-      newStatus:
-        | "unfulfilled"
-        | "partial"
-        | "fulfilled"
-        | "canceled"
-        | "on_hold"
-    ) => {
-      setUpdatingStatus(orderId);
-      try {
-        const result = await updateFulfillmentStatus(orderId, newStatus);
-        if (result.success) {
-          toast.success("Fulfillment status updated");
-          onDataChange();
-        } else {
-          toast.error(result.error || "Failed to update fulfillment status");
-        }
-      } catch {
-        toast.error("Failed to update fulfillment status");
-      } finally {
-        setUpdatingStatus(null);
-      }
-    },
-    [onDataChange]
-  );
-
-  const handleOrderStatusChange = useCallback(
-    async (
-      orderId: string,
-      newStatus: "open" | "draft" | "archived" | "canceled"
-    ) => {
-      setUpdatingStatus(orderId);
-      try {
-        const result = await updateOrderStatus(orderId, newStatus);
-        if (result.success) {
-          toast.success("Order status updated");
-          onDataChange();
-        } else {
-          toast.error(result.error || "Failed to update order status");
-        }
-      } catch {
-        toast.error("Failed to update order status");
-      } finally {
-        setUpdatingStatus(null);
-      }
-    },
-    [onDataChange]
-  );
 
   const getPaymentStatusColor = (status: string) => {
     const colors: Record<string, string> = {
@@ -225,6 +146,21 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
         ),
         enableSorting: false,
         enableHiding: false,
+      },
+      {
+        id: "warning",
+        header: "",
+        cell: ({ row }) => {
+          const hasWarning = row.original.hasAddressWarning || row.original.hasRiskWarning;
+          if (!hasWarning) return null;
+          return (
+            <div className="flex items-center">
+              <AlertCircle className="h-4 w-4 text-yellow-500" title="Warning: Address or risk issue" />
+            </div>
+          );
+        },
+        enableSorting: false,
+        size: 40,
       },
       {
         accessorKey: "id",
@@ -328,38 +264,15 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
         ),
         cell: ({ row }) => {
           const status = row.original.paymentStatus;
-          const isUpdating = updatingStatus === row.original.id;
           return (
-            <Select
-              value={status}
-              onValueChange={(value) =>
-                handlePaymentStatusChange(
-                  row.original.id,
-                  value as typeof status
-                )
-              }
-              disabled={isUpdating}
+            <span
+              className={`px-2 py-1 text-xs rounded-full ${getPaymentStatusColor(
+                status
+              )}`}
             >
-              <SelectTrigger className="h-8 w-[140px]">
-                <SelectValue>
-                  <span
-                    className={`px-2 py-1 text-xs rounded-full ${getPaymentStatusColor(
-                      status
-                    )}`}
-                  >
-                    {paymentStatusOptions.find((opt) => opt.value === status)
-                      ?.label || status}
-                  </span>
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {paymentStatusOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              {paymentStatusOptions.find((opt) => opt.value === status)
+                ?.label || status}
+            </span>
           );
         },
       },
@@ -377,39 +290,15 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
         ),
         cell: ({ row }) => {
           const status = row.original.fulfillmentStatus;
-          const isUpdating = updatingStatus === row.original.id;
           return (
-            <Select
-              value={status}
-              onValueChange={(value) =>
-                handleFulfillmentStatusChange(
-                  row.original.id,
-                  value as typeof status
-                )
-              }
-              disabled={isUpdating}
+            <span
+              className={`px-2 py-1 text-xs rounded-full ${getFulfillmentStatusColor(
+                status
+              )}`}
             >
-              <SelectTrigger className="h-8 w-[140px]">
-                <SelectValue>
-                  <span
-                    className={`px-2 py-1 text-xs rounded-full ${getFulfillmentStatusColor(
-                      status
-                    )}`}
-                  >
-                    {fulfillmentStatusOptions.find(
-                      (opt) => opt.value === status
-                    )?.label || status}
-                  </span>
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {fulfillmentStatusOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              {fulfillmentStatusOptions.find((opt) => opt.value === status)
+                ?.label || status}
+            </span>
           );
         },
       },
@@ -427,35 +316,15 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
         ),
         cell: ({ row }) => {
           const status = row.original.status;
-          const isUpdating = updatingStatus === row.original.id;
           return (
-            <Select
-              value={status}
-              onValueChange={(value) =>
-                handleOrderStatusChange(row.original.id, value as typeof status)
-              }
-              disabled={isUpdating}
+            <span
+              className={`px-2 py-1 text-xs rounded-full ${getOrderStatusColor(
+                status
+              )}`}
             >
-              <SelectTrigger className="h-8 w-[140px]">
-                <SelectValue>
-                  <span
-                    className={`px-2 py-1 text-xs rounded-full ${getOrderStatusColor(
-                      status
-                    )}`}
-                  >
-                    {orderStatusOptions.find((opt) => opt.value === status)
-                      ?.label || status}
-                  </span>
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {orderStatusOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              {orderStatusOptions.find((opt) => opt.value === status)
+                ?.label || status}
+            </span>
           );
         },
       },
@@ -472,12 +341,17 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
           </Link>
         ),
       },
+      {
+        accessorKey: "shippingMethod",
+        header: "Shipping Method",
+        cell: ({ row }) => (
+          <span className="text-sm text-muted-foreground">
+            {row.original.shippingMethod || "—"}
+          </span>
+        ),
+      },
     ],
     [
-      updatingStatus,
-      handlePaymentStatusChange,
-      handleFulfillmentStatusChange,
-      handleOrderStatusChange,
       paymentStatusOptions,
       fulfillmentStatusOptions,
       orderStatusOptions,
@@ -543,6 +417,145 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
   }, [table, rowSelection, onDataChange]);
 
   const selectedCount = Object.keys(rowSelection).length;
+  const selectedRows = table.getRowModel().rows.filter((row) =>
+    rowSelection[row.id]
+  );
+  const selectedOrders = selectedRows.map((row) => row.original);
+
+  // Determine available bulk actions based on selected orders
+  const getAvailableBulkActions = useCallback(() => {
+    if (selectedOrders.length === 0) return [];
+
+    const actions: Array<{
+      label: string;
+      action: () => void;
+      variant: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
+      condition: boolean;
+    }> = [];
+
+    // Check if all selected orders are unpaid and not archived
+    const allUnpaidNotArchived = selectedOrders.every(
+      (order) =>
+        order.paymentStatus === "pending" &&
+        !order.archivedAt &&
+        order.status !== "archived"
+    );
+    if (allUnpaidNotArchived) {
+      actions.push({
+        label: "Cancel orders",
+        action: () => {
+          toast.info("Bulk cancel not yet implemented");
+        },
+        variant: "outline",
+        condition: true,
+      });
+    }
+
+    // Check if all selected orders are paid and unfulfilled
+    const allPaidUnfulfilled = selectedOrders.every(
+      (order) =>
+        (order.paymentStatus === "paid" ||
+          order.paymentStatus === "partially_refunded") &&
+        (order.fulfillmentStatus === "unfulfilled" ||
+          order.fulfillmentStatus === "partial")
+    );
+    if (allPaidUnfulfilled) {
+      actions.push({
+        label: "Mark as fulfilled",
+        action: () => {
+          toast.info("Bulk fulfill not yet implemented");
+        },
+        variant: "default",
+        condition: true,
+      });
+    }
+
+    // Check if all selected orders are not archived
+    const allNotArchived = selectedOrders.every(
+      (order) => !order.archivedAt && order.status !== "archived"
+    );
+    if (allNotArchived) {
+      actions.push({
+        label: "Archive",
+        action: async () => {
+          setBulkActionLoading(true);
+          try {
+            const orderIds = selectedOrders.map((o) => o.id);
+            const result = await archiveOrders(orderIds);
+            if (result.success) {
+              toast.success(
+                `${result.archivedCount || orderIds.length} order${
+                  (result.archivedCount || orderIds.length) > 1 ? "s" : ""
+                } archived`
+              );
+              setRowSelection({});
+              onDataChange();
+            } else {
+              toast.error(result.error || "Failed to archive orders");
+            }
+          } catch (error) {
+            toast.error("Failed to archive orders");
+          } finally {
+            setBulkActionLoading(false);
+          }
+        },
+        variant: "outline",
+        condition: true,
+      });
+    }
+
+    // Check if all selected orders are archived
+    const allArchived = selectedOrders.every(
+      (order) => order.archivedAt || order.status === "archived"
+    );
+    if (allArchived) {
+      actions.push({
+        label: "Unarchive",
+        action: async () => {
+          setBulkActionLoading(true);
+          try {
+            const orderIds = selectedOrders.map((o) => o.id);
+            const result = await unarchiveOrders(orderIds);
+            if (result.success) {
+              toast.success(
+                `${result.unarchivedCount || orderIds.length} order${
+                  (result.unarchivedCount || orderIds.length) > 1 ? "s" : ""
+                } unarchived`
+              );
+              setRowSelection({});
+              onDataChange();
+            } else {
+              toast.error(result.error || "Failed to unarchive orders");
+            }
+          } catch (error) {
+            toast.error("Failed to unarchive orders");
+          } finally {
+            setBulkActionLoading(false);
+          }
+        },
+        variant: "outline",
+        condition: true,
+      });
+    }
+
+    // Delete is always available (with confirmation)
+    actions.push({
+      label: bulkDeleteConfirm ? "Confirm Delete" : "Delete",
+      action: () => {
+        if (bulkDeleteConfirm) {
+          handleBulkDelete();
+        } else {
+          setBulkDeleteConfirm(true);
+        }
+      },
+      variant: "destructive",
+      condition: true,
+    });
+
+    return actions;
+  }, [selectedOrders, bulkDeleteConfirm, table, onDataChange, handleBulkDelete]);
+
+  const availableActions = getAvailableBulkActions();
 
   return (
     <div className="space-y-4">
@@ -552,7 +565,18 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
           <span className="text-sm font-medium text-orange-900">
             {selectedCount} order{selectedCount > 1 ? "s" : ""} selected
           </span>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            {availableActions.map((action, index) => (
+              <Button
+                key={index}
+                variant={action.variant}
+                size="sm"
+                onClick={action.action}
+                disabled={bulkActionLoading || deleting}
+              >
+                {action.label}
+              </Button>
+            ))}
             <Button
               variant="outline"
               size="sm"
@@ -560,27 +584,9 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
                 setRowSelection({});
                 setBulkDeleteConfirm(false);
               }}
-              disabled={deleting}
+              disabled={bulkActionLoading || deleting}
             >
               Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                if (bulkDeleteConfirm) {
-                  handleBulkDelete();
-                } else {
-                  setBulkDeleteConfirm(true);
-                }
-              }}
-              disabled={deleting}
-            >
-              {deleting
-                ? "Deleting..."
-                : bulkDeleteConfirm
-                  ? "Confirm Delete"
-                  : "Delete"}
             </Button>
           </div>
         </div>

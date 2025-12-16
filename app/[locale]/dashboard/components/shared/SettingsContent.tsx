@@ -8,7 +8,7 @@ import ProfileTab from "./settings/ProfileTab";
 import SecurityTab from "./settings/SecurityTab";
 import PaymentsTab from "./settings/PaymentsTab";
 import ShippingTab from "./settings/ShippingTab";
-import VendorTab from "./settings/VendorTab";
+import StoreTab from "./settings/StoreTab";
 import UserManagement from "../admin/UserManagement";
 import RoleManagement from "../admin/RoleManagement";
 import PermissionsManagement from "../admin/PermissionsManagement";
@@ -21,6 +21,7 @@ import { Link } from "@/i18n/navigation";
 import { CategoryRules } from "@/db/schema";
 
 type SettingsSection =
+  | "store"
   | "users"
   | "roles"
   | "permissions"
@@ -34,8 +35,7 @@ type SettingsSection =
   | "policies"
   | "profile"
   | "security"
-  | "shipping-billing"
-  | "vendor";
+  | "shipping-billing";
 
 interface SettingsContentProps {
   section: SettingsSection;
@@ -119,8 +119,8 @@ export default function SettingsContent({
       return <PaymentsTab />;
     case "shipping-billing":
       return <ShippingTab />;
-    case "vendor":
-      return <VendorTab />;
+    case "store":
+      return <StoreTab />;
     case "translations":
       return <TranslationsPage />;
     case "categories":

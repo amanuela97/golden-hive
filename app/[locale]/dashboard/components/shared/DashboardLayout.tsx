@@ -52,7 +52,7 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
       <Sidebar
         userRole={userRole}
         onSettingsClick={() => {
-          router.push("/dashboard/settings/profile");
+          router.push("/dashboard/settings/store");
         }}
       />
       <main className="pl-56 pt-14">

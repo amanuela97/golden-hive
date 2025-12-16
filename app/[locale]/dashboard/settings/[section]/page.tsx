@@ -8,6 +8,23 @@ import { getLocale } from "next-intl/server";
 import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
 import SettingsContent from "../../components/shared/SettingsContent";
 
+type SettingsSection =
+  | "store"
+  | "users"
+  | "roles"
+  | "permissions"
+  | "account"
+  | "contents"
+  | "translations"
+  | "categories"
+  | "feedbacks"
+  | "communications"
+  | "payments"
+  | "policies"
+  | "profile"
+  | "security"
+  | "shipping-billing";
+
 export default async function SettingsSectionPage({
   params,
 }: {
@@ -59,11 +76,11 @@ export default async function SettingsSectionPage({
     "profile",
     "security",
     "shipping-billing",
-    "vendor",
+    "store",
   ];
 
   if (!validSections.includes(section)) {
-    redirect({ href: "/dashboard/settings/profile", locale });
+    redirect({ href: "/dashboard/settings/store", locale });
   }
 
   // Role-based access control
@@ -78,18 +95,20 @@ export default async function SettingsSectionPage({
     "communications",
   ];
   if (adminOnlySections.includes(section) && roleName !== "admin") {
-    redirect({ href: "/dashboard/settings/profile", locale });
+    redirect({ href: "/dashboard/settings/store", locale });
   }
 
   const sellerOnlySections: string[] = [];
   if (sellerOnlySections.includes(section) && roleName !== "seller") {
-    redirect({ href: "/dashboard/settings/profile", locale });
+    redirect({ href: "/dashboard/settings/store", locale });
   }
 
   return (
     <DashboardWrapper userRole={roleName}>
-      <SettingsContent section={section as any} userRole={roleName} />
+      <SettingsContent
+        section={section as SettingsSection}
+        userRole={roleName}
+      />
     </DashboardWrapper>
   );
 }
-

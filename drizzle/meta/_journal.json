@@ -127,6 +127,76 @@
       "when": 1765562451977,
       "tag": "0017_perpetual_northstar",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1765628482308,
+      "tag": "0018_luxuriant_oracle",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1765801250738,
+      "tag": "0019_typical_mastermind",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1765810207622,
+      "tag": "0020_marvelous_nightshade",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1765889308149,
+      "tag": "0021_safe_iron_lad",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1765889682668,
+      "tag": "0022_past_vampiro",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1765895941660,
+      "tag": "0023_complex_hairball",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1765898332803,
+      "tag": "0024_modern_silk_fever",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1765899620610,
+      "tag": "0025_safe_yellowjacket",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1765916468015,
+      "tag": "0026_powerful_firelord",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1765922614486,
+      "tag": "0027_elite_alex_wilder",
+      "breakpoints": true
     }
   ]
 }

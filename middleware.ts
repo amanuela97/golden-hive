@@ -144,6 +144,22 @@ export async function middleware(req: NextRequest) {
         .limit(1);
 
       if (userRole.length > 0) {
+        const roleName = userRole[0].roleName.toLowerCase();
+        const needsStoreSetup = roleName === "admin" || roleName === "seller";
+
+        if (needsStoreSetup) {
+          // Check if user has a store
+          const { userHasStore } = await import("@/app/[locale]/actions/store-members");
+          const { hasStore } = await userHasStore();
+          
+          if (!hasStore) {
+            const storeSetupUrl = new URL(`/${locale}/store-setup`, req.url);
+            const response = NextResponse.redirect(storeSetupUrl);
+            response.headers.set("x-invoke-path", `/${locale}/store-setup`);
+            return response;
+          }
+        }
+
         const dashboardUrl = new URL(`/${locale}/dashboard`, req.url);
         const response = NextResponse.redirect(dashboardUrl);
         response.headers.set("x-invoke-path", `/${locale}/dashboard`);

@@ -31,7 +31,7 @@ interface CustomerData {
   postalCode: string | null;
   country: string | null;
   notes: string | null;
-  vendorId: string | null;
+  storeId: string | null;
   createdAt: Date;
   updatedAt: Date;
   stats: {

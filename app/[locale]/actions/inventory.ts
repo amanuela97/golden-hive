@@ -2,7 +2,7 @@
 
 import { ActionResponse } from "@/lib/types";
 import { db } from "@/db";
-import { inventoryLocations, vendor } from "@/db/schema";
+import { inventoryLocations, store, storeMembers, userRoles, roles } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -18,13 +18,15 @@ export interface InventoryLocationData {
 }
 
 /**
- * Get active inventory locations for a vendor
+ * Get active inventory locations for a store
  * Used for product form location selection
- * @param producerId - Optional producer ID. If provided, fetches locations for that producer's vendor.
- *                     If not provided, fetches locations for the current user's vendor.
+ * @param producerId - Optional producer ID. If provided, fetches locations for that producer's store.
+ *                     If not provided, fetches locations for the current user's store.
+ * @param storeId - Optional store ID. If provided, uses this directly (preferred over producerId lookup).
  */
 export async function getInventoryLocations(
-  producerId?: string
+  producerId?: string,
+  storeId?: string
 ): Promise<
   ActionResponse & {
     result?: Array<{
@@ -47,43 +49,81 @@ export async function getInventoryLocations(
       };
     }
 
-    let vendorId: string;
+    // Check if user is admin
+    const userRole = await db
+      .select({
+        roleName: roles.name,
+      })
+      .from(userRoles)
+      .innerJoin(roles, eq(userRoles.roleId, roles.id))
+      .where(eq(userRoles.userId, session.user.id))
+      .limit(1);
 
-    // If producerId is provided, get vendor for that producer (for admin editing seller's products)
-    if (producerId) {
-      const vendorResult = await db
-        .select({ id: vendor.id })
-        .from(vendor)
-        .where(eq(vendor.ownerUserId, producerId))
+    const isAdmin =
+      userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
+
+    let finalStoreId: string | null = null;
+
+    // If storeId is provided directly, use it (preferred method)
+    if (storeId) {
+      // Verify the store exists
+      const storeCheck = await db
+        .select({ id: store.id })
+        .from(store)
+        .where(eq(store.id, storeId))
+        .limit(1);
+      
+      if (storeCheck.length > 0) {
+        finalStoreId = storeId;
+      }
+    } else if (producerId) {
+      // If producerId is provided, get store for that producer (for admin editing seller's products)
+      const storeResult = await db
+        .select({ id: store.id })
+        .from(storeMembers)
+        .innerJoin(store, eq(storeMembers.storeId, store.id))
+        .where(eq(storeMembers.userId, producerId))
         .limit(1);
 
-      if (vendorResult.length === 0) {
+      if (storeResult.length > 0) {
+        finalStoreId = storeResult[0].id;
+      } else if (!isAdmin) {
+        // Non-admin users need a store
         return {
           success: false,
-          error: "Vendor not found for the specified producer.",
+          error: "Store not found for the specified producer.",
         };
       }
-
-      vendorId = vendorResult[0].id;
     } else {
-      // Get vendor for current user
-      const vendorResult = await db
-        .select({ id: vendor.id })
-        .from(vendor)
-        .where(eq(vendor.ownerUserId, session.user.id))
+      // Get store for current user through storeMembers
+      const storeResult = await db
+        .select({ id: store.id })
+        .from(storeMembers)
+        .innerJoin(store, eq(storeMembers.storeId, store.id))
+        .where(eq(storeMembers.userId, session.user.id))
         .limit(1);
 
-      if (vendorResult.length === 0) {
+      if (storeResult.length > 0) {
+        finalStoreId = storeResult[0].id;
+      } else if (!isAdmin) {
+        // Non-admin users need a store
         return {
           success: false,
-          error: "Vendor not found. Please set up your vendor information first.",
+          error:
+            "Store not found. Please set up your store information first.",
         };
       }
-
-      vendorId = vendorResult[0].id;
     }
 
-    // Get only active locations for this vendor (for product form)
+    // Build query conditions
+    const conditions = [eq(inventoryLocations.isActive, true)];
+    
+    // If we have a finalStoreId, filter by it. Admins without finalStoreId see all locations.
+    if (finalStoreId) {
+      conditions.push(eq(inventoryLocations.storeId, finalStoreId));
+    }
+
+    // Get only active locations (for product form)
     const locations = await db
       .select({
         id: inventoryLocations.id,
@@ -92,12 +132,7 @@ export async function getInventoryLocations(
         isActive: inventoryLocations.isActive,
       })
       .from(inventoryLocations)
-      .where(
-        and(
-          eq(inventoryLocations.vendorId, vendorId),
-          eq(inventoryLocations.isActive, true)
-        )
-      )
+      .where(and(...conditions))
       .orderBy(inventoryLocations.name);
 
     return {
@@ -134,26 +169,27 @@ export async function createInventoryLocation(
       };
     }
 
-    // Get vendor for current user
-    const vendorResult = await db
-      .select({ id: vendor.id })
-      .from(vendor)
-      .where(eq(vendor.ownerUserId, session.user.id))
+    // Get store for current user
+    const storeResult = await db
+      .select({ id: store.id })
+      .from(storeMembers)
+      .innerJoin(store, eq(storeMembers.storeId, store.id))
+      .where(eq(storeMembers.userId, session.user.id))
       .limit(1);
 
-    if (vendorResult.length === 0) {
+    if (storeResult.length === 0) {
       return {
         success: false,
-        error: "Vendor not found. Please set up your vendor information first.",
+        error: "Store not found. Please set up your store information first.",
       };
     }
 
-    const vendorId = vendorResult[0].id;
+    const storeId = storeResult[0].id;
 
     const newLocation = await db
       .insert(inventoryLocations)
       .values({
-        vendorId,
+        storeId,
         name: data.name.trim(),
         address: data.address?.trim() || null,
         phone: data.phone?.trim() || null,
@@ -180,7 +216,7 @@ export async function createInventoryLocation(
 }
 
 /**
- * Get all inventory locations (including inactive) for the current vendor
+ * Get all inventory locations (including inactive) for the current store
  * Used for location management in settings
  */
 export async function getAllInventoryLocations(): Promise<
@@ -207,23 +243,24 @@ export async function getAllInventoryLocations(): Promise<
       };
     }
 
-    // Get vendor for current user
-    const vendorResult = await db
-      .select({ id: vendor.id })
-      .from(vendor)
-      .where(eq(vendor.ownerUserId, session.user.id))
+    // Get store for current user
+    const storeResult = await db
+      .select({ id: store.id })
+      .from(storeMembers)
+      .innerJoin(store, eq(storeMembers.storeId, store.id))
+      .where(eq(storeMembers.userId, session.user.id))
       .limit(1);
 
-    if (vendorResult.length === 0) {
+    if (storeResult.length === 0) {
       return {
         success: false,
-        error: "Vendor not found. Please set up your vendor information first.",
+        error: "Store not found. Please set up your store information first.",
       };
     }
 
-    const vendorId = vendorResult[0].id;
+    const storeId = storeResult[0].id;
 
-    // Get all locations for this vendor (including inactive)
+    // Get all locations for this store (including inactive)
     const locations = await db
       .select({
         id: inventoryLocations.id,
@@ -234,7 +271,7 @@ export async function getAllInventoryLocations(): Promise<
         isActive: inventoryLocations.isActive,
       })
       .from(inventoryLocations)
-      .where(eq(inventoryLocations.vendorId, vendorId))
+      .where(eq(inventoryLocations.storeId, storeId))
       .orderBy(inventoryLocations.name);
 
     return {
@@ -272,25 +309,29 @@ export async function updateInventoryLocation(
       };
     }
 
-    // Get vendor for current user
-    const vendorResult = await db
-      .select({ id: vendor.id })
-      .from(vendor)
-      .where(eq(vendor.ownerUserId, session.user.id))
+    // Get store for current user
+    const storeResult = await db
+      .select({ id: store.id })
+      .from(storeMembers)
+      .innerJoin(store, eq(storeMembers.storeId, store.id))
+      .where(eq(storeMembers.userId, session.user.id))
       .limit(1);
 
-    if (vendorResult.length === 0) {
+    if (storeResult.length === 0) {
       return {
         success: false,
-        error: "Vendor not found. Please set up your vendor information first.",
+        error: "Store not found. Please set up your store information first.",
       };
     }
 
-    const vendorId = vendorResult[0].id;
+    const storeId = storeResult[0].id;
 
-    // Verify the location belongs to this vendor
+    // Verify the location belongs to this store
     const locationResult = await db
-      .select({ id: inventoryLocations.id, vendorId: inventoryLocations.vendorId })
+      .select({
+        id: inventoryLocations.id,
+        storeId: inventoryLocations.storeId,
+      })
       .from(inventoryLocations)
       .where(eq(inventoryLocations.id, locationId))
       .limit(1);
@@ -302,7 +343,7 @@ export async function updateInventoryLocation(
       };
     }
 
-    if (locationResult[0].vendorId !== vendorId) {
+    if (locationResult[0].storeId !== storeId) {
       return {
         success: false,
         error: "You don't have permission to update this location",
@@ -355,25 +396,29 @@ export async function deleteInventoryLocation(
       };
     }
 
-    // Get vendor for current user
-    const vendorResult = await db
-      .select({ id: vendor.id })
-      .from(vendor)
-      .where(eq(vendor.ownerUserId, session.user.id))
+    // Get store for current user
+    const storeResult = await db
+      .select({ id: store.id })
+      .from(storeMembers)
+      .innerJoin(store, eq(storeMembers.storeId, store.id))
+      .where(eq(storeMembers.userId, session.user.id))
       .limit(1);
 
-    if (vendorResult.length === 0) {
+    if (storeResult.length === 0) {
       return {
         success: false,
-        error: "Vendor not found. Please set up your vendor information first.",
+        error: "Store not found. Please set up your store information first.",
       };
     }
 
-    const vendorId = vendorResult[0].id;
+    const storeId = storeResult[0].id;
 
-    // Verify the location belongs to this vendor
+    // Verify the location belongs to this store
     const locationResult = await db
-      .select({ id: inventoryLocations.id, vendorId: inventoryLocations.vendorId })
+      .select({
+        id: inventoryLocations.id,
+        storeId: inventoryLocations.storeId,
+      })
       .from(inventoryLocations)
       .where(eq(inventoryLocations.id, locationId))
       .limit(1);
@@ -385,7 +430,7 @@ export async function deleteInventoryLocation(
       };
     }
 
-    if (locationResult[0].vendorId !== vendorId) {
+    if (locationResult[0].storeId !== storeId) {
       return {
         success: false,
         error: "You don't have permission to delete this location",
@@ -411,4 +456,3 @@ export async function deleteInventoryLocation(
     };
   }
 }
-

@@ -3,17 +3,19 @@ import {
   listing,
   listingTranslations,
   user,
-  vendor,
+  store,
+  storeMembers,
   listingVariants,
   inventoryItems,
   inventoryLevels,
+  inventoryLocations,
   type Listing,
 } from "@/db/schema";
 
 // Re-export the Listing type for use in components
 export type { Listing };
 import { uploadFile, uploadFiles, deleteFile, deleteFiles } from "./cloudinary";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, or } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { translateText } from "./translate";
 import { findCategoryById } from "./taxonomy";
@@ -80,6 +82,93 @@ async function translateTags(
   }
 
   return translations;
+}
+
+/**
+ * Get default inventory location for a store
+ * Returns the first active location for the store, or null if none exists
+ */
+async function getDefaultInventoryLocation(
+  storeId: string
+): Promise<string | null> {
+  try {
+    // Get first active location for the store
+    const location = await db
+      .select({ id: inventoryLocations.id })
+      .from(inventoryLocations)
+      .where(
+        and(
+          eq(inventoryLocations.storeId, storeId),
+          eq(inventoryLocations.isActive, true)
+        )
+      )
+      .orderBy(inventoryLocations.name)
+      .limit(1);
+
+    return location.length > 0 ? location[0].id : null;
+  } catch (error) {
+    console.error("Error getting default inventory location:", error);
+    return null;
+  }
+}
+
+/**
+ * Create inventory item and level for a variant
+ * This is a helper function to avoid code duplication
+ */
+async function createInventoryForVariant(
+  variantId: string,
+  locationId: string,
+  initialStock: number = 0,
+  costPerItem: number | undefined = undefined
+): Promise<void> {
+  // Check if inventory item already exists
+  const existingItem = await db
+    .select({ id: inventoryItems.id })
+    .from(inventoryItems)
+    .where(eq(inventoryItems.variantId, variantId))
+    .limit(1);
+
+  let inventoryItemId: string;
+
+  if (existingItem.length > 0) {
+    inventoryItemId = existingItem[0].id;
+  } else {
+    // Create inventory item
+    const inventoryItem = await db
+      .insert(inventoryItems)
+      .values({
+        variantId,
+        costPerItem: costPerItem ? costPerItem.toString() : "0",
+        requiresShipping: true,
+        weightGrams: 0,
+      })
+      .returning();
+    inventoryItemId = inventoryItem[0].id;
+  }
+
+  // Check if inventory level already exists for this location
+  const existingLevel = await db
+    .select({ id: inventoryLevels.id })
+    .from(inventoryLevels)
+    .where(
+      and(
+        eq(inventoryLevels.inventoryItemId, inventoryItemId),
+        eq(inventoryLevels.locationId, locationId)
+      )
+    )
+    .limit(1);
+
+  if (existingLevel.length === 0) {
+    // Create inventory level
+    await db.insert(inventoryLevels).values({
+      inventoryItemId,
+      locationId,
+      available: initialStock,
+      committed: 0,
+      incoming: 0,
+    });
+  }
 }
 
 // Variant data structure
@@ -179,7 +268,9 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
           );
         }
         if (variant.options) {
-          Object.keys(variant.options).forEach((key) => allOptionKeys.add(key));
+          if (variant.options && typeof variant.options === 'object') {
+            Object.keys(variant.options).forEach((key) => allOptionKeys.add(key));
+          }
         }
       }
       if (allOptionKeys.size > 3) {
@@ -194,20 +285,21 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
       throw new Error("Inventory location is required when tracking inventory");
     }
 
-    // Fetch vendor from vendor table
-    const vendorResult = await db
-      .select({ id: vendor.id })
-      .from(vendor)
-      .where(eq(vendor.ownerUserId, data.producerId))
+    // Fetch store from storeMembers table (user can be a member of a store)
+    const storeResult = await db
+      .select({ id: store.id })
+      .from(storeMembers)
+      .innerJoin(store, eq(storeMembers.storeId, store.id))
+      .where(eq(storeMembers.userId, data.producerId))
       .limit(1);
 
-    if (vendorResult.length === 0) {
+    if (storeResult.length === 0) {
       throw new Error(
-        "Vendor not found. Please set up your vendor information in Settings > Vendor before creating a listing."
+        "Store not found. Please set up your store information in Settings > Store before creating a listing."
       );
     }
 
-    const vendorId = vendorResult[0].id;
+    const storeId = storeResult[0].id;
 
     let imageUrl = data.imageUrl;
     let gallery = data.gallery || [];
@@ -248,7 +340,7 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
         id: listingId,
         name: data.name,
         description: data.description,
-        vendorId: vendorId,
+        storeId: storeId,
         categoryRuleId: data.categoryRuleId || null,
         taxonomyCategoryId: data.taxonomyCategoryId,
         taxonomyCategoryName: finalTaxonomyCategoryName || null,
@@ -317,30 +409,26 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
       }
     }
 
-    // Step 3 & 4: Create inventory items and levels (if tracking inventory)
-    if (data.tracksInventory && data.inventoryLocationId) {
-      for (const variant of createdVariants) {
-        // Step 3: Create inventory item for each variant
-        const inventoryItem = await db
-          .insert(inventoryItems)
-          .values({
-            variantId: variant.id,
-            costPerItem: variant.costPerItem
-              ? variant.costPerItem.toString()
-              : "0",
-            requiresShipping: true,
-            weightGrams: 0,
-          })
-          .returning();
+    // Step 3 & 4: Create inventory items and levels for all variants
+    // Always create inventory, using provided location or default location
+    if (createdVariants.length > 0) {
+      let locationId = data.inventoryLocationId;
+      
+      // If no location provided, get default location for the store
+      if (!locationId) {
+        locationId = await getDefaultInventoryLocation(storeId);
+      }
 
-        // Step 4: Create inventory level for this variant and location
-        await db.insert(inventoryLevels).values({
-          inventoryItemId: inventoryItem[0].id,
-          locationId: data.inventoryLocationId,
-          available: variant.initialStock || 0,
-          committed: 0,
-          incoming: 0,
-        });
+      // Only create inventory if we have a location
+      if (locationId) {
+        for (const variant of createdVariants) {
+          await createInventoryForVariant(
+            variant.id,
+            locationId,
+            variant.initialStock || 0,
+            variant.costPerItem
+          );
+        }
       }
     }
 
@@ -396,7 +484,7 @@ export async function getListingById(id: string): Promise<Listing | null> {
         producerId: listing.producerId,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        vendorId: listing.vendorId,
+        storeId: listing.storeId,
         categoryRuleId: listing.categoryRuleId,
         taxonomyCategoryId: listing.taxonomyCategoryId,
         taxonomyCategoryName: listing.taxonomyCategoryName,
@@ -445,7 +533,7 @@ export async function getListingById(id: string): Promise<Listing | null> {
       producerId: r.producerId,
       name: r.name || r.nameFallback || "",
       description: r.description || r.descriptionFallback || null,
-      vendorId: r.vendorId || null,
+      storeId: r.storeId || null,
       categoryRuleId: r.categoryRuleId,
       taxonomyCategoryId: r.taxonomyCategoryId || null,
       taxonomyCategoryName: r.taxonomyCategoryName || null,
@@ -604,7 +692,7 @@ export async function getListings(): Promise<Listing[]> {
         producerId: listing.producerId,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        vendorId: listing.vendorId,
+        storeId: listing.storeId,
         categoryRuleId: listing.categoryRuleId,
         taxonomyCategoryId: listing.taxonomyCategoryId,
         taxonomyCategoryName: listing.taxonomyCategoryName,
@@ -647,7 +735,7 @@ export async function getListings(): Promise<Listing[]> {
       producerId: r.producerId,
       name: r.name || r.nameFallback || "",
       description: r.description || r.descriptionFallback || null,
-      vendorId: r.vendorId || null,
+      storeId: r.storeId || null,
       categoryRuleId: r.categoryRuleId,
       taxonomyCategoryId: r.taxonomyCategoryId || null,
       taxonomyCategoryName: r.taxonomyCategoryName || null,
@@ -687,7 +775,7 @@ export async function getAllListingsWithUsers(): Promise<
       producerName: string;
       producerEmail: string;
       isAdminCreated: boolean;
-      vendorName?: string | null;
+      storeName?: string | null;
     }
   >
 > {
@@ -698,7 +786,7 @@ export async function getAllListingsWithUsers(): Promise<
         id: listing.id,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        vendorId: listing.vendorId,
+        storeId: listing.storeId,
         categoryRuleId: listing.categoryRuleId,
         taxonomyCategoryId: listing.taxonomyCategoryId,
         taxonomyCategoryName: listing.taxonomyCategoryName,
@@ -723,7 +811,7 @@ export async function getAllListingsWithUsers(): Promise<
         updatedAt: listing.updatedAt,
         producerName: user.name,
         producerEmail: user.email,
-        vendorName: vendor.storeName,
+        storeName: store.storeName,
         // Fallback fields from base table
         nameFallback: listing.name,
         descriptionFallback: listing.description,
@@ -732,7 +820,7 @@ export async function getAllListingsWithUsers(): Promise<
       })
       .from(listing)
       .innerJoin(user, eq(listing.producerId, user.id))
-      .leftJoin(vendor, eq(listing.vendorId, vendor.id))
+      .leftJoin(store, eq(listing.storeId, store.id))
       .leftJoin(
         listingTranslations,
         and(
@@ -805,7 +893,7 @@ export async function getAllListingsWithUsers(): Promise<
         producerId: r.producerId,
         name: r.name || r.nameFallback || "",
         description: r.description || r.descriptionFallback || null,
-        vendorId: (r.vendorId || "") as string,
+        storeId: (r.storeId || "") as string,
         categoryRuleId: r.categoryRuleId,
         taxonomyCategoryId: r.taxonomyCategoryId || null,
         taxonomyCategoryName: r.taxonomyCategoryName || null,
@@ -830,14 +918,14 @@ export async function getAllListingsWithUsers(): Promise<
         producerName: r.producerName || "",
         producerEmail: r.producerEmail || "",
         isAdminCreated: adminEmails.includes(r.producerEmail || ""),
-        vendorName: r.vendorName || null,
+        storeName: r.storeName || null,
         variantCount: inventory.variantCount,
         totalStock: inventory.totalStock,
       } as Listing & {
         producerName: string;
         producerEmail: string;
         isAdminCreated: boolean;
-        vendorName?: string | null;
+        storeName?: string | null;
         variantCount: number;
         totalStock: number;
       };
@@ -878,7 +966,7 @@ export async function getListingsByProducer(
         producerId: listing.producerId,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        vendorId: listing.vendorId,
+        storeId: listing.storeId,
         categoryRuleId: listing.categoryRuleId,
         taxonomyCategoryId: listing.taxonomyCategoryId,
         taxonomyCategoryName: listing.taxonomyCategoryName,
@@ -954,7 +1042,7 @@ export async function getListingsByProducer(
         producerId: r.producerId,
         name: r.name || r.nameFallback || "",
         description: r.description || r.descriptionFallback || null,
-        vendorId: r.vendorId || null,
+        storeId: r.storeId || null,
         categoryRuleId: r.categoryRuleId,
         taxonomyCategoryId: r.taxonomyCategoryId || null,
         taxonomyCategoryName: r.taxonomyCategoryName || null,
@@ -1328,41 +1416,38 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
             })
             .returning();
 
-          // If tracking inventory, create inventory item and level
-          if (
-            updateData.tracksInventory &&
-            updateData.inventoryLocationId &&
-            newVariant[0]
-          ) {
-            const inventoryItem = await db
-              .insert(inventoryItems)
-              .values({
-                variantId: newVariant[0].id,
-                costPerItem: variantData.costPerItem
-                  ? variantData.costPerItem.toString()
-                  : "0",
-                requiresShipping: true,
-                weightGrams: 0,
-              })
-              .returning();
+          // Always create inventory item and level for new variants
+          if (newVariant[0]) {
+            let locationId = updateData.inventoryLocationId;
+            
+            // If no location provided, get default location for the store
+            if (!locationId) {
+              locationId = await getDefaultInventoryLocation(existingListing.storeId);
+            }
 
-            await db.insert(inventoryLevels).values({
-              inventoryItemId: inventoryItem[0].id,
-              locationId: updateData.inventoryLocationId,
-              available: variantData.initialStock || 0,
-              committed: 0,
-              incoming: 0,
-            });
+            // Only create inventory if we have a location
+            if (locationId) {
+              await createInventoryForVariant(
+                newVariant[0].id,
+                locationId,
+                variantData.initialStock || 0,
+                variantData.costPerItem
+              );
+            }
           }
         }
 
-        // Update inventory for existing variants if tracking inventory
-        if (
-          variantData.id &&
-          existingVariantIds.has(variantData.id) &&
-          updateData.tracksInventory &&
-          updateData.inventoryLocationId
-        ) {
+        // Always ensure inventory exists for existing variants
+        if (variantData.id && existingVariantIds.has(variantData.id)) {
+          let locationId = updateData.inventoryLocationId;
+          
+          // If no location provided, get default location for the store
+          if (!locationId) {
+            locationId = await getDefaultInventoryLocation(existingListing.storeId);
+          }
+
+          // Only create/update inventory if we have a location
+          if (locationId) {
           // Check if inventory item exists
           const existingInventoryItem = await db
             .select()
@@ -1392,7 +1477,7 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
                     inventoryLevels.inventoryItemId,
                     existingInventoryItem[0].id
                   ),
-                  eq(inventoryLevels.locationId, updateData.inventoryLocationId)
+                  eq(inventoryLevels.locationId, locationId)
                 )
               )
               .limit(1);
@@ -1409,55 +1494,22 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
               // Create new inventory level
               await db.insert(inventoryLevels).values({
                 inventoryItemId: existingInventoryItem[0].id,
-                locationId: updateData.inventoryLocationId,
+                locationId: locationId,
                 available: variantData.initialStock || 0,
                 committed: 0,
                 incoming: 0,
               });
             }
           } else {
-            // Create inventory item and level
-            const inventoryItem = await db
-              .insert(inventoryItems)
-              .values({
-                variantId: variantData.id,
-                costPerItem: variantData.costPerItem
-                  ? variantData.costPerItem.toString()
-                  : "0",
-                requiresShipping: true,
-                weightGrams: 0,
-              })
-              .returning();
-
-            await db.insert(inventoryLevels).values({
-              inventoryItemId: inventoryItem[0].id,
-              locationId: updateData.inventoryLocationId,
-              available: variantData.initialStock || 0,
-              committed: 0,
-              incoming: 0,
-            });
+            // Create inventory item and level if they don't exist
+            await createInventoryForVariant(
+              variantData.id,
+              locationId,
+              variantData.initialStock || 0,
+              variantData.costPerItem
+            );
           }
-        }
-
-        // Remove inventory if tracking is disabled
-        if (
-          variantData.id &&
-          existingVariantIds.has(variantData.id) &&
-          !updateData.tracksInventory
-        ) {
-          const inventoryItemsToRemove = await db
-            .select()
-            .from(inventoryItems)
-            .where(eq(inventoryItems.variantId, variantData.id));
-
-          for (const item of inventoryItemsToRemove) {
-            await db
-              .delete(inventoryLevels)
-              .where(eq(inventoryLevels.inventoryItemId, item.id));
           }
-          await db
-            .delete(inventoryItems)
-            .where(eq(inventoryItems.variantId, variantData.id));
         }
       }
     }

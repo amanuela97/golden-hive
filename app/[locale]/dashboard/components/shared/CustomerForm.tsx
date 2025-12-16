@@ -7,10 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Save, ArrowLeft } from "lucide-react";
-import { createCustomer, updateCustomer, getVendorsForFilter } from "@/app/[locale]/actions/customers";
+import {
+  createCustomer,
+  updateCustomer,
+  getStoresForFilter,
+} from "@/app/[locale]/actions/customers";
 import toast from "react-hot-toast";
 import { CountrySelect } from "@/components/ui/country-select";
-import { VendorSelect } from "@/components/ui/vendor-select";
+import { StoreSelect } from "@/components/ui/store-select";
 import { useRouter } from "@/i18n/navigation";
 
 interface CustomerFormData {
@@ -25,7 +29,7 @@ interface CustomerFormData {
   postalCode: string;
   country: string;
   notes: string;
-  vendorId: string | null;
+  storeId: string | null;
 }
 
 interface CustomerFormProps {
@@ -42,7 +46,7 @@ interface CustomerFormProps {
     postalCode: string | null;
     country: string | null;
     notes: string | null;
-    vendorId: string | null;
+    storeId: string | null;
   };
   isEdit?: boolean;
   isAdmin?: boolean;
@@ -55,7 +59,7 @@ export function CustomerForm({
 }: CustomerFormProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [vendors, setVendors] = useState<Array<{ id: string; name: string }>>([]);
+  const [stores, setStores] = useState<Array<{ id: string; name: string }>>([]);
   const [formData, setFormData] = useState<CustomerFormData>({
     email: initialData?.email || "",
     firstName: initialData?.firstName || "",
@@ -68,15 +72,15 @@ export function CustomerForm({
     postalCode: initialData?.postalCode || "",
     country: initialData?.country || "",
     notes: initialData?.notes || "",
-    vendorId: initialData?.vendorId || null,
+    storeId: initialData?.storeId || null,
   });
 
   // Load vendors if admin
   useEffect(() => {
     if (isAdmin) {
-      getVendorsForFilter().then((result) => {
+      getStoresForFilter().then((result) => {
         if (result.success && result.data) {
-          setVendors(result.data);
+          setStores(result.data);
         }
       });
     }
@@ -156,7 +160,7 @@ export function CustomerForm({
           postalCode: formData.postalCode || null,
           country: countryValue || null,
           notes: formData.notes || null,
-          vendorId: isAdmin ? (formData.vendorId || null) : null,
+          storeId: isAdmin ? formData.storeId || null : null,
         });
 
         if (result.success && result.data) {
@@ -175,21 +179,29 @@ export function CustomerForm({
   };
 
   // Convert country full name to code for CountrySelect
-  const getCountryCode = (countryName: string | null): string => {
-    if (!countryName) return "";
-    // Try to find by full name first
-    try {
-      const countries = require("@/data/countries.json");
-      const country = countries.find(
-        (c: { label: string; value: string }) => c.label === countryName
-      );
-      return country ? country.value : countryName; // Return code or original if not found
-    } catch {
-      return countryName;
-    }
-  };
+  const [countryCode, setCountryCode] = useState<string>("");
 
-  const countryCode = getCountryCode(formData.country);
+  useEffect(() => {
+    const loadCountryCode = async () => {
+      if (!formData.country) {
+        setCountryCode("");
+        return;
+      }
+      // Try to find by full name first
+      try {
+        const countries = await import("@/data/countries.json").then(
+          (m) => m.default
+        );
+        const country = countries.find(
+          (c: { label: string; value: string }) => c.label === formData.country
+        );
+        setCountryCode(country ? country.value : formData.country);
+      } catch {
+        setCountryCode(formData.country);
+      }
+    };
+    loadCountryCode();
+  }, [formData.country]);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -198,11 +210,7 @@ export function CustomerForm({
           {isEdit ? "Edit Customer" : "New Customer"}
         </h2>
         <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => router.back()}
-          >
+          <Button type="button" variant="outline" onClick={() => router.back()}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             Cancel
           </Button>
@@ -261,17 +269,17 @@ export function CustomerForm({
             </div>
             {isAdmin && (
               <div>
-                <Label htmlFor="vendorId">Vendor</Label>
-                <VendorSelect
-                  value={formData.vendorId}
+                <Label htmlFor="storeId">Store</Label>
+                <StoreSelect
+                  value={formData.storeId}
                   onValueChange={(value) =>
                     setFormData((prev) => ({
                       ...prev,
-                      vendorId: value,
+                      storeId: value,
                     }))
                   }
-                  vendors={vendors}
-                  placeholder="Select vendor (optional)"
+                  stores={stores}
+                  placeholder="Select store (optional)"
                 />
               </div>
             )}
@@ -356,4 +364,3 @@ export function CustomerForm({
     </form>
   );
 }
-

@@ -48,7 +48,7 @@ interface ProductTableProps {
   products: (Listing & {
     variantCount?: number;
     totalStock?: number;
-    vendorName?: string | null;
+    storeName?: string | null;
   })[];
   onDelete: (id: string) => Promise<{ success: boolean; error?: string }>;
   onToggleStatus: (
@@ -231,29 +231,29 @@ export default function ProductTable({
       ...(isAdmin
         ? [
             {
-              id: "vendor",
-              header: "Vendor",
-              accessorFn: (row: Listing & { vendorName?: string | null }) => {
-                return row.vendorName || "No vendor";
+              id: "store",
+              header: "Store",
+              accessorFn: (row: Listing & { storeName?: string | null }) => {
+                return row.storeName || "No store";
               },
               cell: ({ row }: CellContext<Listing, unknown>) => {
                 const product = row.original as Listing & {
-                  vendorName?: string | null;
+                  storeName?: string | null;
                 };
                 return (
                   <span className="text-sm">
-                    {product.vendorName || "No vendor"}
+                    {product.storeName || "No store"}
                   </span>
                 );
               },
               sortingFn: (
-                rowA: { original: Listing & { vendorName?: string | null } },
-                rowB: { original: Listing & { vendorName?: string | null } }
+                rowA: { original: Listing & { storeName?: string | null } },
+                rowB: { original: Listing & { storeName?: string | null } }
               ) => {
                 const a = rowA.original;
                 const b = rowB.original;
-                const aName = a.vendorName || "";
-                const bName = b.vendorName || "";
+                const aName = a.storeName || "";
+                const bName = b.storeName || "";
                 return aName.localeCompare(bName);
               },
             },
@@ -413,11 +413,11 @@ export default function ProductTable({
           desc,
         },
       ]);
-    } else if (sortField === "vendor" && isAdmin) {
-      // Custom sorting for vendor
+    } else if (sortField === "store" && isAdmin) {
+      // Custom sorting for store
       setSorting([
         {
-          id: "vendor",
+          id: "store",
           desc,
         },
       ]);
@@ -589,8 +589,8 @@ export default function ProductTable({
                   </SelectItem>
                   {isAdmin && (
                     <>
-                      <SelectItem value="vendor-asc">Vendor: A-Z</SelectItem>
-                      <SelectItem value="vendor-desc">Vendor: Z-A</SelectItem>
+                      <SelectItem value="store-asc">Store: A-Z</SelectItem>
+                      <SelectItem value="store-desc">Store: Z-A</SelectItem>
                     </>
                   )}
                 </SelectContent>

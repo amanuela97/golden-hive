@@ -109,6 +109,7 @@ interface ProductVariantsProps {
   variantImagePreviews?: Record<string, string[]>;
   onRemoveVariantImage?: (variantId: string, index: number) => void;
   recommendedAttributes?: TaxonomyAttribute[];
+  storeCurrency?: string;
 }
 
 // Helper to dynamically load option file by handle
@@ -130,6 +131,7 @@ export function ProductVariants({
   variantImagePreviews = {},
   onRemoveVariantImage,
   recommendedAttributes = [],
+  storeCurrency = "NPR",
 }: ProductVariantsProps) {
   const [options, setOptions] = useState<VariantOption[]>([]);
   const [editingOption, setEditingOption] = useState<string | null>(null);
@@ -143,6 +145,18 @@ export function ProductVariants({
   );
   const [editModal, setEditModal] = useState<EditModalType>(null);
   const [hasInitialized, setHasInitialized] = useState(false);
+
+  // Update variant currencies when storeCurrency changes (only for new variants without currency)
+  useEffect(() => {
+    if (storeCurrency && variants.length > 0) {
+      setVariants((prev) =>
+        prev.map((v) => ({ 
+          ...v, 
+          currency: (v.currency || storeCurrency) as "EUR" | "USD" | "NPR" 
+        }))
+      );
+    }
+  }, [storeCurrency]);
 
   // Create recommended options from attributes
   const recommendedOptions = useMemo(() => {
@@ -235,7 +249,7 @@ export function ProductVariants({
         });
 
         return {
-          id: `option-${Date.now()}-${index}`,
+          id: `option-${index}-${optionLabel}`,
           name: optionLabel,
           values,
         };
@@ -286,6 +300,23 @@ export function ProductVariants({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variants]);
 
+  // Generate a stable ID from variant options
+  const generateVariantId = (options: Record<string, string>): string => {
+    // Create a stable hash from sorted option keys and values
+    const sortedEntries = Object.entries(options)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => `${key}:${value}`)
+      .join("|");
+    // Use a simple hash function to create a stable ID
+    let hash = 0;
+    for (let i = 0; i < sortedEntries.length; i++) {
+      const char = sortedEntries.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return `variant-${Math.abs(hash).toString(36)}`;
+  };
+
   // Generate all possible variants from options
   const generateVariants = (opts: VariantOption[]) => {
     if (opts.length === 0) return [];
@@ -314,15 +345,17 @@ export function ProductVariants({
       return variants; // Return existing variants instead of creating new ones
     }
 
-    return combinations.map((combo, index) => {
+    return combinations.map((combo) => {
+      // Use stable ID generation based on options
+      const stableId = generateVariantId(combo);
       const existingVariant = variants.find(
         (v) => JSON.stringify(v.options) === JSON.stringify(combo)
       );
       return {
-        id: existingVariant?.id || `variant-${index}`,
+        id: existingVariant?.id || stableId,
         options: combo,
         price: existingVariant?.price || "0.00",
-        currency: existingVariant?.currency || "NPR",
+        currency: existingVariant?.currency || storeCurrency,
         quantity: existingVariant?.quantity || "0",
         sku: existingVariant?.sku || null,
         barcode: existingVariant?.barcode,
@@ -345,8 +378,9 @@ export function ProductVariants({
     const optionLabel =
       allAvailableOptions.find((o) => o.value === optionType)?.label ||
       optionType;
+    // Generate a stable ID using the option label and current options count
     const newOption: VariantOption = {
-      id: `option-${Date.now()}`,
+      id: `option-${options.length}-${optionLabel}`,
       name: optionLabel,
       values: [],
     };
@@ -363,6 +397,8 @@ export function ProductVariants({
     setOptions(updatedOptions);
     const newVariants = generateVariants(updatedOptions);
     setVariants(newVariants);
+    // Clear selection when variants are regenerated
+    setSelectedVariants(new Set());
     if (groupBy === options.find((o) => o.id === optionId)?.name) {
       setGroupBy(updatedOptions[0]?.name || "");
     }
@@ -380,6 +416,8 @@ export function ProductVariants({
       updatedOptions.every((opt) => opt.values.length === 0)
     ) {
       setVariants(newVariants);
+      // Clear selection when variants are regenerated to prevent stale IDs
+      setSelectedVariants(new Set());
     }
   };
 
@@ -395,6 +433,8 @@ export function ProductVariants({
     setOptions(updatedOptions);
     const newVariants = generateVariants(updatedOptions);
     setVariants(newVariants);
+    // Clear selection when variants are regenerated
+    setSelectedVariants(new Set());
   };
 
   const handleDoneEditing = () => {
@@ -429,17 +469,8 @@ export function ProductVariants({
     );
   };
 
-  const handleGroupCurrencyChange = (
-    groupValue: string,
-    currency: "EUR" | "USD" | "NPR"
-  ) => {
-    const groupKey = groupBy.toLowerCase();
-    setVariants((prev) =>
-      prev.map((v) =>
-        v.options[groupKey] === groupValue ? { ...v, currency } : v
-      )
-    );
-  };
+  // Currency is now auto-set from store, no manual change handler needed
+  // Removed handleGroupCurrencyChange
 
   const toggleVariantSelection = (variantId: string) => {
     const newSelected = new Set(selectedVariants);
@@ -462,6 +493,7 @@ export function ProductVariants({
   };
 
   const toggleSelectAll = () => {
+    if (variants.length === 0) return;
     if (selectedVariants.size === variants.length) {
       setSelectedVariants(new Set());
     } else {
@@ -632,10 +664,12 @@ export function ProductVariants({
           <div className="rounded-lg border overflow-hidden">
             {/* Table Header */}
             <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(200px,1.2fr)_minmax(120px,0.8fr)] gap-4 border-b border-border bg-muted/50 px-4 py-3 text-sm font-medium">
-              <Checkbox
-                checked={selectedVariants.size === variants.length}
-                onCheckedChange={toggleSelectAll}
-              />
+              <div onClick={(e) => e.stopPropagation()}>
+                <Checkbox
+                  checked={selectedVariants.size === variants.length && variants.length > 0}
+                  onCheckedChange={toggleSelectAll}
+                />
+              </div>
               <div>Variant</div>
               <div>Price</div>
               <div className="overflow-hidden text-ellipsis whitespace-nowrap">
@@ -656,25 +690,27 @@ export function ProductVariants({
                   <div key={group.value}>
                     {/* Group Header */}
                     <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(200px,1.2fr)_minmax(120px,0.8fr)] gap-4 border-b border-border bg-background px-4 py-3">
-                      <Checkbox
-                        checked={group.variants.every((v) =>
-                          selectedVariants.has(v.id)
-                        )}
-                        onCheckedChange={() => {
-                          const allSelected = group.variants.every((v) =>
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={group.variants.every((v) =>
                             selectedVariants.has(v.id)
-                          );
-                          const newSelected = new Set(selectedVariants);
-                          group.variants.forEach((v) => {
-                            if (allSelected) {
-                              newSelected.delete(v.id);
-                            } else {
-                              newSelected.add(v.id);
-                            }
-                          });
-                          setSelectedVariants(newSelected);
-                        }}
-                      />
+                          )}
+                          onCheckedChange={() => {
+                            const allSelected = group.variants.every((v) =>
+                              selectedVariants.has(v.id)
+                            );
+                            const newSelected = new Set(selectedVariants);
+                            group.variants.forEach((v) => {
+                              if (allSelected) {
+                                newSelected.delete(v.id);
+                              } else {
+                                newSelected.add(v.id);
+                              }
+                            });
+                            setSelectedVariants(newSelected);
+                          }}
+                        />
+                      </div>
                       <button
                         type="button"
                         className="flex items-center gap-2 text-left overflow-hidden"
@@ -710,21 +746,9 @@ export function ProductVariants({
                           }
                           className="h-9 flex-1"
                         />
-                        <Select
-                          value={group.variants[0]?.currency || "NPR"}
-                          onValueChange={(value: "EUR" | "USD" | "NPR") =>
-                            handleGroupCurrencyChange(group.value, value)
-                          }
-                        >
-                          <SelectTrigger className="h-9 w-20 flex-shrink-0">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="EUR">EUR</SelectItem>
-                            <SelectItem value="USD">USD</SelectItem>
-                            <SelectItem value="NPR">NPR</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <div className="h-9 w-20 flex-shrink-0 flex items-center justify-center bg-muted rounded-md text-sm text-muted-foreground">
+                          {storeCurrency}
+                        </div>
                       </div>
                       <div className="flex items-center text-sm text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
                         {group.variants.reduce(
@@ -739,12 +763,14 @@ export function ProductVariants({
                       group.variants.map((variant, index) => (
                         <div key={`${group.value}-${variant.id}-${index}`}>
                           <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(200px,1.2fr)_minmax(120px,0.8fr)] gap-4 border-b border-border bg-background px-4 py-3">
-                            <Checkbox
-                              checked={selectedVariants.has(variant.id)}
-                              onCheckedChange={() =>
-                                toggleVariantSelection(variant.id)
-                              }
-                            />
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={selectedVariants.has(variant.id)}
+                                onCheckedChange={() =>
+                                  toggleVariantSelection(variant.id)
+                                }
+                              />
+                            </div>
                             <div className="flex items-center gap-2 text-sm overflow-hidden">
                               <Package2 className="h-4 w-4 text-blue-600 flex-shrink-0" />
                               <span className="truncate">
@@ -770,25 +796,9 @@ export function ProductVariants({
                                 }
                                 className="h-9 flex-1"
                               />
-                              <Select
-                                value={variant.currency || "NPR"}
-                                onValueChange={(value: "EUR" | "USD" | "NPR") =>
-                                  handleVariantChange(
-                                    variant.id,
-                                    "currency",
-                                    value
-                                  )
-                                }
-                              >
-                                <SelectTrigger className="h-9 w-20 flex-shrink-0">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="EUR">EUR</SelectItem>
-                                  <SelectItem value="USD">USD</SelectItem>
-                                  <SelectItem value="NPR">NPR</SelectItem>
-                                </SelectContent>
-                              </Select>
+                              <div className="h-9 w-20 flex-shrink-0 flex items-center justify-center bg-muted rounded-md text-sm text-muted-foreground">
+                                {storeCurrency}
+                              </div>
                             </div>
                             <div className="overflow-hidden">
                               <Input
@@ -885,9 +895,7 @@ export function ProductVariants({
                   <DropdownMenuItem onClick={() => setEditModal("prices")}>
                     Edit prices
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setEditModal("currencies")}>
-                    Edit currencies
-                  </DropdownMenuItem>
+                  {/* Currency is auto-set from store, removed from bulk edit */}
                   <DropdownMenuItem onClick={() => setEditModal("quantities")}>
                     Edit quantities
                   </DropdownMenuItem>
@@ -987,7 +995,6 @@ export function ProductVariants({
 
 type EditModalType =
   | "prices"
-  | "currencies"
   | "quantities"
   | "skus"
   | "barcodes"
@@ -1020,13 +1027,7 @@ function EditVariantsModal({
       placeholder: "0.00",
       type: "text",
     },
-    currencies: {
-      title: "Edit currencies",
-      description: "Update currencies for selected variants",
-      field: "currency",
-      placeholder: "NPR",
-      type: "select",
-    },
+    // Currency is auto-set from store, removed from bulk edit
     quantities: {
       title: "Edit quantities",
       description: "Update quantities for selected variants",
@@ -1096,14 +1097,8 @@ function EditVariantsModal({
     }
   };
 
-  const handleCurrencyChange = (
-    variantId: string,
-    currency: "EUR" | "USD" | "NPR"
-  ) => {
-    setEditedVariants((prev) =>
-      prev.map((v) => (v.id === variantId ? { ...v, currency } : v))
-    );
-  };
+  // Currency is now auto-set from store, no manual change handler needed
+  // Removed handleCurrencyChange
 
   const handleAddImages = () => {
     const validUrls = imageUrls.filter((url) => url.trim() !== "");
@@ -1285,59 +1280,6 @@ function EditVariantsModal({
                     ))}
                   </div>
                 </div>
-              </div>
-            </>
-          ) : type === "currencies" ? (
-            <>
-              <div className="flex gap-2">
-                <Select
-                  value={bulkValue || ""}
-                  onValueChange={(value) => {
-                    setBulkValue(value);
-                    if (value) {
-                      setEditedVariants((prev) =>
-                        prev.map((v) => ({
-                          ...v,
-                          currency: value as "EUR" | "USD" | "NPR",
-                        }))
-                      );
-                    }
-                  }}
-                >
-                  <SelectTrigger className="w-48">
-                    <SelectValue placeholder="Apply to all" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="EUR">EUR</SelectItem>
-                    <SelectItem value="USD">USD</SelectItem>
-                    <SelectItem value="NPR">NPR</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                {editedVariants.map((variant) => (
-                  <div key={variant.id} className="flex items-center gap-2">
-                    <Label className="flex-1 text-sm">
-                      {Object.values(variant.options).join(" / ")}
-                    </Label>
-                    <Select
-                      value={variant.currency || "NPR"}
-                      onValueChange={(value: "EUR" | "USD" | "NPR") =>
-                        handleCurrencyChange(variant.id, value)
-                      }
-                    >
-                      <SelectTrigger className="w-48">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="EUR">EUR</SelectItem>
-                        <SelectItem value="USD">USD</SelectItem>
-                        <SelectItem value="NPR">NPR</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ))}
               </div>
             </>
           ) : (

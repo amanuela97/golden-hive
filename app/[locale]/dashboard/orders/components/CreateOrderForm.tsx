@@ -26,6 +26,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Card } from "@/components/ui/card";
@@ -46,16 +47,40 @@ import {
   ChevronRight,
   ChevronLeft,
   Minus,
+  Mail,
+  CreditCard,
 } from "lucide-react";
 import {
-  createOrder,
   searchProductsForOrder,
   getOrCreateCustomerForUser,
+  getCustomerShippingBillingInfo,
   type LineItemInput,
 } from "@/app/[locale]/actions/orders";
+import {
+  createDraftOrder,
+  updateDraftOrder,
+} from "@/app/[locale]/actions/draft-orders";
 import { searchCustomers } from "@/app/[locale]/actions/customers";
+import { getAllStores } from "@/app/[locale]/actions/store-members";
+import { getMarketsForUser, getMarket } from "@/app/[locale]/actions/markets";
 import toast from "react-hot-toast";
 import Image from "next/image";
+import countriesData from "@/data/countries.json";
+
+type Country = {
+  value: string;
+  label: string;
+};
+
+// Helper function to convert country name to country code
+function getCountryCode(countryName: string | null | undefined): string {
+  if (!countryName) return "";
+  const countries = countriesData as Country[];
+  const country = countries.find(
+    (c) => c.label.toLowerCase() === countryName.toLowerCase()
+  );
+  return country?.value || countryName; // Return code if found, otherwise return original (might already be a code)
+}
 
 type LineItem = LineItemInput & {
   id: string;
@@ -64,6 +89,8 @@ type LineItem = LineItemInput & {
   imageUrl?: string | null;
   variantImageUrl?: string | null;
   currency: string;
+  originalCurrency: string; // Store original currency for conversion
+  originalUnitPrice: string; // Store original price for conversion
   available: number; // Track available stock
 };
 
@@ -89,16 +116,74 @@ type GroupedProduct = {
   displayImageUrl: string | null;
 };
 
-export default function CreateOrderForm() {
+interface CreateOrderFormProps {
+  userRole?: "admin" | "seller" | "customer";
+  cancelRedirectPath?: string;
+  draftId?: string; // If provided, form is in edit mode
+  initialData?: {
+    customerId?: string | null;
+    customerEmail: string;
+    customerFirstName: string | null;
+    customerLastName: string | null;
+    customerPhone: string | null;
+    lineItems: Array<{
+      id: string;
+      listingId: string;
+      variantId: string | null;
+      quantity: number;
+      unitPrice: string;
+      title: string;
+      sku: string | null;
+      listingName: string;
+      variantTitle: string;
+      imageUrl?: string | null;
+      variantImageUrl?: string | null;
+      currency: string;
+      originalCurrency: string;
+      originalUnitPrice: string;
+      available: number;
+    }>;
+    currency: string;
+    shippingName: string | null;
+    shippingPhone: string | null;
+    shippingAddressLine1: string | null;
+    shippingAddressLine2: string | null;
+    shippingCity: string | null;
+    shippingRegion: string | null;
+    shippingPostalCode: string | null;
+    shippingCountry: string | null;
+    billingName: string | null;
+    billingPhone: string | null;
+    billingAddressLine1: string | null;
+    billingAddressLine2: string | null;
+    billingCity: string | null;
+    billingRegion: string | null;
+    billingPostalCode: string | null;
+    billingCountry: string | null;
+    paymentStatus: "pending" | "paid";
+    marketId: string | null;
+  };
+}
+
+export default function CreateOrderForm({
+  userRole,
+  cancelRedirectPath = "/dashboard/orders",
+  draftId,
+  initialData,
+}: CreateOrderFormProps = {}) {
+  const isEditMode = !!draftId;
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [loadingCustomer, setLoadingCustomer] = useState(false);
+  const isAdmin = userRole === "admin";
 
   // Customer source selector
-  const [customerSource, setCustomerSource] = useState<"myInfo" | "search" | "manual">(
-    "myInfo"
+  const [customerSource, setCustomerSource] = useState<
+    "myInfo" | "search" | "manual"
+  >("myInfo");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(
+    null
   );
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
 
   // Customer search modal
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
@@ -115,6 +200,41 @@ export default function CreateOrderForm() {
   const [searchingCustomers, setSearchingCustomers] = useState(false);
   const debouncedCustomerSearch = useDebounce(customerSearchQuery, 500);
 
+  // Search customers when debounced query changes
+  useEffect(() => {
+    const performCustomerSearch = async () => {
+      if (!customerSearchOpen) {
+        setCustomerSearchResults([]);
+        return;
+      }
+
+      if (!debouncedCustomerSearch.trim()) {
+        setCustomerSearchResults([]);
+        return;
+      }
+
+      setSearchingCustomers(true);
+      try {
+        const result = await searchCustomers(debouncedCustomerSearch.trim());
+        if (result.success && result.data) {
+          setCustomerSearchResults(result.data);
+        } else {
+          setCustomerSearchResults([]);
+          if (result.error) {
+            console.error("Customer search error:", result.error);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to search customers:", error);
+        setCustomerSearchResults([]);
+      } finally {
+        setSearchingCustomers(false);
+      }
+    };
+
+    performCustomerSearch();
+  }, [debouncedCustomerSearch, customerSearchOpen]);
+
   // Customer info
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerFirstName, setCustomerFirstName] = useState("");
@@ -124,19 +244,33 @@ export default function CreateOrderForm() {
   // Line items
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
 
-  // Summary
-  const [currency, setCurrency] = useState("NPR");
-  const [discountAmount, setDiscountAmount] = useState("0");
-  const [shippingAmount, setShippingAmount] = useState("0");
-  const [taxAmount, setTaxAmount] = useState("0");
+  // Store selection (for admins)
+  const [stores, setStores] = useState<
+    Array<{ id: string; storeName: string; logoUrl: string | null }>
+  >([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+  const [loadingStores, setLoadingStores] = useState(false);
 
-  // Statuses
-  const [orderStatus, setOrderStatus] = useState<"open" | "draft">("open");
+  // Market selection
+  const [markets, setMarkets] = useState<
+    Array<{ id: string; name: string; currency: string; isDefault: boolean }>
+  >([]);
+  const [selectedMarketId, setSelectedMarketId] = useState<string | null>(null);
+  const [marketCurrency, setMarketCurrency] = useState<string>("EUR");
+  const [marketExchangeRate, setMarketExchangeRate] = useState<string>("1");
+  const [loadingMarkets, setLoadingMarkets] = useState(false);
+
+  // Summary
+  const [currency, setCurrency] = useState("EUR");
+
+  // Statuses - orders are created as drafts by default
   const [paymentStatus, setPaymentStatus] = useState<"pending" | "paid">(
     "pending"
   );
-  const [fulfillmentStatus, setFulfillmentStatus] =
-    useState<"unfulfilled">("unfulfilled");
+  const [showSendInvoiceDialog, setShowSendInvoiceDialog] = useState(false);
+  const [showMarkAsPaidDialog, setShowMarkAsPaidDialog] = useState(false);
+  const [invoiceEmail, setInvoiceEmail] = useState("");
+  const [invoiceMessage, setInvoiceMessage] = useState("");
 
   // Addresses
   const [shippingName, setShippingName] = useState("");
@@ -158,8 +292,49 @@ export default function CreateOrderForm() {
   const [billingPostalCode, setBillingPostalCode] = useState("");
   const [billingCountry, setBillingCountry] = useState("");
 
-  // Notes
-  const [notes, setNotes] = useState("");
+  // Initialize form data from initialData when in edit mode
+  useEffect(() => {
+    if (isEditMode && initialData) {
+      if (initialData.customerId) {
+        setSelectedCustomerId(initialData.customerId);
+      }
+      setCustomerEmail(initialData.customerEmail || "");
+      setCustomerFirstName(initialData.customerFirstName || "");
+      setCustomerLastName(initialData.customerLastName || "");
+      setCustomerPhone(initialData.customerPhone || "");
+      setLineItems(initialData.lineItems || []);
+      setCurrency(initialData.currency || "EUR");
+      setMarketCurrency(initialData.currency || "EUR");
+      setPaymentStatus(initialData.paymentStatus || "pending");
+      setShippingName(initialData.shippingName || "");
+      setShippingPhone(initialData.shippingPhone || "");
+      setShippingAddressLine1(initialData.shippingAddressLine1 || "");
+      setShippingAddressLine2(initialData.shippingAddressLine2 || "");
+      setShippingCity(initialData.shippingCity || "");
+      setShippingRegion(initialData.shippingRegion || "");
+      setShippingPostalCode(initialData.shippingPostalCode || "");
+      setShippingCountry(initialData.shippingCountry || "");
+      setBillingName(initialData.billingName || "");
+      setBillingPhone(initialData.billingPhone || "");
+      setBillingAddressLine1(initialData.billingAddressLine1 || "");
+      setBillingAddressLine2(initialData.billingAddressLine2 || "");
+      setBillingCity(initialData.billingCity || "");
+      setBillingRegion(initialData.billingRegion || "");
+      setBillingPostalCode(initialData.billingPostalCode || "");
+      setBillingCountry(initialData.billingCountry || "");
+      if (initialData.marketId) {
+        setSelectedMarketId(initialData.marketId);
+      }
+      // Check if billing is same as shipping
+      const billingSame =
+        initialData.billingName === initialData.shippingName &&
+        initialData.billingAddressLine1 === initialData.shippingAddressLine1 &&
+        initialData.billingCity === initialData.shippingCity;
+      setBillingSameAsShipping(billingSame);
+      // Set customer source to manual in edit mode since we're editing existing data
+      setCustomerSource("manual");
+    }
+  }, [isEditMode, initialData]);
 
   // Auto-fill customer info on mount or when source changes
   useEffect(() => {
@@ -186,7 +361,8 @@ export default function CreateOrderForm() {
             setShippingCity(data.shippingCity || "");
             setShippingRegion(data.shippingState || "");
             setShippingPostalCode(data.shippingZip || "");
-            setShippingCountry(data.shippingCountry || "");
+            setShippingCountry(getCountryCode(data.shippingCountry));
+            setShippingPhone(data.phone || "");
 
             // Auto-fill billing address
             if (data.billingFirstName || data.billingLastName) {
@@ -197,9 +373,10 @@ export default function CreateOrderForm() {
             setBillingAddressLine1(data.billingAddress || "");
             setBillingAddressLine2(data.billingAddress2 || "");
             setBillingCity(data.billingCity || "");
+            setBillingPhone(data.billingPhone || "");
             setBillingRegion(data.billingState || "");
             setBillingPostalCode(data.billingZip || "");
-            setBillingCountry(data.billingCountry || "");
+            setBillingCountry(getCountryCode(data.billingCountry));
           } else {
             // If no customer found, clear fields
             setCustomerEmail("");
@@ -213,8 +390,16 @@ export default function CreateOrderForm() {
           setLoadingCustomer(false);
         }
       } else if (customerSource === "search") {
-        // Search mode - open search modal
+        // Search mode - open search modal and reset search
         setCustomerSearchOpen(true);
+        setCustomerSearchQuery("");
+        setCustomerSearchResults([]);
+        setSelectedCustomerId(null);
+        // Clear customer fields - user will select from search
+        setCustomerEmail("");
+        setCustomerFirstName("");
+        setCustomerLastName("");
+        setCustomerPhone("");
       } else {
         // Manual entry - clear all fields
         setSelectedCustomerId(null);
@@ -245,7 +430,7 @@ export default function CreateOrderForm() {
   }, [customerSource]);
 
   // Handle customer selection from search
-  const handleSelectCustomer = (customer: {
+  const handleSelectCustomer = async (customer: {
     id: string;
     email: string;
     firstName: string | null;
@@ -260,6 +445,57 @@ export default function CreateOrderForm() {
     setCustomerSearchOpen(false);
     setCustomerSearchQuery("");
     setCustomerSearchResults([]);
+
+    // Fetch shipping and billing info from customer's most recent order
+    try {
+      const addressResult = await getCustomerShippingBillingInfo(customer.id);
+      if (addressResult.success && addressResult.data) {
+        const addr = addressResult.data;
+
+        // Populate shipping address
+        setShippingName(addr.shippingName || "");
+        setShippingPhone(addr.billingPhone || customer.phone || "");
+        setShippingAddressLine1(addr.shippingAddressLine1 || "");
+        setShippingAddressLine2(addr.shippingAddressLine2 || "");
+        setShippingCity(addr.shippingCity || "");
+        setShippingRegion(addr.shippingRegion || "");
+        setShippingPostalCode(addr.shippingPostalCode || "");
+        setShippingCountry(getCountryCode(addr.shippingCountry));
+
+        // Populate billing address
+        setBillingName(addr.billingName || "");
+        setBillingPhone(addr.billingPhone || customer.phone || "");
+        setBillingAddressLine1(addr.billingAddressLine1 || "");
+        setBillingAddressLine2(addr.billingAddressLine2 || "");
+        setBillingCity(addr.billingCity || "");
+        setBillingRegion(addr.billingRegion || "");
+        setBillingPostalCode(addr.billingPostalCode || "");
+        setBillingCountry(getCountryCode(addr.billingCountry));
+
+        // If billing address is same as shipping, set the checkbox
+        if (
+          addr.billingName === addr.shippingName &&
+          addr.billingAddressLine1 === addr.shippingAddressLine1 &&
+          addr.billingCity === addr.shippingCity
+        ) {
+          setBillingSameAsShipping(true);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load customer address info:", error);
+      // Don't show error to user - just proceed without address data
+    }
+
+    // Keep customerSource as "search" to indicate customer was selected from search
+  };
+
+  // Handle customer search modal close
+  const handleCloseCustomerSearch = () => {
+    setCustomerSearchOpen(false);
+    setCustomerSearchQuery("");
+    setCustomerSearchResults([]);
+    // If no customer was selected, don't change customerSource
+    // User can still manually enter or switch to another source
   };
 
   // Product picker modal
@@ -303,13 +539,8 @@ export default function CreateOrderForm() {
   }, [lineItems]);
 
   const total = useMemo(() => {
-    return (
-      subtotal -
-      parseFloat(discountAmount || "0") +
-      parseFloat(shippingAmount || "0") +
-      parseFloat(taxAmount || "0")
-    );
-  }, [subtotal, discountAmount, shippingAmount, taxAmount]);
+    return subtotal;
+  }, [subtotal]);
 
   // Search products function
   const performSearch = useCallback(
@@ -324,7 +555,8 @@ export default function CreateOrderForm() {
           searchTerm?.trim() || undefined,
           searchType,
           page,
-          pageSize
+          pageSize,
+          selectedStoreId || undefined
         );
         if (result.success && result.data) {
           // Group products by listing
@@ -387,7 +619,7 @@ export default function CreateOrderForm() {
         setSearching(false);
       }
     },
-    [pageSize]
+    [pageSize, selectedStoreId]
   );
 
   // Load all products on modal open
@@ -429,7 +661,135 @@ export default function CreateOrderForm() {
         prevSearchByRef.current = searchBy;
       }
     }
-  }, [debouncedSearch, searchBy, productPickerOpen, performSearch]);
+  }, [
+    debouncedSearch,
+    searchBy,
+    productPickerOpen,
+    performSearch,
+    selectedStoreId,
+  ]);
+
+  // Fetch stores for admin on mount
+  useEffect(() => {
+    if (isAdmin) {
+      const fetchStores = async () => {
+        setLoadingStores(true);
+        try {
+          const result = await getAllStores();
+          if (result.success && result.stores) {
+            setStores(result.stores);
+            // Auto-select first store if available
+            if (result.stores.length > 0 && !selectedStoreId) {
+              setSelectedStoreId(result.stores[0].id);
+            }
+          }
+        } catch (error) {
+          console.error("Failed to fetch stores:", error);
+        } finally {
+          setLoadingStores(false);
+        }
+      };
+      fetchStores();
+    }
+  }, [isAdmin]);
+
+  // Fetch markets on mount
+  useEffect(() => {
+    const fetchMarkets = async () => {
+      setLoadingMarkets(true);
+      try {
+        const result = await getMarketsForUser();
+        if (result.success && result.markets) {
+          setMarkets(result.markets);
+          // Find and select default market
+          const defaultMarket = result.markets.find((m) => m.isDefault);
+          if (defaultMarket) {
+            setSelectedMarketId(defaultMarket.id);
+            setMarketCurrency(defaultMarket.currency);
+            setCurrency(defaultMarket.currency);
+            // Fetch exchange rate for default market
+            try {
+              const marketResult = await getMarket(defaultMarket.id);
+              if (marketResult.success && marketResult.data) {
+                setMarketExchangeRate(marketResult.data.exchangeRate || "1");
+              }
+            } catch (error) {
+              console.error(
+                "Failed to fetch default market exchange rate:",
+                error
+              );
+            }
+          } else if (result.markets.length > 0) {
+            // If no default, use first market
+            setSelectedMarketId(result.markets[0].id);
+            setMarketCurrency(result.markets[0].currency);
+            setCurrency(result.markets[0].currency);
+            // Fetch exchange rate for first market
+            try {
+              const marketResult = await getMarket(result.markets[0].id);
+              if (marketResult.success && marketResult.data) {
+                setMarketExchangeRate(marketResult.data.exchangeRate || "1");
+              }
+            } catch (error) {
+              console.error("Failed to fetch market exchange rate:", error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch markets:", error);
+      } finally {
+        setLoadingMarkets(false);
+      }
+    };
+    fetchMarkets();
+  }, []);
+
+  // Update currency and convert prices when market changes
+  useEffect(() => {
+    const updateMarketAndConvertPrices = async () => {
+      if (selectedMarketId) {
+        const market = markets.find((m) => m.id === selectedMarketId);
+        if (market) {
+          setMarketCurrency(market.currency);
+          setCurrency(market.currency);
+
+          // Fetch market details to get exchange rate
+          try {
+            const marketResult = await getMarket(selectedMarketId);
+            if (marketResult.success && marketResult.data) {
+              const exchangeRate = parseFloat(
+                marketResult.data.exchangeRate || "1"
+              );
+              setMarketExchangeRate(marketResult.data.exchangeRate || "1");
+
+              // Convert all line item prices to new market currency
+              setLineItems((prevItems) =>
+                prevItems.map((item) => {
+                  const originalPrice = parseFloat(
+                    item.originalUnitPrice || item.unitPrice
+                  );
+                  // Convert: originalPrice (in originalCurrency) -> EUR -> newCurrency
+                  // Since exchangeRate is from EUR to market currency, we need to reverse if original is not EUR
+                  // For simplicity, assuming original prices are in EUR base
+                  const convertedPrice = originalPrice * exchangeRate;
+
+                  return {
+                    ...item,
+                    unitPrice: convertedPrice.toFixed(2),
+                    currency: market.currency,
+                  };
+                })
+              );
+            }
+          } catch (error) {
+            console.error("Failed to fetch market exchange rate:", error);
+          }
+        }
+      }
+    };
+
+    updateMarketAndConvertPrices();
+  }, [selectedMarketId, markets]);
 
   // Toggle product expansion
   const toggleProductExpansion = (listingId: string) => {
@@ -497,19 +857,29 @@ export default function CreateOrderForm() {
         // Use variant image if available, otherwise use listing image
         const displayImageUrl =
           variant.variantImageUrl || variant.listingImageUrl || null;
+        // Convert price to market currency if market is selected
+        let displayPrice = variant.price || "0";
+        if (selectedMarketId && marketExchangeRate) {
+          const originalPrice = parseFloat(variant.price || "0");
+          const exchangeRate = parseFloat(marketExchangeRate);
+          displayPrice = (originalPrice * exchangeRate).toFixed(2);
+        }
+
         const newItem: LineItem = {
-          id: `${Date.now()}-${Math.random()}`,
+          id: `item-${variant.variantId}-${lineItems.length}`,
           listingId: variant.listingId,
           variantId: variant.variantId,
           quantity: 1,
-          unitPrice: variant.price || "0",
+          unitPrice: displayPrice,
           title: `${variant.listingName} - ${variant.variantTitle}`,
           sku: variant.sku || null,
           listingName: variant.listingName,
           variantTitle: variant.variantTitle,
           imageUrl: displayImageUrl,
           variantImageUrl: variant.variantImageUrl,
-          currency: variant.currency,
+          currency: marketCurrency, // Display currency
+          originalCurrency: variant.currency, // Store original currency
+          originalUnitPrice: variant.price || "0", // Store original price
           available: variant.available,
         };
         setLineItems((prev) => [...prev, newItem]);
@@ -599,69 +969,134 @@ export default function CreateOrderForm() {
 
     setLoading(true);
     try {
-      const result = await createOrder({
-        customerId: selectedCustomerId || null,
-        customerEmail: customerEmail.trim(),
-        customerFirstName: customerFirstName.trim() || null,
-        customerLastName: customerLastName.trim() || null,
-        customerPhone: customerPhone.trim() || null,
-        lineItems: lineItems.map((item) => ({
-          listingId: item.listingId,
-          variantId: item.variantId,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          title: item.title,
-          sku: item.sku || null,
-        })),
-        currency,
-        subtotalAmount: subtotal.toFixed(2),
-        discountAmount: discountAmount || "0",
-        shippingAmount: shippingAmount || "0",
-        taxAmount: taxAmount || "0",
-        totalAmount: total.toFixed(2),
-        paymentStatus,
-        fulfillmentStatus,
-        status: orderStatus,
-        shippingName: shippingName.trim() || null,
-        shippingPhone: shippingPhone.trim() || null,
-        shippingAddressLine1: shippingAddressLine1.trim() || null,
-        shippingAddressLine2: shippingAddressLine2.trim() || null,
-        shippingCity: shippingCity.trim() || null,
-        shippingRegion: shippingRegion.trim() || null,
-        shippingPostalCode: shippingPostalCode.trim() || null,
-        shippingCountry: shippingCountry.trim() || null,
-        billingName: billingSameAsShipping
-          ? shippingName.trim() || null
-          : billingName.trim() || null,
-        billingPhone: billingSameAsShipping
-          ? shippingPhone.trim() || null
-          : billingPhone.trim() || null,
-        billingAddressLine1: billingSameAsShipping
-          ? shippingAddressLine1.trim() || null
-          : billingAddressLine1.trim() || null,
-        billingAddressLine2: billingSameAsShipping
-          ? shippingAddressLine2.trim() || null
-          : billingAddressLine2.trim() || null,
-        billingCity: billingSameAsShipping
-          ? shippingCity.trim() || null
-          : billingCity.trim() || null,
-        billingRegion: billingSameAsShipping
-          ? shippingRegion.trim() || null
-          : billingRegion.trim() || null,
-        billingPostalCode: billingSameAsShipping
-          ? shippingPostalCode.trim() || null
-          : billingPostalCode.trim() || null,
-        billingCountry: billingSameAsShipping
-          ? shippingCountry.trim() || null
-          : billingCountry.trim() || null,
-        notes: notes.trim() || null,
-      });
+      if (isEditMode && draftId) {
+        // Update existing draft order
+        const result = await updateDraftOrder(draftId, {
+          customerId: selectedCustomerId || null,
+          customerEmail: customerEmail.trim(),
+          customerFirstName: customerFirstName.trim() || null,
+          customerLastName: customerLastName.trim() || null,
+          customerPhone: customerPhone.trim() || null,
+          lineItems: lineItems.map((item) => ({
+            id: item.id,
+            listingId: item.listingId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            title: item.title,
+            sku: item.sku || null,
+          })),
+          currency: marketCurrency,
+          subtotalAmount: subtotal.toFixed(2),
+          discountAmount: "0",
+          shippingAmount: "0",
+          taxAmount: "0",
+          totalAmount: total.toFixed(2),
+          paymentStatus,
+          shippingName: shippingName.trim() || null,
+          shippingPhone: shippingPhone.trim() || null,
+          shippingAddressLine1: shippingAddressLine1.trim() || null,
+          shippingAddressLine2: shippingAddressLine2.trim() || null,
+          shippingCity: shippingCity.trim() || null,
+          shippingRegion: shippingRegion.trim() || null,
+          shippingPostalCode: shippingPostalCode.trim() || null,
+          shippingCountry: shippingCountry.trim() || null,
+          billingName: billingSameAsShipping
+            ? shippingName.trim() || null
+            : billingName.trim() || null,
+          billingPhone: billingSameAsShipping
+            ? shippingPhone.trim() || null
+            : billingPhone.trim() || null,
+          billingAddressLine1: billingSameAsShipping
+            ? shippingAddressLine1.trim() || null
+            : billingAddressLine1.trim() || null,
+          billingAddressLine2: billingSameAsShipping
+            ? shippingAddressLine2.trim() || null
+            : billingAddressLine2.trim() || null,
+          billingCity: billingSameAsShipping
+            ? shippingCity.trim() || null
+            : billingCity.trim() || null,
+          billingRegion: billingSameAsShipping
+            ? shippingRegion.trim() || null
+            : billingRegion.trim() || null,
+          billingPostalCode: billingSameAsShipping
+            ? shippingPostalCode.trim() || null
+            : billingPostalCode.trim() || null,
+          billingCountry: billingSameAsShipping
+            ? shippingCountry.trim() || null
+            : billingCountry.trim() || null,
+        });
 
-      if (result.success) {
-        toast.success("Order created successfully");
-        router.push("/dashboard/orders");
+        if (result.success) {
+          toast.success("Draft order updated successfully");
+          // Stay on the same page
+        } else {
+          toast.error(result.error || "Failed to update draft order");
+        }
       } else {
-        toast.error(result.error || "Failed to create order");
+        // Create new draft order
+        const result = await createDraftOrder({
+          customerId: selectedCustomerId || null,
+          customerEmail: customerEmail.trim(),
+          customerFirstName: customerFirstName.trim() || null,
+          customerLastName: customerLastName.trim() || null,
+          customerPhone: customerPhone.trim() || null,
+          lineItems: lineItems.map((item) => ({
+            listingId: item.listingId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            title: item.title,
+            sku: item.sku || null,
+          })),
+          currency: marketCurrency,
+          subtotalAmount: subtotal.toFixed(2),
+          discountAmount: "0",
+          shippingAmount: "0",
+          taxAmount: "0",
+          totalAmount: total.toFixed(2),
+          paymentStatus,
+          shippingName: shippingName.trim() || null,
+          shippingPhone: shippingPhone.trim() || null,
+          shippingAddressLine1: shippingAddressLine1.trim() || null,
+          shippingAddressLine2: shippingAddressLine2.trim() || null,
+          shippingCity: shippingCity.trim() || null,
+          shippingRegion: shippingRegion.trim() || null,
+          shippingPostalCode: shippingPostalCode.trim() || null,
+          shippingCountry: shippingCountry.trim() || null,
+          billingName: billingSameAsShipping
+            ? shippingName.trim() || null
+            : billingName.trim() || null,
+          billingPhone: billingSameAsShipping
+            ? shippingPhone.trim() || null
+            : billingPhone.trim() || null,
+          billingAddressLine1: billingSameAsShipping
+            ? shippingAddressLine1.trim() || null
+            : billingAddressLine1.trim() || null,
+          billingAddressLine2: billingSameAsShipping
+            ? shippingAddressLine2.trim() || null
+            : billingAddressLine2.trim() || null,
+          billingCity: billingSameAsShipping
+            ? shippingCity.trim() || null
+            : billingCity.trim() || null,
+          billingRegion: billingSameAsShipping
+            ? shippingRegion.trim() || null
+            : billingRegion.trim() || null,
+          billingPostalCode: billingSameAsShipping
+            ? shippingPostalCode.trim() || null
+            : billingPostalCode.trim() || null,
+          billingCountry: billingSameAsShipping
+            ? shippingCountry.trim() || null // CountrySelect returns country code
+            : billingCountry.trim() || null, // CountrySelect returns country code
+        });
+
+        if (result.success && result.draftId) {
+          toast.success("Draft order created successfully");
+          // Redirect to draft order detail page
+          router.push(`/dashboard/draft_orders/${result.draftId}`);
+        } else {
+          toast.error(result.error || "Failed to create draft order");
+        }
       }
     } catch {
       toast.error("Failed to create order");
@@ -676,7 +1111,7 @@ export default function CreateOrderForm() {
         <h1 className="text-3xl font-bold">Create Order</h1>
         <Button
           variant="outline"
-          onClick={() => router.push("/dashboard/orders")}
+          onClick={() => router.push(cancelRedirectPath)}
         >
           Cancel
         </Button>
@@ -701,7 +1136,9 @@ export default function CreateOrderForm() {
                       value="myInfo"
                       checked={customerSource === "myInfo"}
                       onChange={(e) =>
-                        setCustomerSource(e.target.value as "myInfo" | "search" | "manual")
+                        setCustomerSource(
+                          e.target.value as "myInfo" | "search" | "manual"
+                        )
                       }
                       className="w-4 h-4"
                     />
@@ -714,11 +1151,15 @@ export default function CreateOrderForm() {
                       value="search"
                       checked={customerSource === "search"}
                       onChange={(e) =>
-                        setCustomerSource(e.target.value as "myInfo" | "search" | "manual")
+                        setCustomerSource(
+                          e.target.value as "myInfo" | "search" | "manual"
+                        )
                       }
                       className="w-4 h-4"
                     />
-                    <span className="text-sm">Search for existing customer</span>
+                    <span className="text-sm">
+                      Search for existing customer
+                    </span>
                   </label>
                   <label className="flex items-center space-x-2 cursor-pointer">
                     <input
@@ -727,7 +1168,9 @@ export default function CreateOrderForm() {
                       value="manual"
                       checked={customerSource === "manual"}
                       onChange={(e) =>
-                        setCustomerSource(e.target.value as "myInfo" | "search" | "manual")
+                        setCustomerSource(
+                          e.target.value as "myInfo" | "search" | "manual"
+                        )
                       }
                       className="w-4 h-4"
                     />
@@ -788,6 +1231,41 @@ export default function CreateOrderForm() {
               </div>
             </Card>
 
+            {/* Store Selection (for admins) */}
+            {isAdmin && (
+              <Card className="p-6">
+                <h2 className="text-lg font-semibold mb-4">Store</h2>
+                <div className="space-y-2">
+                  <Label htmlFor="store">Select Store</Label>
+                  <Select
+                    value={selectedStoreId || ""}
+                    onValueChange={setSelectedStoreId}
+                    disabled={loadingStores || stores.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          loadingStores ? "Loading stores..." : "Select a store"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {stores.map((store) => (
+                        <SelectItem key={store.id} value={store.id}>
+                          {store.storeName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!selectedStoreId && stores.length > 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      Please select a store to view products
+                    </p>
+                  )}
+                </div>
+              </Card>
+            )}
+
             {/* Line Items Section */}
             <Card className="p-6">
               <div className="flex items-center justify-between mb-4">
@@ -796,6 +1274,7 @@ export default function CreateOrderForm() {
                   type="button"
                   variant="outline"
                   onClick={() => setProductPickerOpen(true)}
+                  disabled={isAdmin && !selectedStoreId}
                 >
                   <Plus className="mr-2 h-4 w-4" />
                   Add Product
@@ -852,7 +1331,7 @@ export default function CreateOrderForm() {
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground mt-1">
-                            {item.currency}{" "}
+                            {marketCurrency}{" "}
                             {parseFloat(item.unitPrice).toFixed(2)}
                             {item.available > 0 && (
                               <span className="ml-2">
@@ -896,7 +1375,7 @@ export default function CreateOrderForm() {
 
                         {/* Total */}
                         <div className="text-sm font-medium w-24 text-right">
-                          {item.currency} {itemTotal.toFixed(2)}
+                          {marketCurrency} {itemTotal.toFixed(2)}
                         </div>
 
                         {/* Remove Button */}
@@ -916,142 +1395,93 @@ export default function CreateOrderForm() {
               )}
             </Card>
 
-            {/* Notes */}
-            <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4">Notes</h2>
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Internal notes about this order..."
-                rows={4}
-              />
-            </Card>
+            {/* Payment Card - Only show when products have been added */}
+            {lineItems.length > 0 && (
+              <Card className="p-6">
+                <h2 className="text-lg font-semibold mb-4">Payment</h2>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span>Subtotal:</span>
+                      <span>
+                        {marketCurrency} {subtotal.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between font-semibold pt-2 border-t">
+                      <span>Total:</span>
+                      <span>
+                        {marketCurrency} {total.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setInvoiceEmail(customerEmail);
+                        setShowSendInvoiceDialog(true);
+                      }}
+                      disabled={loading || !customerEmail}
+                    >
+                      <Mail className="h-4 w-4 mr-2" />
+                      Send invoice
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setPaymentStatus("paid");
+                        setShowMarkAsPaidDialog(true);
+                      }}
+                      disabled={loading || paymentStatus === "paid"}
+                    >
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Mark as Paid
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            )}
           </div>
 
-          {/* Right Column - Summary, Status, Addresses */}
+          {/* Right Column - Markets, Status, Addresses */}
           <div className="space-y-6">
-            {/* Summary */}
+            {/* Markets */}
             <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4">Summary</h2>
+              <h2 className="text-lg font-semibold mb-4">Markets</h2>
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="currency">Currency</Label>
-                  <Select value={currency} onValueChange={setCurrency}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="NPR">NPR</SelectItem>
-                      <SelectItem value="USD">USD</SelectItem>
-                      <SelectItem value="EUR">EUR</SelectItem>
-                      <SelectItem value="GBP">GBP</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>Subtotal:</span>
-                    <span>
-                      {currency} {subtotal.toFixed(2)}
-                    </span>
-                  </div>
-                  <div>
-                    <Label htmlFor="discount">Discount</Label>
-                    <Input
-                      id="discount"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={discountAmount}
-                      onChange={(e) => setDiscountAmount(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="shipping">Shipping</Label>
-                    <Input
-                      id="shipping"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={shippingAmount}
-                      onChange={(e) => setShippingAmount(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="tax">Tax</Label>
-                    <Input
-                      id="tax"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={taxAmount}
-                      onChange={(e) => setTaxAmount(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex justify-between font-semibold pt-2 border-t">
-                    <span>Total:</span>
-                    <span>
-                      {currency} {total.toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            {/* Statuses */}
-            <Card className="p-6">
-              <h2 className="text-lg font-semibold mb-4">Status</h2>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="orderStatus">Order Status</Label>
+                  <Label htmlFor="market">Select Market</Label>
                   <Select
-                    value={orderStatus}
-                    onValueChange={(value: "open" | "draft") =>
-                      setOrderStatus(value)
-                    }
+                    value={selectedMarketId || ""}
+                    onValueChange={(value) => {
+                      setSelectedMarketId(value);
+                    }}
+                    disabled={loadingMarkets || markets.length === 0}
                   >
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue
+                        placeholder={
+                          loadingMarkets
+                            ? "Loading markets..."
+                            : "Select a market"
+                        }
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="open">Open</SelectItem>
-                      <SelectItem value="draft">Draft</SelectItem>
+                      {markets.map((market) => (
+                        <SelectItem key={market.id} value={market.id}>
+                          {market.name} {market.isDefault && "(Default)"}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <Label htmlFor="paymentStatus">Payment Status</Label>
-                  <Select
-                    value={paymentStatus}
-                    onValueChange={(value: "pending" | "paid") =>
-                      setPaymentStatus(value)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="paid">Paid</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="fulfillmentStatus">Fulfillment Status</Label>
-                  <Select
-                    value={fulfillmentStatus}
-                    onValueChange={(value: "unfulfilled") =>
-                      setFulfillmentStatus(value)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="unfulfilled">Unfulfilled</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                {selectedMarketId && (
+                  <div className="text-sm text-muted-foreground">
+                    Currency: {marketCurrency}
+                  </div>
+                )}
               </div>
             </Card>
 
@@ -1230,15 +1660,104 @@ export default function CreateOrderForm() {
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/dashboard/orders")}
+            onClick={() => router.push(cancelRedirectPath)}
           >
             Cancel
           </Button>
           <Button type="submit" disabled={loading}>
-            {loading ? "Creating..." : "Create Order"}
+            {loading ? "Saving..." : "Save Draft"}
           </Button>
         </div>
       </form>
+
+      {/* Send Invoice Dialog */}
+      <Dialog
+        open={showSendInvoiceDialog}
+        onOpenChange={setShowSendInvoiceDialog}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send Invoice</DialogTitle>
+            <DialogDescription>
+              You can send an invoice after saving the draft order.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="invoice-email">Email</Label>
+              <Input
+                id="invoice-email"
+                type="email"
+                value={invoiceEmail}
+                onChange={(e) => setInvoiceEmail(e.target.value)}
+                placeholder="customer@example.com"
+              />
+            </div>
+            <div>
+              <Label htmlFor="invoice-message">Message (optional)</Label>
+              <Textarea
+                id="invoice-message"
+                value={invoiceMessage}
+                onChange={(e) => setInvoiceMessage(e.target.value)}
+                placeholder="Add a custom message to the invoice..."
+                rows={4}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowSendInvoiceDialog(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setShowSendInvoiceDialog(false);
+                toast("Invoice will be sent after saving the draft order");
+              }}
+            >
+              Save for Later
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mark as Paid Dialog */}
+      <Dialog
+        open={showMarkAsPaidDialog}
+        onOpenChange={setShowMarkAsPaidDialog}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mark as Paid</DialogTitle>
+            <DialogDescription>
+              Mark this order as paid if you received {currency}{" "}
+              {total.toFixed(2)} from another payment method. This will create
+              an order when you save.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowMarkAsPaidDialog(false);
+                setPaymentStatus("pending");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setShowMarkAsPaidDialog(false);
+                toast("Order will be marked as paid when saved");
+              }}
+            >
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Product Picker Modal */}
       <Dialog open={productPickerOpen} onOpenChange={setProductPickerOpen}>
@@ -1526,7 +2045,10 @@ export default function CreateOrderForm() {
       </Dialog>
 
       {/* Customer Search Modal */}
-      <Dialog open={customerSearchOpen} onOpenChange={setCustomerSearchOpen}>
+      <Dialog
+        open={customerSearchOpen}
+        onOpenChange={handleCloseCustomerSearch}
+      >
         <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Search Customer</DialogTitle>
@@ -1600,11 +2122,7 @@ export default function CreateOrderForm() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => {
-                setCustomerSearchOpen(false);
-                setCustomerSearchQuery("");
-                setCustomerSearchResults([]);
-              }}
+              onClick={handleCloseCustomerSearch}
             >
               Cancel
             </Button>

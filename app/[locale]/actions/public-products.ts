@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { listing, category, listingTranslations } from "@/db/schema";
+import { listing, listingTranslations } from "@/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 
 export interface PublicProduct {
@@ -60,16 +60,16 @@ export async function getPublicProducts(
         id: listing.id,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        category: listing.category,
-        categoryName: category.name,
+        category: listing.taxonomyCategoryId,
+        categoryName: listing.taxonomyCategoryName,
         imageUrl: listing.imageUrl,
         gallery: listing.gallery,
         tags: listingTranslations.tags,
         price: listing.price,
         currency: listing.currency,
-        stockQuantity: listing.stockQuantity,
+        stockQuantity: null, // Stock quantity is calculated from inventory levels
         unit: listing.unit,
-        isActive: listing.isActive,
+        isActive: listing.status === "active",
         isFeatured: listing.isFeatured,
         marketType: listing.marketType,
         originVillage: listingTranslations.originVillage,
@@ -86,7 +86,6 @@ export async function getPublicProducts(
         originVillageFallback: listing.originVillage,
       })
       .from(listing)
-      .leftJoin(category, eq(listing.category, category.id))
       .leftJoin(
         listingTranslations,
         and(
@@ -94,7 +93,7 @@ export async function getPublicProducts(
           eq(listingTranslations.locale, locale)
         )
       )
-      .where(eq(listing.isActive, true))
+      .where(eq(listing.status, "active"))
       .orderBy(desc(listing.createdAt));
 
     console.log("Products fetched:", products.length);
@@ -147,16 +146,16 @@ export async function getPublicProductById(
         id: listing.id,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        category: listing.category,
-        categoryName: category.name,
+        category: listing.taxonomyCategoryId,
+        categoryName: listing.taxonomyCategoryName,
         imageUrl: listing.imageUrl,
         gallery: listing.gallery,
         tags: listingTranslations.tags,
         price: listing.price,
         currency: listing.currency,
-        stockQuantity: listing.stockQuantity,
+        stockQuantity: null, // Stock quantity is calculated from inventory levels
         unit: listing.unit,
-        isActive: listing.isActive,
+        isActive: listing.status === "active",
         isFeatured: listing.isFeatured,
         marketType: listing.marketType,
         originVillage: listingTranslations.originVillage,
@@ -173,7 +172,6 @@ export async function getPublicProductById(
         originVillageFallback: listing.originVillage,
       })
       .from(listing)
-      .leftJoin(category, eq(listing.category, category.id))
       .leftJoin(
         listingTranslations,
         and(
@@ -181,7 +179,7 @@ export async function getPublicProductById(
           eq(listingTranslations.locale, locale)
         )
       )
-      .where(and(eq(listing.id, id), eq(listing.isActive, true)))
+      .where(and(eq(listing.id, id), eq(listing.status, "active")))
       .limit(1);
 
     if (result.length === 0) {
@@ -237,10 +235,10 @@ export async function getRelatedProducts(
 ): Promise<ActionResponse & { result?: PublicProduct[] }> {
   try {
     // Build where conditions
-    const whereConditions = [eq(listing.isActive, true)];
+    const whereConditions = [eq(listing.status, "active")];
 
     if (categoryId) {
-      whereConditions.push(eq(listing.category, categoryId));
+      whereConditions.push(eq(listing.taxonomyCategoryId, categoryId));
     }
 
     const query = db
@@ -248,16 +246,16 @@ export async function getRelatedProducts(
         id: listing.id,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        category: listing.category,
-        categoryName: category.name,
+        category: listing.taxonomyCategoryId,
+        categoryName: listing.taxonomyCategoryName,
         imageUrl: listing.imageUrl,
         gallery: listing.gallery,
         tags: listingTranslations.tags,
         price: listing.price,
         currency: listing.currency,
-        stockQuantity: listing.stockQuantity,
+        stockQuantity: null, // Stock quantity is calculated from inventory levels
         unit: listing.unit,
-        isActive: listing.isActive,
+        isActive: listing.status === "active",
         isFeatured: listing.isFeatured,
         marketType: listing.marketType,
         originVillage: listingTranslations.originVillage,
@@ -274,7 +272,6 @@ export async function getRelatedProducts(
         originVillageFallback: listing.originVillage,
       })
       .from(listing)
-      .leftJoin(category, eq(listing.category, category.id))
       .leftJoin(
         listingTranslations,
         and(
@@ -344,16 +341,16 @@ export async function getFeaturedProducts(
         id: listing.id,
         name: listingTranslations.name,
         description: listingTranslations.description,
-        category: listing.category,
-        categoryName: category.name,
+        category: listing.taxonomyCategoryId,
+        categoryName: listing.taxonomyCategoryName,
         imageUrl: listing.imageUrl,
         gallery: listing.gallery,
         tags: listingTranslations.tags,
         price: listing.price,
         currency: listing.currency,
-        stockQuantity: listing.stockQuantity,
+        stockQuantity: null, // Stock quantity is calculated from inventory levels
         unit: listing.unit,
-        isActive: listing.isActive,
+        isActive: listing.status === "active",
         isFeatured: listing.isFeatured,
         marketType: listing.marketType,
         originVillage: listingTranslations.originVillage,
@@ -370,7 +367,6 @@ export async function getFeaturedProducts(
         originVillageFallback: listing.originVillage,
       })
       .from(listing)
-      .leftJoin(category, eq(listing.category, category.id))
       .leftJoin(
         listingTranslations,
         and(
@@ -378,7 +374,7 @@ export async function getFeaturedProducts(
           eq(listingTranslations.locale, locale)
         )
       )
-      .where(and(eq(listing.isActive, true), eq(listing.isFeatured, true)))
+      .where(and(eq(listing.status, "active"), eq(listing.isFeatured, true)))
       .orderBy(desc(listing.createdAt))
       .limit(limit);
 

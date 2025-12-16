@@ -42,7 +42,7 @@ type SettingsSection =
   | "profile"
   | "security"
   | "shipping-billing"
-  | "vendor";
+  | "store";
 
 interface SettingsSectionConfig {
   id: SettingsSection;
@@ -61,7 +61,7 @@ export function SettingsModal({
   const router = useRouter();
   const pathname = usePathname();
   const [activeSection, setActiveSection] =
-    useState<SettingsSection>("profile");
+    useState<SettingsSection>("store");
 
   const validSections: SettingsSection[] = [
     "users",
@@ -78,13 +78,13 @@ export function SettingsModal({
     "profile",
     "security",
     "shipping-billing",
-    "vendor",
+    "store",
   ];
 
   // Extract section from URL
   useEffect(() => {
     // Handle both with and without locale prefix
-    // usePathname from next-intl returns path without locale (e.g., "/dashboard/settings/vendor")
+    // usePathname from next-intl returns path without locale (e.g., "/dashboard/settings/store")
     const settingsMatch = pathname.match(/\/dashboard\/settings\/([^\/]+)/);
     if (settingsMatch) {
       const section = settingsMatch[1];
@@ -105,10 +105,10 @@ export function SettingsModal({
       }
     }
 
-    // Only default to profile if pathname is exactly /dashboard/settings (no section specified)
+    // Only default to store if pathname is exactly /dashboard/settings (no section specified)
     // Don't change if we're already on a settings page with a section
     if (pathname === "/dashboard/settings") {
-      setActiveSection("profile");
+      setActiveSection("store");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
@@ -116,6 +116,13 @@ export function SettingsModal({
   if (!isOpen) return null;
 
   const settingsSections: SettingsSectionConfig[] = [
+    // Store (A, S) - for managing store information (moved to first)
+    {
+      id: "store",
+      label: "Store",
+      icon: Store,
+      roles: ["admin", "seller"], // A, S
+    },
     // Users (A) - with Roles and Permissions as sub-items
     {
       id: "users",
@@ -203,13 +210,6 @@ export function SettingsModal({
       id: "shipping-billing",
       label: "Shipping & Billing",
       icon: Truck,
-      roles: ["admin", "seller"], // A, S
-    },
-    // Vendor (A, S) - for managing vendor/store information
-    {
-      id: "vendor",
-      label: "Vendor",
-      icon: Store,
       roles: ["admin", "seller"], // A, S
     },
   ];

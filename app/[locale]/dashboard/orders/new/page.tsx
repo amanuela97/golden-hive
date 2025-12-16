@@ -39,7 +39,7 @@ export default async function CreateOrderPage() {
 
   return (
     <DashboardWrapper userRole={roleName}>
-      <CreateOrderForm />
+      <CreateOrderForm userRole={roleName} />
     </DashboardWrapper>
   );
 }

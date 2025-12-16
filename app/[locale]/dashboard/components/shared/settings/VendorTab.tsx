@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Save, Store, Image as ImageIcon, X, Plus, MapPin, Edit, Trash2 } from "lucide-react";
-import { upsertVendor, getVendor } from "../../../../actions/vendor";
+import { upsertStore, getStore } from "../../../../actions/store";
 import {
   getAllInventoryLocations,
   createInventoryLocation,
@@ -22,9 +22,9 @@ import type { InventoryLocation } from "@/db/schema";
 const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP"];
 
 // Use InventoryLocation from schema, omitting fields we don't need in UI
-type Location = Omit<InventoryLocation, "vendorId" | "createdAt" | "updatedAt">;
+type Location = Omit<InventoryLocation, "storeId" | "createdAt" | "updatedAt">;
 
-export default function VendorTab() {
+export default function StoreTab() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
   const [formData, setFormData] = useState({
@@ -50,14 +50,14 @@ export default function VendorTab() {
   const [isSavingLocation, setIsSavingLocation] = useState(false);
 
   useEffect(() => {
-    loadVendorData();
+    loadStoreData();
     loadLocations();
   }, []);
 
-  const loadVendorData = async () => {
+  const loadStoreData = async () => {
     setLoadingData(true);
     try {
-      const result = await getVendor();
+      const result = await getStore();
       if (result.success && result.result) {
         setFormData({
           storeName: result.result.storeName || "",
@@ -69,7 +69,7 @@ export default function VendorTab() {
         }
       }
     } catch (error) {
-      console.error("Error loading vendor data:", error);
+      console.error("Error loading store data:", error);
     } finally {
       setLoadingData(false);
     }
@@ -149,7 +149,7 @@ export default function VendorTab() {
 
     setIsLoading(true);
     try {
-      const result = await upsertVendor(
+      const result = await upsertStore(
         {
           storeName: formData.storeName.trim(),
           description: formData.description.trim() || null,
@@ -159,18 +159,18 @@ export default function VendorTab() {
       );
 
       if (result.success) {
-        toast.success(result.message || "Vendor updated successfully");
+        toast.success(result.message || "Store updated successfully");
         // Update existing logo URL if a new one was uploaded
         if (logoFile && logoPreview && !logoPreview.startsWith("blob:")) {
           // The logo URL will be returned from the server, but for now we'll reload
-          await loadVendorData();
+          await loadStoreData();
         }
       } else {
-        toast.error(result.error || "Failed to update vendor");
+        toast.error(result.error || "Failed to update store");
       }
     } catch (error) {
-      console.error("Vendor update error:", error);
-      toast.error("Failed to update vendor");
+      console.error("Store update error:", error);
+      toast.error("Failed to update store");
     } finally {
       setIsLoading(false);
     }
@@ -274,10 +274,10 @@ export default function VendorTab() {
 
   return (
     <div className="space-y-8">
-      {/* Vendor Information Section */}
+      {/* Store Information Section */}
       <div className="flex items-center gap-3">
         <Store className="w-6 h-6 text-blue-600" />
-        <h3 className="text-xl font-semibold">Vendor Information</h3>
+        <h3 className="text-xl font-semibold">Store Information</h3>
       </div>
 
       <Card className="p-8">

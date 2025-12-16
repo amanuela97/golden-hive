@@ -2,12 +2,12 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { redirect } from "@/i18n/navigation";
 import { db } from "@/db";
-import { userRoles, roles, vendor } from "@/db/schema";
+import { userRoles, roles, store, storeMembers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
 import {
   listCustomers,
-  getVendorsForFilter,
+  getStoresForFilter,
 } from "@/app/[locale]/actions/customers";
 import CustomersPageClient from "@/app/[locale]/dashboard/components/shared/CustomersPageClient";
 import { DashboardWrapper } from "../components/shared/DashboardWrapper";
@@ -49,17 +49,18 @@ export default async function CustomersPage() {
     redirect({ href: "/dashboard", locale });
   }
 
-  // Check if vendor exists (only required for sellers, not admins)
+  // Check if store exists (only required for sellers, not admins)
   if (roleName !== "admin") {
-    const vendorResult = await db
-      .select({ id: vendor.id })
-      .from(vendor)
-      .where(eq(vendor.ownerUserId, session?.user.id ?? ""))
+    const storeResult = await db
+      .select({ id: store.id })
+      .from(storeMembers)
+      .innerJoin(store, eq(storeMembers.storeId, store.id))
+      .where(eq(storeMembers.userId, session?.user.id ?? ""))
       .limit(1);
 
-    if (vendorResult.length === 0) {
-      // User doesn't have vendor setup, but we'll still show the page
-      // They just won't see any customers until they set up a vendor
+    if (storeResult.length === 0) {
+      // User doesn't have store setup, but we'll still show the page
+      // They just won't see any customers until they set up a store
     }
   }
 
@@ -70,10 +71,10 @@ export default async function CustomersPage() {
   });
 
   // Check if user is admin
-  const vendorsResult = await getVendorsForFilter();
-  const isAdmin = vendorsResult.success;
-  const vendors =
-    vendorsResult.success && vendorsResult.data ? vendorsResult.data : [];
+  const storesResult = await getStoresForFilter();
+  const isAdmin = storesResult.success;
+  const stores =
+    storesResult.success && storesResult.data ? storesResult.data : [];
 
   if (!initialResult.success) {
     return (
@@ -113,7 +114,7 @@ export default async function CustomersPage() {
           }
           initialTotalCount={initialResult.totalCount || 0}
           initialIsAdmin={isAdmin}
-          initialVendors={vendors}
+          initialStores={stores}
         />
       </div>
     </DashboardWrapper>

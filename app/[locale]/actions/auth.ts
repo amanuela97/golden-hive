@@ -5,7 +5,7 @@ import { APIError, User } from "better-auth";
 import { headers } from "next/headers";
 import { z } from "zod";
 import { db } from "@/db";
-import { user, roles, userRoles, vendor } from "@/db/schema";
+import { user, roles, userRoles, store } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { redirect } from "@/i18n/navigation";
@@ -247,6 +247,33 @@ export async function loginAction(
             roleId: adminRole[0].id,
           });
         }
+      }
+    }
+
+    // Check if user has a store setup (for admin/seller roles)
+    const userRole = await db
+      .select({
+        roleName: roles.name,
+      })
+      .from(userRoles)
+      .innerJoin(roles, eq(userRoles.roleId, roles.id))
+      .where(eq(userRoles.userId, result.user.id))
+      .limit(1);
+
+    const roleName = userRole.length > 0 ? userRole[0].roleName.toLowerCase() : null;
+    const needsStoreSetup = roleName === "admin" || roleName === "seller";
+
+    if (needsStoreSetup) {
+      // Check if user has a store
+      const { userHasStore } = await import("./store-members");
+      const { hasStore } = await userHasStore();
+      
+      if (!hasStore) {
+        return {
+          success: true,
+          message: t("auth.signedInSuccess"),
+          redirectTo: `/store-setup`,
+        };
       }
     }
 
@@ -596,8 +623,7 @@ export async function uploadProfileImage(
     console.error("Error uploading profile image:", error);
     return {
       success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to upload image",
+      error: error instanceof Error ? error.message : "Failed to upload image",
     };
   }
 }
@@ -805,14 +831,6 @@ export async function completeOnboarding(
       userId: currentUser.id,
       roleId: roleId,
     });
-
-    // Create vendor record if role is Seller and storeName is provided
-    if (roleToAssign === UserRole.SELLER && storeName) {
-      await db.insert(vendor).values({
-        storeName: storeName.trim(),
-        ownerUserId: currentUser.id,
-      });
-    }
 
     return {
       success: true,

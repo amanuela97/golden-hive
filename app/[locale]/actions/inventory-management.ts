@@ -9,11 +9,12 @@ import {
   listing,
   inventoryAdjustments,
   user,
-  vendor,
+  store,
+  storeMembers,
   userRoles,
   roles,
 } from "@/db/schema";
-import { eq, and, sql, like, or, desc } from "drizzle-orm";
+import { eq, and, sql, or, desc, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
@@ -32,6 +33,10 @@ export type InventoryRow = {
   available: number;
   committed: number;
   incoming: number;
+  onHand: number;
+  shipped: number;
+  damaged: number;
+  returned: number;
   costPerItem: string;
   updatedAt: Date;
 };
@@ -44,7 +49,7 @@ export type InventoryFilters = {
 };
 
 /**
- * Fetch inventory rows for a vendor with optional filters
+ * Fetch inventory rows for a store with optional filters
  */
 export async function getInventoryRows(
   filters: InventoryFilters = {}
@@ -74,30 +79,30 @@ export async function getInventoryRows(
       .limit(1);
 
     const isAdmin =
-      userRole.length > 0 &&
-      userRole[0].roleName.toLowerCase() === "admin";
+      userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
 
     // Build where conditions
-    const conditions: any[] = [];
+    const conditions: Array<ReturnType<typeof eq>> = [];
 
-    // Only filter by vendor if user is not admin
+    // Only filter by store if user is not admin
     if (!isAdmin) {
-      // Get vendor for current user
-      const vendorResult = await db
-        .select({ id: vendor.id })
-        .from(vendor)
-        .where(eq(vendor.ownerUserId, session.user.id))
+      // Get store for current user
+      const storeResult = await db
+        .select({ id: store.id })
+        .from(storeMembers)
+        .innerJoin(store, eq(storeMembers.storeId, store.id))
+        .where(eq(storeMembers.userId, session.user.id))
         .limit(1);
 
-      if (vendorResult.length === 0) {
+      if (storeResult.length === 0) {
         return {
           success: false,
-          error: "Vendor not found. Please set up your vendor information.",
+          error: "Store not found. Please set up your store information.",
         };
       }
 
-      const vendorId = vendorResult[0].id;
-      conditions.push(eq(inventoryLocations.vendorId, vendorId));
+      const storeId = storeResult[0].id;
+      conditions.push(eq(inventoryLocations.storeId, storeId));
     }
 
     if (filters.locationId) {
@@ -166,6 +171,10 @@ export async function getInventoryRows(
         available: inventoryLevels.available,
         committed: inventoryLevels.committed,
         incoming: inventoryLevels.incoming,
+        onHand: inventoryLevels.onHand,
+        shipped: inventoryLevels.shipped,
+        damaged: inventoryLevels.damaged,
+        returned: inventoryLevels.returned,
         costPerItem: inventoryItems.costPerItem,
         updatedAt: inventoryLevels.updatedAt,
       })
@@ -215,6 +224,10 @@ export async function getInventoryRows(
         available: r.available || 0,
         committed: r.committed || 0,
         incoming: r.incoming || 0,
+        onHand: r.onHand || 0,
+        shipped: r.shipped || 0,
+        damaged: r.damaged || 0,
+        returned: r.returned || 0,
         costPerItem: r.costPerItem || "0",
         updatedAt: r.updatedAt,
       })),
@@ -231,9 +244,9 @@ export async function getInventoryRows(
 }
 
 /**
- * Get inventory locations for current vendor (or all locations for admin)
+ * Get inventory locations for current store (or all locations for admin)
  */
-export async function getVendorLocations(): Promise<{
+export async function getStoreLocations(): Promise<{
   success: boolean;
   data?: Array<{ id: string; name: string }>;
   error?: string;
@@ -258,11 +271,10 @@ export async function getVendorLocations(): Promise<{
       .limit(1);
 
     const isAdmin =
-      userRole.length > 0 &&
-      userRole[0].roleName.toLowerCase() === "admin";
+      userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
 
     let locations;
-    
+
     if (isAdmin) {
       // Admin can see all locations
       locations = await db
@@ -274,18 +286,19 @@ export async function getVendorLocations(): Promise<{
         .where(eq(inventoryLocations.isActive, true))
         .orderBy(inventoryLocations.name);
     } else {
-      // Get vendor for current user
-      const vendorResult = await db
-        .select({ id: vendor.id })
-        .from(vendor)
-        .where(eq(vendor.ownerUserId, session.user.id))
+      // Get store for current user
+      const storeResult = await db
+        .select({ id: store.id })
+        .from(storeMembers)
+        .innerJoin(store, eq(storeMembers.storeId, store.id))
+        .where(eq(storeMembers.userId, session.user.id))
         .limit(1);
 
-      if (vendorResult.length === 0) {
-        return { success: false, error: "Vendor not found" };
+      if (storeResult.length === 0) {
+        return { success: false, error: "Store not found" };
       }
 
-      const vendorId = vendorResult[0].id;
+      const storeId = storeResult[0].id;
 
       locations = await db
         .select({
@@ -295,7 +308,7 @@ export async function getVendorLocations(): Promise<{
         .from(inventoryLocations)
         .where(
           and(
-            eq(inventoryLocations.vendorId, vendorId),
+            eq(inventoryLocations.storeId, storeId),
             eq(inventoryLocations.isActive, true)
           )
         )
@@ -344,47 +357,48 @@ export async function adjustInventoryQuantity(
       return { success: false, error: "Quantity cannot be negative" };
     }
 
-    // Get current available quantity
-    const currentLevel = await db
-      .select({ available: inventoryLevels.available })
-      .from(inventoryLevels)
-      .where(eq(inventoryLevels.id, inventoryLevelId))
-      .limit(1);
-
-    if (currentLevel.length === 0) {
-      return { success: false, error: "Inventory level not found" };
-    }
-
-    const currentAvailable = currentLevel[0].available || 0;
-    const change = newAvailable - currentAvailable;
-
-    // If no change, skip
-    if (change === 0) {
-      return {
-        success: true,
-        data: {
-          available: currentAvailable,
-          updatedAt: new Date(),
-        },
-      };
-    }
-
-    // Perform update in transaction
+    // Perform update in transaction with row locking
     await db.transaction(async (tx) => {
-      // Insert adjustment record
+      // Get current level (row locking handled by transaction)
+      const currentLevel = await tx
+        .select({
+          available: inventoryLevels.available,
+          committed: inventoryLevels.committed,
+        })
+        .from(inventoryLevels)
+        .where(eq(inventoryLevels.id, inventoryLevelId))
+        .limit(1);
+
+      if (currentLevel.length === 0) {
+        throw new Error("Inventory level not found");
+      }
+
+      const currentAvailable = currentLevel[0].available || 0;
+      const change = newAvailable - currentAvailable;
+
+      // If no change, skip
+      if (change === 0) {
+        return;
+      }
+
+      // Insert ledger entry FIRST
       await tx.insert(inventoryAdjustments).values({
         inventoryItemId,
         locationId,
         change,
         reason,
+        eventType: "adjustment",
+        referenceType: "manual",
+        referenceId: null,
         createdBy: session.user.id,
       });
 
-      // Update inventory level
+      // Update snapshot SECOND (calculate on_hand)
       await tx
         .update(inventoryLevels)
         .set({
           available: newAvailable,
+          onHand: sql`${newAvailable} + ${inventoryLevels.committed}`, // Calculate on_hand
           updatedAt: new Date(),
         })
         .where(eq(inventoryLevels.id, inventoryLevelId));
@@ -442,7 +456,7 @@ export async function updateCostPerItem(
         updatedAt: new Date(),
       })
       .where(eq(inventoryItems.id, inventoryItemId))
-      .returning({ costPerItem: inventoryItems.costPerItem });
+      .returning();
 
     if (updated.length === 0) {
       return { success: false, error: "Inventory item not found" };
@@ -458,8 +472,7 @@ export async function updateCostPerItem(
     console.error("Error updating cost per item:", error);
     return {
       success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to update cost",
+      error: error instanceof Error ? error.message : "Failed to update cost",
     };
   }
 }
@@ -489,26 +502,76 @@ export async function updateIncomingQuantity(
       return { success: false, error: "Quantity cannot be negative" };
     }
 
-    // Update incoming quantity
-    const updated = await db
-      .update(inventoryLevels)
-      .set({
-        incoming: newIncoming,
-        updatedAt: new Date(),
-      })
-      .where(eq(inventoryLevels.id, inventoryLevelId))
-      .returning({ incoming: inventoryLevels.incoming, updatedAt: inventoryLevels.updatedAt });
+    // Perform update in transaction with row locking
+    let result: { incoming: number; updatedAt: Date } | null = null;
 
-    if (updated.length === 0) {
-      return { success: false, error: "Inventory level not found" };
+    await db.transaction(async (tx) => {
+      // Get current level (row locking handled by transaction)
+      const currentLevel = await tx
+        .select({
+          incoming: inventoryLevels.incoming,
+          inventoryItemId: inventoryLevels.inventoryItemId,
+          locationId: inventoryLevels.locationId,
+        })
+        .from(inventoryLevels)
+        .where(eq(inventoryLevels.id, inventoryLevelId))
+        .limit(1);
+
+      if (currentLevel.length === 0) {
+        throw new Error("Inventory level not found");
+      }
+
+      const currentIncoming = currentLevel[0].incoming || 0;
+      const change = newIncoming - currentIncoming;
+
+      // If no change, skip
+      if (change === 0) {
+        result = {
+          incoming: currentIncoming,
+          updatedAt: new Date(),
+        };
+        return;
+      }
+
+      // Insert ledger entry FIRST (only if there's a change)
+      if (change !== 0) {
+        await tx.insert(inventoryAdjustments).values({
+          inventoryItemId: currentLevel[0].inventoryItemId,
+          locationId: currentLevel[0].locationId,
+          change: change, // Positive for increase, negative for decrease
+          reason: "incoming_stock_adjustment",
+          eventType: "restock",
+          referenceType: "supplier",
+          referenceId: null,
+          createdBy: session.user.id,
+        });
+      }
+
+      // Update snapshot SECOND
+      const updated = await tx
+        .update(inventoryLevels)
+        .set({
+          incoming: newIncoming,
+          updatedAt: new Date(),
+        })
+        .where(eq(inventoryLevels.id, inventoryLevelId))
+        .returning();
+
+      if (updated.length > 0) {
+        result = {
+          incoming: updated[0].incoming || 0,
+          updatedAt: updated[0].updatedAt,
+        };
+      }
+    });
+
+    if (!result) {
+      return { success: false, error: "Failed to update incoming quantity" };
     }
 
     return {
       success: true,
-      data: {
-        incoming: updated[0].incoming || 0,
-        updatedAt: updated[0].updatedAt,
-      },
+      data: result,
     };
   } catch (error) {
     console.error("Error updating incoming quantity:", error);
@@ -525,9 +588,7 @@ export async function updateIncomingQuantity(
 /**
  * Delete inventory level (removes inventory for a variant at a location)
  */
-export async function deleteInventoryLevel(
-  inventoryLevelId: string
-): Promise<{
+export async function deleteInventoryLevel(inventoryLevelId: string): Promise<{
   success: boolean;
   error?: string;
 }> {
@@ -551,14 +612,13 @@ export async function deleteInventoryLevel(
       .limit(1);
 
     const isAdmin =
-      userRole.length > 0 &&
-      userRole[0].roleName.toLowerCase() === "admin";
+      userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
 
     // Get inventory level with related data to check ownership and get IDs
     const inventoryLevelData = await db
       .select({
         locationId: inventoryLevels.locationId,
-        vendorId: inventoryLocations.vendorId,
+        storeId: inventoryLocations.storeId,
         inventoryItemId: inventoryLevels.inventoryItemId,
         variantId: inventoryItems.variantId,
       })
@@ -578,17 +638,18 @@ export async function deleteInventoryLevel(
       return { success: false, error: "Inventory level not found" };
     }
 
-    const { inventoryItemId, variantId, vendorId } = inventoryLevelData[0];
+    const { inventoryItemId, variantId, storeId } = inventoryLevelData[0];
 
     // Only admin can delete any inventory, or user can delete their own
     if (!isAdmin) {
-      const vendorResult = await db
-        .select({ id: vendor.id })
-        .from(vendor)
-        .where(eq(vendor.ownerUserId, session.user.id))
+      const storeResult = await db
+        .select({ id: store.id })
+        .from(storeMembers)
+        .innerJoin(store, eq(storeMembers.storeId, store.id))
+        .where(eq(storeMembers.userId, session.user.id))
         .limit(1);
 
-      if (vendorResult.length === 0 || vendorId !== vendorResult[0].id) {
+      if (storeResult.length === 0 || storeId !== storeResult[0].id) {
         return { success: false, error: "Unauthorized" };
       }
     }
@@ -641,6 +702,117 @@ export async function deleteInventoryLevel(
 }
 
 /**
+ * Get inventory updates for realtime sync
+ * Returns current state of inventory for specified variants
+ */
+export async function getInventoryUpdates(
+  variantIds: string[],
+  locationId?: string
+): Promise<{
+  success: boolean;
+  data?: Array<{
+    variantId: string;
+    available: number;
+    committed: number;
+    onHand: number;
+    shipped: number;
+    updatedAt: Date;
+  }>;
+  error?: string;
+}> {
+  try {
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session?.user?.id) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    // Get user role and store
+    const userRoleData = await db
+      .select({
+        roleName: roles.name,
+        storeId: store.id,
+      })
+      .from(userRoles)
+      .innerJoin(roles, eq(userRoles.roleId, roles.id))
+      .leftJoin(storeMembers, eq(storeMembers.userId, userRoles.userId))
+      .leftJoin(store, eq(storeMembers.storeId, store.id))
+      .where(eq(userRoles.userId, session.user.id))
+      .limit(1);
+
+    if (userRoleData.length === 0) {
+      return { success: false, error: "User role not found" };
+    }
+
+    const userRole = userRoleData[0].roleName;
+    const storeId = userRoleData[0].storeId;
+
+    // Build conditions
+    const conditions = [];
+
+    // Filter by store for sellers
+    if (userRole !== "admin" && storeId) {
+      conditions.push(eq(listing.storeId, storeId));
+    }
+
+    // Filter by location if provided
+    if (locationId) {
+      conditions.push(eq(inventoryLevels.locationId, locationId));
+    }
+
+    // Filter by variant IDs
+    if (variantIds.length > 0) {
+      conditions.push(inArray(listingVariants.id, variantIds));
+    }
+
+    // Query inventory levels
+    const updates = await db
+      .select({
+        variantId: listingVariants.id,
+        available: inventoryLevels.available,
+        committed: inventoryLevels.committed,
+        onHand: inventoryLevels.onHand,
+        shipped: inventoryLevels.shipped,
+        updatedAt: inventoryLevels.updatedAt,
+      })
+      .from(inventoryLevels)
+      .innerJoin(
+        inventoryItems,
+        eq(inventoryLevels.inventoryItemId, inventoryItems.id)
+      )
+      .innerJoin(
+        listingVariants,
+        eq(inventoryItems.variantId, listingVariants.id)
+      )
+      .innerJoin(listing, eq(listingVariants.listingId, listing.id))
+      .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+    return {
+      success: true,
+      data: updates.map((u) => ({
+        variantId: u.variantId,
+        available: u.available || 0,
+        committed: u.committed || 0,
+        onHand: u.onHand || 0,
+        shipped: u.shipped || 0,
+        updatedAt: u.updatedAt,
+      })),
+    };
+  } catch (error) {
+    console.error("Error fetching inventory updates:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch inventory updates",
+    };
+  }
+}
+
+/**
  * Get adjustment history for an inventory item at a location
  */
 export async function getAdjustmentHistory(
@@ -652,6 +824,9 @@ export async function getAdjustmentHistory(
     id: string;
     change: number;
     reason: string | null;
+    eventType: string | null;
+    referenceType: string | null;
+    referenceId: string | null;
     createdBy: string | null;
     createdByName: string | null;
     createdAt: Date | null;
@@ -672,6 +847,9 @@ export async function getAdjustmentHistory(
         id: inventoryAdjustments.id,
         change: inventoryAdjustments.change,
         reason: inventoryAdjustments.reason,
+        eventType: inventoryAdjustments.eventType,
+        referenceType: inventoryAdjustments.referenceType,
+        referenceId: inventoryAdjustments.referenceId,
         createdBy: inventoryAdjustments.createdBy,
         createdByName: user.name,
         createdAt: inventoryAdjustments.createdAt,
@@ -702,4 +880,3 @@ export async function getAdjustmentHistory(
     };
   }
 }
-

@@ -35,6 +35,8 @@ import { getCategoryRuleByTaxonomyId } from "../../../actions/category-rules";
 import { getInventoryLocations } from "../../../actions/inventory";
 import type { VariantData } from "@/lib/listing";
 import { getCategoryAttributes, type TaxonomyAttribute } from "@/lib/taxonomy";
+import { getStore } from "../../../actions/store";
+import { getStoreIdForUser } from "../../../actions/store-members";
 
 const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP", "JFIF"];
 
@@ -129,15 +131,81 @@ export default function ProductForm({
     TaxonomyAttribute[]
   >([]);
 
+  // Store check state
+  const [hasStore, setHasStore] = useState<boolean | null>(null);
+  const [storeCurrency, setStoreCurrency] = useState<string | null>(null);
+  const [checkingStore, setCheckingStore] = useState(true);
+
+  // Check if user has a store or is a storemember (for sellers/admins)
+  useEffect(() => {
+    const checkStore = async () => {
+      if (isAdmin || mode === "edit") {
+        // Admins can create products without store check, or if editing
+        // But still try to get store currency for currency auto-set
+        try {
+          const storeResult = await getStore();
+          if (storeResult.success && storeResult.result?.storeCurrency) {
+            setStoreCurrency(storeResult.result.storeCurrency);
+            if (mode === "create") {
+              setFormData((prev) => ({
+                ...prev,
+                currency: storeResult.result!.storeCurrency,
+              }));
+            }
+          }
+        } catch (error) {
+          console.error("Error fetching store currency:", error);
+        }
+        setHasStore(true);
+        setCheckingStore(false);
+        return;
+      }
+
+      try {
+        // First check if user is a storemember or has a store
+        const storeIdResult = await getStoreIdForUser();
+        if (storeIdResult.storeId) {
+          // User is a storemember or has a store, get store details
+          const storeResult = await getStore();
+          if (storeResult.success && storeResult.result) {
+            setHasStore(true);
+            setStoreCurrency(storeResult.result.storeCurrency);
+            // Set currency from store if creating new product
+            if (mode === "create" && storeResult.result.storeCurrency) {
+              setFormData((prev) => ({
+                ...prev,
+                currency: storeResult.result!.storeCurrency,
+              }));
+            }
+          } else {
+            setHasStore(false);
+          }
+        } else {
+          setHasStore(false);
+        }
+      } catch (error) {
+        console.error("Error checking store:", error);
+        setHasStore(false);
+      } finally {
+        setCheckingStore(false);
+      }
+    };
+
+    checkStore();
+  }, [isAdmin, mode]);
+
   useEffect(() => {
     // Fetch inventory locations for both create and edit modes
-    // When editing, use the product's producerId to get the seller's locations
+    // When editing, prefer using the product's storeId directly, fallback to producerId
     setLoadingLocations(true);
     const producerId = mode === "edit" ? initialData?.producerId : undefined;
-    getInventoryLocations(producerId)
+    const storeId = mode === "edit" ? initialData?.storeId : undefined;
+    getInventoryLocations(producerId, storeId)
       .then((result) => {
         if (result.success && result.result) {
           setInventoryLocations(result.result);
+        } else {
+          console.error("Failed to fetch inventory locations:", result.error);
         }
       })
       .catch((error) => {
@@ -146,7 +214,7 @@ export default function ProductForm({
       .finally(() => {
         setLoadingLocations(false);
       });
-  }, [mode, initialData?.producerId]);
+  }, [mode, initialData?.producerId, initialData?.storeId]);
 
   // Fetch category attributes when editing a product with an existing category
   // or when category changes
@@ -505,6 +573,14 @@ export default function ProductForm({
         return;
       }
 
+      // Check if user has a store (for sellers, not admins)
+      if (!isAdmin && !hasStore) {
+        toast.error(
+          "You must set up your store first before creating products. Please go to Settings > Store to configure your store."
+        );
+        return;
+      }
+
       if (!formData.taxonomyCategoryId) {
         toast.error("Please select a category");
         return;
@@ -567,12 +643,14 @@ export default function ProductForm({
             );
             return;
           }
+          // Currency is auto-set from store, validate it exists
+          const variantCurrency = variant.currency || storeCurrency || formData.currency;
           if (
-            !variant.currency ||
-            !["EUR", "USD", "NPR"].includes(variant.currency)
+            !variantCurrency ||
+            !["EUR", "USD", "NPR"].includes(variantCurrency)
           ) {
             toast.error(
-              `Currency is required and must be EUR, USD, or NPR for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+              `Currency is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}. Please set up your store currency.`
             );
             return;
           }
@@ -714,12 +792,14 @@ export default function ProductForm({
             );
             return;
           }
+          // Currency is auto-set from store, validate it exists
+          const variantCurrency = variant.currency || storeCurrency || formData.currency;
           if (
-            !variant.currency ||
-            !["EUR", "USD", "NPR"].includes(variant.currency)
+            !variantCurrency ||
+            !["EUR", "USD", "NPR"].includes(variantCurrency)
           ) {
             toast.error(
-              `Currency is required and must be EUR, USD, or NPR for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+              `Currency is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}. Please set up your store currency.`
             );
             return;
           }
@@ -871,6 +951,9 @@ export default function ProductForm({
     }
   };
 
+  // Show warning only if user has no store AND is not a storemember (for sellers)
+  const showStoreWarning = mode === "create" && !isAdmin && !hasStore && !checkingStore;
+
   return (
     <div className="max-w-7xl mx-auto space-y-6 py-6">
       {/* Header */}
@@ -885,6 +968,38 @@ export default function ProductForm({
           {mode === "create" ? "Add New Product" : "Edit Product"}
         </h1>
       </div>
+
+      {showStoreWarning && (
+        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <svg
+                className="h-5 w-5 text-yellow-400"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </div>
+            <div className="ml-3">
+              <p className="text-sm text-yellow-700">
+                <strong>Store setup required:</strong> You must set up your store first before creating products. Please go to{" "}
+                <a
+                  href="/dashboard/settings/store"
+                  className="underline font-medium hover:text-yellow-800"
+                >
+                  Settings &gt; Store
+                </a>{" "}
+                to configure your store currency and unit system.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -995,20 +1110,21 @@ export default function ProductForm({
                     Original price before discount (shown crossed out)
                   </p>
                 </div>
-                <div>
-                  <Label htmlFor="currency">Currency</Label>
-                  <select
-                    id="currency"
-                    name="currency"
-                    value={formData.currency}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="NPR">NPR</option>
-                    <option value="USD">USD</option>
-                    <option value="EUR">EUR</option>
-                  </select>
-                </div>
+                {/* Currency is automatically set from store, no selector needed */}
+                {storeCurrency && (
+                  <div>
+                    <Label>Currency</Label>
+                    <Input
+                      value={storeCurrency}
+                      readOnly
+                      className="bg-muted"
+                      disabled
+                    />
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Currency is set from your store settings
+                    </p>
+                  </div>
+                )}
                 <div>
                   <Label htmlFor="unit">Unit</Label>
                   <select
@@ -1098,7 +1214,7 @@ export default function ProductForm({
                       {inventoryLocations.length === 0 && !loadingLocations && (
                         <p className="text-sm text-gray-500 mt-1">
                           No inventory locations found. Please create one in
-                          Settings &gt; Vendor.
+                          Settings &gt; Store.
                         </p>
                       )}
                     </div>
@@ -1196,6 +1312,7 @@ export default function ProductForm({
                 variantImagePreviews={variantImagePreviews}
                 onRemoveVariantImage={removeVariantImage}
                 recommendedAttributes={categoryAttributes}
+                storeCurrency={storeCurrency || formData.currency}
               />
             </Card>
 

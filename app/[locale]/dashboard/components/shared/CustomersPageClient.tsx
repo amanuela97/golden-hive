@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CustomersTable } from "./CustomersTable";
-import { listCustomers, getVendorsForFilter } from "@/app/[locale]/actions/customers";
+import { listCustomers, getStoresForFilter } from "@/app/[locale]/actions/customers";
 import type { CustomerRow } from "@/app/[locale]/actions/customers";
 import toast from "react-hot-toast";
 import { Search } from "lucide-react";
@@ -20,42 +20,42 @@ interface CustomersPageClientProps {
   initialData: CustomerRow[];
   initialTotalCount: number;
   initialIsAdmin: boolean;
-  initialVendors?: Array<{ id: string; name: string }>;
+  initialStores?: Array<{ id: string; name: string }>;
 }
 
 export default function CustomersPageClient({
   initialData,
   initialTotalCount,
   initialIsAdmin,
-  initialVendors = [],
+  initialStores = [],
 }: CustomersPageClientProps) {
   const [data, setData] = useState<CustomerRow[]>(initialData);
   const [totalCount, setTotalCount] = useState(initialTotalCount);
   const [search, setSearch] = useState("");
-  const [vendorFilter, setVendorFilter] = useState<string>("all");
+  const [storeFilter, setStoreFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("newest");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
-  const [vendors, setVendors] = useState(initialVendors);
+  const [stores, setStores] = useState(initialStores);
 
-  // Fetch vendors if admin
+  // Fetch stores if admin
   useEffect(() => {
-    if (initialIsAdmin && vendors.length === 0) {
-      getVendorsForFilter().then((result) => {
+    if (initialIsAdmin && stores.length === 0) {
+      getStoresForFilter().then((result) => {
         if (result.success && result.data) {
-          setVendors(result.data);
+          setStores(result.data);
         }
       });
     }
-  }, [initialIsAdmin, vendors.length]);
+  }, [initialIsAdmin, stores.length]);
 
   const fetchCustomers = useCallback(async () => {
     setIsLoading(true);
     try {
       const result = await listCustomers({
         search: search || undefined,
-        vendorId: vendorFilter !== "all" ? vendorFilter : undefined,
+        storeId: storeFilter !== "all" ? storeFilter : undefined,
         sortBy,
         sortDirection,
         page,
@@ -74,7 +74,7 @@ export default function CustomersPageClient({
     } finally {
       setIsLoading(false);
     }
-  }, [search, vendorFilter, sortBy, sortDirection, page]);
+  }, [search, storeFilter, sortBy, sortDirection, page]);
 
   useEffect(() => {
     fetchCustomers();
@@ -103,21 +103,21 @@ export default function CustomersPageClient({
 
         {initialIsAdmin && (
           <Select
-            value={vendorFilter}
+            value={storeFilter}
             onValueChange={(value) => {
-              setVendorFilter(value);
+              setStoreFilter(value);
               setPage(0);
             }}
           >
             <SelectTrigger className="w-full sm:w-[200px]">
-              <SelectValue placeholder="All vendors" />
+              <SelectValue placeholder="All stores" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All vendors</SelectItem>
-              <SelectItem value="null">No vendor (Global)</SelectItem>
-              {vendors.map((vendor) => (
-                <SelectItem key={vendor.id} value={vendor.id}>
-                  {vendor.name}
+              <SelectItem value="all">All stores</SelectItem>
+              <SelectItem value="null">No store (Global)</SelectItem>
+              {stores.map((store) => (
+                <SelectItem key={store.id} value={store.id}>
+                  {store.name}
                 </SelectItem>
               ))}
             </SelectContent>

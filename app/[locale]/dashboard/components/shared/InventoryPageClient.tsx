@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,9 +17,9 @@ import { Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { InventoryTable } from "./InventoryTable";
 import {
   getInventoryRows,
+  getInventoryUpdates,
   type InventoryRow,
 } from "@/app/[locale]/actions/inventory-management";
-import toast from "react-hot-toast";
 import { useCurrencyConversion } from "./useCurrencyConversion";
 
 interface InventoryPageClientProps {
@@ -32,40 +33,80 @@ export default function InventoryPageClient({
   initialLocations,
   initialTotalCount,
 }: InventoryPageClientProps) {
-  const [data, setData] = useState<InventoryRow[]>(initialData);
   const [locations] = useState(initialLocations);
   const [selectedLocation, setSelectedLocation] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
   const [searchInput, setSearchInput] = useState<string>("");
   const [page, setPage] = useState(1);
-  const [totalCount, setTotalCount] = useState(initialTotalCount);
-  const [loading, setLoading] = useState(false);
   const [displayCurrency, setDisplayCurrency] = useState<string>("EUR");
   const pageSize = 50;
   const { convertCurrency, rates } = useCurrencyConversion();
 
+  // Fetch inventory rows with React Query
+  const {
+    data: inventoryData,
+    isLoading,
+    refetch,
+  } = useQuery({
+    queryKey: ["inventory", selectedLocation, search, page, pageSize],
+    queryFn: async () => {
+      const result = await getInventoryRows({
+        locationId: selectedLocation === "all" ? undefined : selectedLocation,
+        search: search || undefined,
+        page,
+        pageSize,
+      });
+
+      if (!result.success) {
+        throw new Error(result.error || "Failed to fetch inventory");
+      }
+
+      return result;
+    },
+    initialData: {
+      success: true,
+      data: initialData,
+      totalCount: initialTotalCount,
+    },
+    staleTime: 1000, // Consider data stale after 1 second
+    refetchInterval: 3000, // Poll every 3 seconds for realtime updates
+  });
+
+  const data = useMemo(() => inventoryData?.data || [], [inventoryData?.data]);
+  const totalCount = inventoryData?.totalCount || 0;
   const totalPages = Math.ceil(totalCount / pageSize);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  // Get variant IDs from current data for realtime updates
+  const variantIds = useMemo(() => data.map((row) => row.variantId), [data]);
 
-    const result = await getInventoryRows({
-      locationId: selectedLocation === "all" ? undefined : selectedLocation,
-      search: search || undefined,
-      page,
-      pageSize,
-    });
+  // Realtime updates for current page variants
+  const { data: updatesData } = useQuery({
+    queryKey: ["inventory-updates", variantIds, selectedLocation],
+    queryFn: async () => {
+      const result = await getInventoryUpdates(
+        variantIds,
+        selectedLocation === "all" ? undefined : selectedLocation
+      );
 
-    if (result.success && result.data) {
-      setData(result.data);
-      setTotalCount(result.totalCount || 0);
-    } else {
-      toast.error(result.error || "Failed to fetch inventory");
-      setData([]);
+      if (!result.success) {
+        throw new Error(result.error || "Failed to fetch inventory updates");
+      }
+
+      return result;
+    },
+    enabled: variantIds.length > 0, // Only fetch if we have variant IDs
+    refetchInterval: 2000, // Poll every 2 seconds for realtime updates
+    staleTime: 1000,
+  });
+
+  // Trigger refetch when updates are detected
+  useEffect(() => {
+    if (updatesData?.data && updatesData.data.length > 0) {
+      // Update local data with realtime updates
+      // This will trigger a refetch of the main query if needed
+      refetch();
     }
-
-    setLoading(false);
-  }, [selectedLocation, search, page]);
+  }, [updatesData, refetch]);
 
   // Debounce search
   useEffect(() => {
@@ -77,14 +118,9 @@ export default function InventoryPageClient({
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  // Fetch data when filters or page change
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
   const handleDataChange = () => {
     // Refetch data after updates
-    fetchData();
+    refetch();
   };
 
   // Calculate totals
@@ -92,8 +128,8 @@ export default function InventoryPageClient({
 
   // Calculate total value with currency conversion
   const totalValue = data.reduce((sum, row) => {
-    // Calculate on hand for this row
-    const onHand = row.available + row.committed + row.incoming;
+    // Use onHand from database
+    const onHand = row.onHand || row.available + row.committed + row.incoming;
     const costPerItem = parseFloat(row.costPerItem || "0");
     const variantPrice = parseFloat(row.variantPrice || "0");
 
@@ -202,7 +238,7 @@ export default function InventoryPageClient({
 
       {/* Table */}
       <Card className="p-6">
-        {loading ? (
+        {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
             Loading inventory...
           </div>

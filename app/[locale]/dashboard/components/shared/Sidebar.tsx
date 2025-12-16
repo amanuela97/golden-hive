@@ -14,6 +14,7 @@ import {
   Settings,
   ChevronDown,
   Users,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -39,6 +40,7 @@ const allNavItems: NavItem[] = [
     label: "Orders",
     href: "/dashboard/orders",
     icon: ShoppingCart,
+    children: [{ label: "Drafts", href: "/dashboard/draft_orders" }],
     roles: ["admin", "seller", "customer"], // C, S, A
   },
   {
@@ -64,7 +66,13 @@ const allNavItems: NavItem[] = [
     label: "Analytics",
     href: "/dashboard/analytics",
     icon: BarChart3,
-    roles: ["admin", "seller"], // S, A
+    roles: ["admin", "seller"], // A, S,
+  },
+  {
+    label: "Markets",
+    href: "/dashboard/markets",
+    icon: Globe,
+    roles: ["admin", "seller"], // A, S
   },
 ];
 
@@ -124,6 +132,7 @@ export function Sidebar({ onSettingsClick, userRole }: SidebarProps) {
                         </Link>
                         <button
                           onClick={() => toggleExpanded(item.label)}
+                          suppressHydrationWarning
                           className={cn(
                             "rounded-lg p-2 transition-colors",
                             isItemActive

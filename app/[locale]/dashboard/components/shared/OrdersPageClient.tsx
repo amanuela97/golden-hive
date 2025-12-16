@@ -10,10 +10,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Search } from "lucide-react";
-import { Link } from "@/i18n/navigation";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Plus, Search, MoreVertical, Download } from "lucide-react";
+import { Link, useRouter, usePathname } from "@/i18n/navigation";
+import { useSearchParams } from "next/navigation";
 import { OrdersTable } from "./OrdersTable";
-import { listOrders, type OrderRow, type OrderFilters } from "@/app/[locale]/actions/orders";
+import {
+  listOrders,
+  type OrderRow,
+  type OrderFilters,
+} from "@/app/[locale]/actions/orders";
 import toast from "react-hot-toast";
 
 interface OrdersPageClientProps {
@@ -25,15 +37,18 @@ export default function OrdersPageClient({
   initialData,
   initialTotalCount,
 }: OrdersPageClientProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [data, setData] = useState<OrderRow[]>(initialData);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>("all");
-  const [fulfillmentStatusFilter, setFulfillmentStatusFilter] =
-    useState<string>("all");
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(initialTotalCount);
   const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  // Get active tab from URL params, default to "all"
+  const activeTab = searchParams.get("tab") || "all";
 
   // Debounce search
   useEffect(() => {
@@ -45,23 +60,56 @@ export default function OrdersPageClient({
     return () => clearTimeout(timer);
   }, [search]);
 
+  // Handle tab change - update URL params
+  const handleTabChange = (value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value === "all") {
+      params.delete("tab");
+    } else {
+      params.set("tab", value);
+    }
+    const queryString = params.toString();
+    const newPath = queryString ? `${pathname}?${queryString}` : pathname;
+    router.push(newPath);
+    setPage(1); // Reset to first page on tab change
+  };
+
+  // Build filters based on active tab
+  const buildFilters = useCallback((): OrderFilters => {
+    const filters: OrderFilters = {
+      search: debouncedSearch || undefined,
+      page,
+      pageSize: 50,
+      sortBy: "date",
+      sortDirection: "desc",
+    };
+
+    // Apply tab-based filters
+    switch (activeTab) {
+      case "unfulfilled":
+        filters.fulfillmentStatus = "unfulfilled";
+        break;
+      case "unpaid":
+        filters.paymentStatus = "pending"; // Show unpaid (pending) orders
+        break;
+      case "open":
+        filters.status = "open";
+        break;
+      case "archived":
+        filters.archived = true;
+        break;
+      default:
+        // "all" - no additional filters
+        break;
+    }
+
+    return filters;
+  }, [activeTab, debouncedSearch, page]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const filters: OrderFilters = {
-        search: debouncedSearch || undefined,
-        paymentStatus:
-          paymentStatusFilter !== "all" ? paymentStatusFilter : undefined,
-        fulfillmentStatus:
-          fulfillmentStatusFilter !== "all"
-            ? fulfillmentStatusFilter
-            : undefined,
-        page,
-        pageSize: 50,
-        sortBy: "date",
-        sortDirection: "desc",
-      };
-
+      const filters = buildFilters();
       const result = await listOrders(filters);
       if (result.success && result.data) {
         setData(result.data);
@@ -69,12 +117,14 @@ export default function OrdersPageClient({
       } else {
         toast.error(result.error || "Failed to load orders");
       }
-    } catch (error) {
-      toast.error("Failed to load orders");
+    } catch (error: unknown) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to load orders"
+      );
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, paymentStatusFilter, fulfillmentStatusFilter, page]);
+  }, [buildFilters]);
 
   useEffect(() => {
     fetchData();
@@ -89,15 +139,44 @@ export default function OrdersPageClient({
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Orders</h1>
-        <Link href="/dashboard/orders/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            Create Order
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm">
+            <Download className="mr-2 h-4 w-4" />
+            Export
           </Button>
-        </Link>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem>Import orders</DropdownMenuItem>
+              <DropdownMenuItem>View archived orders</DropdownMenuItem>
+              <DropdownMenuItem>Settings</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Link href="/dashboard/orders/new">
+            <Button>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Order
+            </Button>
+          </Link>
+        </div>
       </div>
 
-      {/* Filters */}
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList>
+          <TabsTrigger value="all">All</TabsTrigger>
+          <TabsTrigger value="unfulfilled">Unfulfilled</TabsTrigger>
+          <TabsTrigger value="unpaid">Unpaid</TabsTrigger>
+          <TabsTrigger value="open">Open</TabsTrigger>
+          <TabsTrigger value="archived">Archived</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {/* Search */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -108,39 +187,6 @@ export default function OrdersPageClient({
             className="pl-9"
           />
         </div>
-        <Select
-          value={paymentStatusFilter}
-          onValueChange={setPaymentStatusFilter}
-        >
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Payment Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Payment Status</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="paid">Paid</SelectItem>
-            <SelectItem value="partially_refunded">Partially Refunded</SelectItem>
-            <SelectItem value="refunded">Refunded</SelectItem>
-            <SelectItem value="failed">Failed</SelectItem>
-            <SelectItem value="void">Void</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select
-          value={fulfillmentStatusFilter}
-          onValueChange={setFulfillmentStatusFilter}
-        >
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Fulfillment Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Fulfillment Status</SelectItem>
-            <SelectItem value="unfulfilled">Unfulfilled</SelectItem>
-            <SelectItem value="partial">Partial</SelectItem>
-            <SelectItem value="fulfilled">Fulfilled</SelectItem>
-            <SelectItem value="canceled">Canceled</SelectItem>
-            <SelectItem value="on_hold">On Hold</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
       {/* Table */}
@@ -159,4 +205,3 @@ export default function OrdersPageClient({
     </div>
   );
 }
-

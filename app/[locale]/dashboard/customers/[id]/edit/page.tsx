@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { redirect } from "@/i18n/navigation";
 import { db } from "@/db";
-import { userRoles, roles, vendor } from "@/db/schema";
+import { userRoles, roles, store, storeMembers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
 import { getCustomer, getVendorsForFilter } from "@/app/[locale]/actions/customers";
@@ -50,17 +50,18 @@ export default async function EditCustomerPage({
     redirect({ href: "/dashboard", locale });
   }
 
-  // Check if vendor exists (only required for sellers, not admins)
+  // Check if store exists (only required for sellers, not admins)
   if (roleName !== "admin") {
-    const vendorResult = await db
-      .select({ id: vendor.id })
-      .from(vendor)
-      .where(eq(vendor.ownerUserId, session?.user.id ?? ""))
+    const storeResult = await db
+      .select({ id: store.id })
+      .from(storeMembers)
+      .innerJoin(store, eq(storeMembers.storeId, store.id))
+      .where(eq(storeMembers.userId, session?.user.id ?? ""))
       .limit(1);
 
-    if (vendorResult.length === 0) {
-      // User doesn't have vendor setup, but we'll still show the page
-      // They just won't see any customers until they set up a vendor
+    if (storeResult.length === 0) {
+      // User doesn't have store setup, but we'll still show the page
+      // They just won't see any customers until they set up a store
     }
   }
 

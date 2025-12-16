@@ -87,6 +87,9 @@ export function InventoryTable({ data, onDataChange }: InventoryTableProps) {
       id: string;
       change: number;
       reason: string | null;
+      eventType: string | null;
+      referenceType: string | null;
+      referenceId: string | null;
       createdBy: string | null;
       createdByName: string | null;
       createdAt: Date | null;
@@ -519,9 +522,17 @@ export function InventoryTable({ data, onDataChange }: InventoryTableProps) {
         </TableHeaderWithTooltip>
       ),
       cell: ({ row }) => {
+        // Use onHand from database, but recalculate if available/incoming changed locally
         const available = getCurrentValue(row.original, "available") as number;
         const incoming = getCurrentValue(row.original, "incoming") as number;
-        const onHand = available + row.original.committed + incoming;
+        const hasPendingChanges = pendingChanges[row.original.inventoryLevelId];
+
+        // If there are pending changes, recalculate onHand
+        const onHand = hasPendingChanges
+          ? available + row.original.committed + incoming
+          : row.original.onHand ||
+            available + row.original.committed + incoming;
+
         return <span className="text-sm font-medium">{onHand}</span>;
       },
     },
@@ -579,7 +590,14 @@ export function InventoryTable({ data, onDataChange }: InventoryTableProps) {
       cell: ({ row }) => {
         const available = getCurrentValue(row.original, "available") as number;
         const incoming = getCurrentValue(row.original, "incoming") as number;
-        const onHand = available + row.original.committed + incoming;
+        const hasPendingChanges = pendingChanges[row.original.inventoryLevelId];
+
+        // If there are pending changes, recalculate onHand
+        const onHand = hasPendingChanges
+          ? available + row.original.committed + incoming
+          : row.original.onHand ||
+            available + row.original.committed + incoming;
+
         const costPerItem = parseFloat(
           (getCurrentValue(row.original, "costPerItem") as string) || "0"
         );
@@ -815,16 +833,17 @@ export function InventoryTable({ data, onDataChange }: InventoryTableProps) {
                 </div>
               ) : (
                 <div className="space-y-1">
-                  <div className="grid grid-cols-[180px_80px_1fr_200px] gap-4 px-4 py-2 text-sm font-medium border-b">
+                  <div className="grid grid-cols-[150px_80px_100px_1fr_150px] gap-4 px-4 py-2 text-sm font-medium border-b">
                     <div>Date & Time</div>
                     <div>Change</div>
+                    <div>Event Type</div>
                     <div>Reason</div>
                     <div>By</div>
                   </div>
                   {adjustmentHistory.map((adj) => (
                     <div
                       key={adj.id}
-                      className="grid grid-cols-[180px_80px_1fr_200px] gap-4 px-4 py-2 text-sm border-b last:border-0"
+                      className="grid grid-cols-[150px_80px_100px_1fr_150px] gap-4 px-4 py-2 text-sm border-b last:border-0"
                     >
                       <div className="text-muted-foreground">
                         {adj.createdAt
@@ -849,6 +868,9 @@ export function InventoryTable({ data, onDataChange }: InventoryTableProps) {
                       >
                         {adj.change > 0 ? "+" : ""}
                         {adj.change}
+                      </div>
+                      <div className="text-muted-foreground text-xs capitalize">
+                        {adj.eventType ? adj.eventType.replace(/_/g, " ") : "—"}
                       </div>
                       <div className="text-muted-foreground">
                         {adj.reason || "—"}

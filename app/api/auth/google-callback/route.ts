@@ -36,6 +36,19 @@ export async function GET(request: NextRequest) {
         .limit(1);
 
       if (userRole.length > 0) {
+        const roleName = userRole[0].roleName.toLowerCase();
+        const needsStoreSetup = roleName === "admin" || roleName === "seller";
+
+        if (needsStoreSetup) {
+          // Check if user has a store
+          const { userHasStore } = await import("@/app/[locale]/actions/store-members");
+          const { hasStore } = await userHasStore();
+          
+          if (!hasStore) {
+            return NextResponse.redirect(new URL(`/store-setup`, request.url));
+          }
+        }
+
         return NextResponse.redirect(new URL(`/dashboard`, request.url));
       } else {
         // User exists but has no role, redirect to onboarding
