@@ -51,6 +51,8 @@ interface FulfillmentCardProps {
   orderData: OrderData;
   userRole: "admin" | "seller" | "customer";
   canFulfill: boolean;
+  isArchived?: boolean;
+  isCanceled?: boolean;
 }
 
 const shippingCarriers = [
@@ -74,6 +76,8 @@ const holdReasons = [
 export function FulfillmentCard({
   orderData,
   canFulfill,
+  isArchived = false,
+  isCanceled = false,
 }: FulfillmentCardProps) {
   const [showFulfillDialog, setShowFulfillDialog] = useState(false);
   const [showOnHoldDialog, setShowOnHoldDialog] = useState(false);
@@ -259,7 +263,7 @@ export function FulfillmentCard({
             </div>
           </div>
 
-          {canFulfill && !isFulfilled && (
+          {canFulfill && !isFulfilled && !isArchived && !isCanceled && (
             <div className="flex gap-2">
               <Button onClick={handleFulfillClick} className="flex-1">
                 Mark as fulfilled

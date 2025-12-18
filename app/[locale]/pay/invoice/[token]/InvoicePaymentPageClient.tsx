@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CreditCard, AlertCircle } from "lucide-react";
-import { createInvoiceCheckoutSession } from "@/app/[locale]/actions/invoice-payment";
+// Checkout is now handled via API route
 import toast from "react-hot-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
@@ -38,12 +38,27 @@ export default function InvoicePaymentPageClient({
   const handlePayNow = async () => {
     setLoading(true);
     try {
-      const result = await createInvoiceCheckoutSession(token);
-      if (result.success && result.checkoutUrl) {
+      // Call API route directly
+      const response = await fetch("/api/stripe/checkout/invoice", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ token }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Failed to create payment session");
+        return;
+      }
+
+      if (data.url || data.checkoutUrl) {
         // Redirect to Stripe Checkout
-        window.location.href = result.checkoutUrl;
+        window.location.href = data.url || data.checkoutUrl;
       } else {
-        toast.error(result.error || "Failed to create payment session");
+        toast.error("Failed to get checkout URL");
       }
     } catch (error) {
       toast.error("Failed to process payment");

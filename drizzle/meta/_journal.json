@@ -197,6 +197,13 @@
       "when": 1765922614486,
       "tag": "0027_elite_alex_wilder",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1766017281263,
+      "tag": "0028_left_nightshade",
+      "breakpoints": true
     }
   ]
 }

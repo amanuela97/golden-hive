@@ -5,6 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -31,6 +39,9 @@ import { FulfillmentCard } from "./components/FulfillmentCard";
 import { PaymentSummary } from "./components/PaymentSummary";
 import { OrderTimeline } from "./components/OrderTimeline";
 import { OrderSidebar } from "./components/OrderSidebar";
+import { CancelOrderDialog } from "./components/CancelOrderDialog";
+import { archiveOrders, unarchiveOrders } from "@/app/[locale]/actions/orders";
+import toast from "react-hot-toast";
 
 interface OrderItem {
   id: string;
@@ -118,11 +129,20 @@ export default function OrderDetailsPageClient({
 
   // Determine action permissions based on role and order state
   const isArchived = orderData.archivedAt !== null || orderData.status === "archived";
+  const isCanceled = orderData.status === "canceled";
   const isPaid = orderData.paymentStatus === "paid" || orderData.paymentStatus === "partially_refunded";
   const isFulfilled = orderData.fulfillmentStatus === "fulfilled";
-  const canRefund = (userRole === "admin" || userRole === "seller") && isPaid && !isArchived;
-  const canEdit = userRole === "admin" && !isFulfilled && !isArchived;
-  const canFulfill = (userRole === "admin" || userRole === "seller") && isPaid && !isFulfilled && !isArchived;
+  const canRefund = (userRole === "admin" || userRole === "seller") && isPaid && !isArchived && !isCanceled;
+  const canEdit = userRole === "admin" && !isFulfilled && !isArchived && !isCanceled;
+  const canFulfill = (userRole === "admin" || userRole === "seller") && isPaid && !isFulfilled && !isArchived && !isCanceled;
+  const canCancel = (userRole === "admin" || userRole === "seller") && !isArchived && !isCanceled;
+  const canArchive = (userRole === "admin" || userRole === "seller") && !isArchived && !isCanceled;
+  const canUnarchive = (userRole === "admin" || userRole === "seller") && isArchived;
+
+  // Dialog states
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showArchiveDialog, setShowArchiveDialog] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   const getPaymentStatusColor = (status: string) => {
     const colors: Record<string, string> = {
@@ -149,8 +169,45 @@ export default function OrderDetailsPageClient({
 
   const handleRefresh = () => {
     setRefreshing(true);
-    // TODO: Implement refresh logic
+    router.refresh();
     setTimeout(() => setRefreshing(false), 1000);
+  };
+
+  const handleArchive = async () => {
+    setArchiving(true);
+    try {
+      const result = await archiveOrders([orderData.id]);
+      if (result.success) {
+        toast.success("Order archived successfully");
+        setShowArchiveDialog(false);
+        router.refresh();
+      } else {
+        toast.error(result.error || "Failed to archive order");
+      }
+    } catch (error) {
+      toast.error("Failed to archive order");
+      console.error("Archive error:", error);
+    } finally {
+      setArchiving(false);
+    }
+  };
+
+  const handleUnarchive = async () => {
+    setArchiving(true);
+    try {
+      const result = await unarchiveOrders([orderData.id]);
+      if (result.success) {
+        toast.success("Order unarchived successfully");
+        router.refresh();
+      } else {
+        toast.error(result.error || "Failed to unarchive order");
+      }
+    } catch (error) {
+      toast.error("Failed to unarchive order");
+      console.error("Unarchive error:", error);
+    } finally {
+      setArchiving(false);
+    }
   };
 
   return (
@@ -205,18 +262,37 @@ export default function OrderDetailsPageClient({
             </Button>
           )}
           {(userRole === "admin" || userRole === "seller") && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <MoreVertical className="h-4 w-4" />
+            <>
+              {canUnarchive && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleUnarchive}
+                  disabled={archiving}
+                >
+                  {archiving ? "Unarchiving..." : "Unarchive"}
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem>Archive order</DropdownMenuItem>
-                <DropdownMenuItem>Cancel order</DropdownMenuItem>
-                <DropdownMenuItem>Duplicate order</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" disabled={isArchived || isCanceled}>
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canArchive && (
+                    <DropdownMenuItem onClick={() => setShowArchiveDialog(true)}>
+                      Archive order
+                    </DropdownMenuItem>
+                  )}
+                  {canCancel && (
+                    <DropdownMenuItem onClick={() => setShowCancelDialog(true)}>
+                      Cancel order
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
           )}
         </div>
       </div>
@@ -230,6 +306,8 @@ export default function OrderDetailsPageClient({
             orderData={orderData}
             userRole={userRole}
             canFulfill={canFulfill}
+            isArchived={isArchived}
+            isCanceled={isCanceled}
           />
 
           {/* Payment Summary */}
@@ -252,6 +330,47 @@ export default function OrderDetailsPageClient({
           />
         </div>
       </div>
+
+      {/* Cancel Order Dialog */}
+      <CancelOrderDialog
+        open={showCancelDialog}
+        onOpenChange={setShowCancelDialog}
+        orderId={orderData.id}
+        orderNumber={orderData.orderNumber}
+        totalAmount={orderData.totalAmount}
+        currency={orderData.currency}
+        paymentStatus={orderData.paymentStatus}
+        fulfillmentStatus={orderData.fulfillmentStatus}
+        onSuccess={handleRefresh}
+      />
+
+      {/* Archive Order Dialog */}
+      <Dialog open={showArchiveDialog} onOpenChange={setShowArchiveDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Archive Order #{orderData.orderNumber}</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to archive this order? Archived orders cannot be modified, but can be unarchived later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowArchiveDialog(false)}
+              disabled={archiving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              onClick={handleArchive}
+              disabled={archiving}
+            >
+              {archiving ? "Archiving..." : "Archive Order"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -2609,8 +2609,11 @@ export async function archiveOrders(
       };
     }
 
-    // Archive orders
-    await db
+    // Archive orders and create timeline events
+    const userId = session.user.id;
+
+    await db.transaction(async (tx) => {
+      await tx
       .update(orders)
       .set({
         archivedAt: new Date(),
@@ -2618,6 +2621,19 @@ export async function archiveOrders(
         updatedAt: new Date(),
       })
       .where(inArray(orders.id, validOrderIds));
+
+      // Create timeline events for each archived order
+      for (const orderId of validOrderIds) {
+        await tx.insert(orderEvents).values({
+          orderId: orderId,
+          type: "system",
+          visibility: "internal",
+          message: "Order archived",
+          createdBy: userId,
+          metadata: {} as Record<string, unknown>,
+        });
+      }
+    });
 
     return {
       success: true,
@@ -2695,8 +2711,11 @@ export async function unarchiveOrders(
       };
     }
 
-    // Unarchive orders (set archivedAt to null, status back to open)
-    await db
+    // Unarchive orders and create timeline events
+    const userId = session.user.id;
+
+    await db.transaction(async (tx) => {
+      await tx
       .update(orders)
       .set({
         archivedAt: null,
@@ -2704,6 +2723,19 @@ export async function unarchiveOrders(
         updatedAt: new Date(),
       })
       .where(inArray(orders.id, validOrderIds));
+
+      // Create timeline events for each unarchived order
+      for (const orderId of validOrderIds) {
+        await tx.insert(orderEvents).values({
+          orderId: orderId,
+          type: "system",
+          visibility: "internal",
+          message: "Order unarchived",
+          createdBy: userId,
+          metadata: {} as Record<string, unknown>,
+        });
+      }
+    });
 
     return {
       success: true,
@@ -2715,6 +2747,220 @@ export async function unarchiveOrders(
       success: false,
       error:
         error instanceof Error ? error.message : "Failed to unarchive orders",
+    };
+  }
+}
+
+/**
+ * Cancel an order with form data
+ */
+export async function cancelOrder(input: {
+  orderId: string;
+  refundMethod: "original" | "later";
+  cancellationReason: string;
+  internalNote?: string | null;
+  restock: boolean;
+  sendNotification: boolean;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session?.user?.id) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    const { storeId, isAdmin } = await getStoreIdForUser();
+
+    // Get order data
+    const orderData = await db
+      .select({
+        id: orders.id,
+        status: orders.status,
+        storeId: orders.storeId,
+        paymentStatus: orders.paymentStatus,
+        fulfillmentStatus: orders.fulfillmentStatus,
+        totalAmount: orders.totalAmount,
+        currency: orders.currency,
+        customerEmail: orders.customerEmail,
+        customerFirstName: orders.customerFirstName,
+        customerLastName: orders.customerLastName,
+        orderNumber: orders.orderNumber,
+        internalNote: orders.internalNote,
+      })
+      .from(orders)
+      .where(eq(orders.id, input.orderId))
+      .limit(1);
+
+    if (orderData.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
+
+    const order = orderData[0];
+
+    // Check permissions
+    if (!isAdmin && storeId && order.storeId !== storeId) {
+      return {
+        success: false,
+        error: "You don't have permission to cancel this order",
+      };
+    }
+
+    // Validate order can be canceled
+    if (order.status === "canceled") {
+      return { success: false, error: "Order is already canceled" };
+    }
+
+    if (order.status === "archived") {
+      return {
+        success: false,
+        error: "Cannot cancel archived order. Please unarchive it first.",
+      };
+    }
+
+    // Get order items for inventory restocking
+    const items = await db
+      .select({
+        variantId: orderItems.variantId,
+        quantity: orderItems.quantity,
+      })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, input.orderId));
+
+    await db.transaction(async (tx) => {
+      // Restock inventory if requested and order is unfulfilled
+      if (
+        input.restock &&
+        order.fulfillmentStatus === "unfulfilled" &&
+        order.storeId
+      ) {
+        const inventoryResult = await adjustInventoryForOrder(
+          items.map((item) => ({
+            variantId: item.variantId || null,
+            quantity: item.quantity,
+          })),
+          order.storeId,
+          "release",
+          "order_canceled",
+          input.orderId
+        );
+
+        if (!inventoryResult.success) {
+          throw new Error(
+            inventoryResult.error || "Failed to restock inventory"
+          );
+        }
+      }
+
+      // Update order status and internal note
+      const updatedInternalNote = input.internalNote
+        ? order.internalNote
+          ? `${order.internalNote}\n\n[Canceled] ${input.internalNote}`
+          : `[Canceled] ${input.internalNote}`
+        : order.internalNote;
+
+      await tx
+        .update(orders)
+        .set({
+          status: "canceled",
+          canceledAt: new Date(),
+          internalNote: updatedInternalNote,
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, input.orderId));
+
+      // Create timeline event
+      await tx.insert(orderEvents).values({
+        orderId: input.orderId,
+        type: "system",
+        visibility: "internal",
+        message: `Order canceled. Reason: ${input.cancellationReason}`,
+        createdBy: session.user.id,
+        metadata: {
+          refundMethod: input.refundMethod,
+          cancellationReason: input.cancellationReason,
+          restocked: input.restock,
+          notificationSent: input.sendNotification,
+        } as Record<string, unknown>,
+      });
+    });
+
+    // Generate invoice - ALWAYS generate invoice when canceling an order
+    // This ensures invoice is locked and PDF exists
+    // Do this AFTER the transaction to avoid transaction timeout
+    console.log("Starting invoice generation for order:", input.orderId);
+    try {
+      const { generateInvoiceForOrder } = await import(
+        "@/app/[locale]/actions/invoice"
+      );
+      const invoiceResult = await generateInvoiceForOrder(input.orderId);
+
+      if (!invoiceResult.success || !invoiceResult.invoicePdfUrl) {
+        console.error("Failed to generate invoice:", {
+          success: invoiceResult.success,
+          error: invoiceResult.error,
+          invoiceNumber: invoiceResult.invoiceNumber,
+          invoicePdfUrl: invoiceResult.invoicePdfUrl,
+        });
+        // Log error but don't fail cancellation - invoice generation failure shouldn't prevent cancellation
+        // However, we should investigate why it's failing
+      } else {
+        console.log("Invoice generated successfully:", {
+          invoiceNumber: invoiceResult.invoiceNumber,
+          invoicePdfUrl: invoiceResult.invoicePdfUrl,
+        });
+      }
+    } catch (invoiceError) {
+      // Log the error but don't fail the entire cancellation
+      console.error("Error generating invoice for canceled order:", invoiceError);
+      console.error("Invoice error details:", {
+        message: invoiceError instanceof Error ? invoiceError.message : "Unknown error",
+        stack: invoiceError instanceof Error ? invoiceError.stack : undefined,
+      });
+      // Don't throw - we want cancellation to succeed even if invoice generation fails
+    }
+
+    // Send cancellation email (if requested)
+    if (input.sendNotification && order.customerEmail) {
+      try {
+        const resend = (await import("@/lib/resend")).default;
+        const OrderCancellationEmail = (
+          await import("@/app/[locale]/components/order-cancellation-email")
+        ).default;
+
+        const customerName =
+          order.customerFirstName && order.customerLastName
+            ? `${order.customerFirstName} ${order.customerLastName}`
+            : order.customerEmail || "Customer";
+
+        await resend.emails.send({
+          from: "Golden Hive <goldenhive@resend.dev>",
+          to: order.customerEmail!,
+          subject: `Order #${order.orderNumber} Cancellation`,
+          react: OrderCancellationEmail({
+            orderNumber: Number(order.orderNumber),
+            customerName,
+            customerEmail: order.customerEmail!,
+            cancellationReason: input.cancellationReason,
+            total: order.totalAmount,
+            currency: order.currency,
+          }),
+        });
+        console.log("Cancellation email sent successfully");
+      } catch (emailError) {
+        // Log error but don't fail the cancellation
+        console.error("Failed to send cancellation email:", emailError);
+        // Don't throw - invoice was generated, email failure shouldn't fail cancellation
+      }
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error canceling order:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to cancel order",
     };
   }
 }

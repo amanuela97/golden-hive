@@ -6,6 +6,8 @@ import React, {
   useEffect,
   useCallback,
   useRef,
+  useImperativeHandle,
+  forwardRef,
 } from "react";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useRouter } from "@/i18n/navigation";
@@ -55,10 +57,13 @@ import {
   getOrCreateCustomerForUser,
   getCustomerShippingBillingInfo,
   type LineItemInput,
+  createOrder,
+  createManualPayment,
 } from "@/app/[locale]/actions/orders";
 import {
   createDraftOrder,
   updateDraftOrder,
+  completeDraftOrder,
 } from "@/app/[locale]/actions/draft-orders";
 import { searchCustomers } from "@/app/[locale]/actions/customers";
 import { getAllStores } from "@/app/[locale]/actions/store-members";
@@ -116,10 +121,17 @@ type GroupedProduct = {
   displayImageUrl: string | null;
 };
 
+export interface CreateOrderFormRef {
+  triggerSave: () => void;
+  triggerCancel: () => void;
+}
+
 interface CreateOrderFormProps {
   userRole?: "admin" | "seller" | "customer";
   cancelRedirectPath?: string;
   draftId?: string; // If provided, form is in edit mode
+  onFormModified?: (isModified: boolean) => void;
+  showTopButtons?: boolean; // If true, don't show buttons at bottom
   initialData?: {
     customerId?: string | null;
     customerEmail: string;
@@ -165,17 +177,29 @@ interface CreateOrderFormProps {
   };
 }
 
-export default function CreateOrderForm({
-  userRole,
-  cancelRedirectPath = "/dashboard/orders",
-  draftId,
-  initialData,
-}: CreateOrderFormProps = {}) {
+const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
+  function CreateOrderForm(
+    {
+      userRole,
+      cancelRedirectPath = "/dashboard/orders",
+      draftId,
+      onFormModified,
+      onLoadingChange,
+      showTopButtons = false,
+      initialData,
+    },
+    ref
+  ) {
   const isEditMode = !!draftId;
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [loadingCustomer, setLoadingCustomer] = useState(false);
   const isAdmin = userRole === "admin";
+  const formRef = useRef<HTMLFormElement>(null);
+  
+  // Track initial form state for modification detection
+  const initialFormStateRef = useRef<string | null>(null);
+  const isInitializedRef = useRef(false);
 
   // Customer source selector
   const [customerSource, setCustomerSource] = useState<
@@ -292,12 +316,102 @@ export default function CreateOrderForm({
   const [billingPostalCode, setBillingPostalCode] = useState("");
   const [billingCountry, setBillingCountry] = useState("");
 
+  // Helper function to serialize form state for comparison
+  // Using useMemo to avoid recreating on every render
+  const currentFormState = useMemo(() => {
+    return JSON.stringify({
+      customerId: selectedCustomerId,
+      customerEmail,
+      customerFirstName,
+      customerLastName,
+      customerPhone,
+      lineItems: lineItems.map(item => ({
+        id: item.id,
+        listingId: item.listingId,
+        variantId: item.variantId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })),
+      currency: marketCurrency,
+      paymentStatus,
+      shippingName,
+      shippingPhone,
+      shippingAddressLine1,
+      shippingAddressLine2,
+      shippingCity,
+      shippingRegion,
+      shippingPostalCode,
+      shippingCountry,
+      billingName,
+      billingPhone,
+      billingAddressLine1,
+      billingAddressLine2,
+      billingCity,
+      billingRegion,
+      billingPostalCode,
+      billingCountry,
+      billingSameAsShipping,
+      selectedMarketId,
+    });
+  }, [
+    selectedCustomerId,
+    customerEmail,
+    customerFirstName,
+    customerLastName,
+    customerPhone,
+    lineItems,
+    marketCurrency,
+    paymentStatus,
+    shippingName,
+    shippingPhone,
+    shippingAddressLine1,
+    shippingAddressLine2,
+    shippingCity,
+    shippingRegion,
+    shippingPostalCode,
+    shippingCountry,
+    billingName,
+    billingPhone,
+    billingAddressLine1,
+    billingAddressLine2,
+    billingCity,
+    billingRegion,
+    billingPostalCode,
+    billingCountry,
+    billingSameAsShipping,
+    selectedMarketId,
+  ]);
+
   // Initialize form data from initialData when in edit mode
   useEffect(() => {
     if (isEditMode && initialData) {
-      if (initialData.customerId) {
-        setSelectedCustomerId(initialData.customerId);
-      }
+      // First, check if this draft uses the user's customer info
+      const checkCustomerSource = async () => {
+        if (initialData.customerId) {
+          setSelectedCustomerId(initialData.customerId);
+          // Check if this customer ID matches the user's customer ID
+          try {
+            const result = await getOrCreateCustomerForUser();
+            if (result.success && result.data && result.data.id === initialData.customerId) {
+              // This draft uses the user's saved customer info
+              setCustomerSource("myInfo");
+            } else {
+              // This draft uses a different customer
+              setCustomerSource("manual");
+            }
+          } catch {
+            // If we can't check, default to manual
+            setCustomerSource("manual");
+          }
+        } else {
+          // No customer ID, use manual
+          setCustomerSource("manual");
+        }
+      };
+
+      checkCustomerSource();
+
+      // Set all form fields from initialData
       setCustomerEmail(initialData.customerEmail || "");
       setCustomerFirstName(initialData.customerFirstName || "");
       setCustomerLastName(initialData.customerLastName || "");
@@ -331,14 +445,86 @@ export default function CreateOrderForm({
         initialData.billingAddressLine1 === initialData.shippingAddressLine1 &&
         initialData.billingCity === initialData.shippingCity;
       setBillingSameAsShipping(billingSame);
-      // Set customer source to manual in edit mode since we're editing existing data
-      setCustomerSource("manual");
+      
+      // Mark as initialized - we'll set the initial state after all state updates
+      isInitializedRef.current = false;
     }
   }, [isEditMode, initialData]);
 
+  // Set initial form state after initialization is complete
+  // Wait longer to ensure customer source check and all state updates are done
+  useEffect(() => {
+    if (isEditMode && !isInitializedRef.current && initialData && currentFormState) {
+      // Use a longer delay to ensure:
+      // 1. All state from initialData is set
+      // 2. Customer source check is complete
+      // 3. No auto-fill effects have run
+      const timer = setTimeout(() => {
+        // Only set initial state if we haven't already (prevent race conditions)
+        if (!isInitializedRef.current) {
+          initialFormStateRef.current = currentFormState;
+          isInitializedRef.current = true;
+          // Explicitly set to false to ensure buttons are hidden
+          if (onFormModified) {
+            onFormModified(false);
+          }
+        }
+      }, 800); // Increased delay to ensure form is fully initialized, including customer source check
+      return () => clearTimeout(timer);
+    }
+  }, [isEditMode, initialData, currentFormState, onFormModified]);
+
+  // Track form modifications - debounced to avoid constant updates
+  // Only track AFTER initialization is complete
+  useEffect(() => {
+    // Don't track modifications during initialization
+    if (!isInitializedRef.current) {
+      // Ensure buttons are hidden during initialization
+      if (onFormModified && isEditMode) {
+        onFormModified(false);
+      }
+      return;
+    }
+
+    if (
+      isEditMode &&
+      initialFormStateRef.current !== null &&
+      currentFormState
+    ) {
+      const timer = setTimeout(() => {
+        // Double-check initialization is still complete before checking modifications
+        if (isInitializedRef.current && initialFormStateRef.current !== null) {
+          const modified = currentFormState !== initialFormStateRef.current;
+          if (onFormModified) {
+            onFormModified(modified);
+          }
+        }
+      }, 300); // Debounce by 300ms to avoid interfering with typing
+      return () => clearTimeout(timer);
+    }
+  }, [isEditMode, currentFormState, onFormModified]);
+
+  // Expose handlers to parent via ref
+  useImperativeHandle(ref, () => ({
+    triggerSave: () => {
+      if (formRef.current) {
+        formRef.current.requestSubmit();
+      }
+    },
+    triggerCancel: () => {
+      router.push(cancelRedirectPath);
+    },
+  }), [router, cancelRedirectPath]);
+
   // Auto-fill customer info on mount or when source changes
+  // Skip auto-fill in edit mode when we have initialData (to prevent triggering modification detection)
   useEffect(() => {
     const loadCustomerInfo = async () => {
+      // Don't auto-fill in edit mode - we already have the data from initialData
+      if (isEditMode && initialData) {
+        return;
+      }
+
       if (customerSource === "myInfo") {
         setLoadingCustomer(true);
         try {
@@ -968,6 +1154,9 @@ export default function CreateOrderForm({
     }
 
     setLoading(true);
+    if (onLoadingChange) {
+      onLoadingChange(true);
+    }
     try {
       if (isEditMode && draftId) {
         // Update existing draft order
@@ -1029,6 +1218,11 @@ export default function CreateOrderForm({
 
         if (result.success) {
           toast.success("Draft order updated successfully");
+          // Reset modification tracking after successful save
+          initialFormStateRef.current = currentFormState;
+          if (onFormModified) {
+            onFormModified(false);
+          }
           // Stay on the same page
         } else {
           toast.error(result.error || "Failed to update draft order");
@@ -1102,22 +1296,21 @@ export default function CreateOrderForm({
       toast.error("Failed to create order");
     } finally {
       setLoading(false);
+      if (onLoadingChange) {
+        onLoadingChange(false);
+      }
     }
   };
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Create Order</h1>
-        <Button
-          variant="outline"
-          onClick={() => router.push(cancelRedirectPath)}
-        >
-          Cancel
-        </Button>
-      </div>
+      {!isEditMode && (
+        <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Create Order</h1>
+        </div>
+      )}
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column */}
           <div className="lg:col-span-2 space-y-6">
@@ -1655,19 +1848,21 @@ export default function CreateOrderForm({
           </div>
         </div>
 
-        {/* Submit Button */}
-        <div className="flex justify-end gap-4">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => router.push(cancelRedirectPath)}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" disabled={loading}>
-            {loading ? "Saving..." : "Save Draft"}
-          </Button>
-        </div>
+        {/* Submit Button - Only show if not using top buttons */}
+        {!showTopButtons && (
+          <div className="flex justify-end gap-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.push(cancelRedirectPath)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? "Saving..." : isEditMode ? "Save" : "Save Draft"}
+            </Button>
+          </div>
+        )}
       </form>
 
       {/* Send Invoice Dialog */}
@@ -1732,9 +1927,9 @@ export default function CreateOrderForm({
           <DialogHeader>
             <DialogTitle>Mark as Paid</DialogTitle>
             <DialogDescription>
-              Mark this order as paid if you received {currency}{" "}
-              {total.toFixed(2)} from another payment method. This will create
-              an order when you save.
+              {draftId
+                ? "This will immediately convert this draft order into an order and mark it as paid. The draft will be removed and cannot be undone. You will be redirected to the order page."
+                : "This will immediately create an order and mark it as paid. You will be redirected to the order page."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1744,16 +1939,149 @@ export default function CreateOrderForm({
                 setShowMarkAsPaidDialog(false);
                 setPaymentStatus("pending");
               }}
+              disabled={loading}
             >
               Cancel
             </Button>
             <Button
-              onClick={() => {
-                setShowMarkAsPaidDialog(false);
-                toast("Order will be marked as paid when saved");
+              onClick={async () => {
+                setLoading(true);
+                try {
+                  if (draftId) {
+                    // Case 1: Convert existing draft to order and mark as paid
+                    const result = await completeDraftOrder(draftId, true);
+
+                    if (result.success && result.orderId) {
+                      toast.success("Draft order converted to order and marked as paid");
+                      setShowMarkAsPaidDialog(false);
+                      router.push(`/dashboard/orders/${result.orderId}`);
+                    } else {
+                      toast.error(result.error || "Failed to mark as paid");
+                      setShowMarkAsPaidDialog(false);
+                      setPaymentStatus("pending");
+                    }
+                  } else {
+                    // Case 2: Create draft first, then immediately convert to order
+                    // Validate form data first
+                    if (lineItems.length === 0) {
+                      toast.error("Please add at least one line item");
+                      setShowMarkAsPaidDialog(false);
+                      setLoading(false);
+                      return;
+                    }
+
+                    if (!customerEmail.trim()) {
+                      toast.error("Please enter customer email");
+                      setShowMarkAsPaidDialog(false);
+                      setLoading(false);
+                      return;
+                    }
+
+                    // Validate stock availability
+                    const outOfStockItems = lineItems.filter(
+                      (item) => item.available < item.quantity
+                    );
+                    if (outOfStockItems.length > 0) {
+                      const itemNames = outOfStockItems
+                        .map(
+                          (item) =>
+                            `${item.variantTitle}: ${item.available} available, ${item.quantity} requested`
+                        )
+                        .join(", ");
+                      toast.error(`Insufficient stock: ${itemNames}`);
+                      setShowMarkAsPaidDialog(false);
+                      setLoading(false);
+                      return;
+                    }
+
+                    // Step 1: Create draft order (customerId will be found/created in createDraftOrder)
+                    // The createDraftOrder function now handles finding/creating customers automatically
+                    const draftResult = await createDraftOrder({
+                      customerId: selectedCustomerId || null, // Will be found/created if null
+                      customerEmail: customerEmail.trim(),
+                      customerFirstName: customerFirstName.trim() || null,
+                      customerLastName: customerLastName.trim() || null,
+                      customerPhone: customerPhone.trim() || null,
+                      lineItems: lineItems.map((item) => ({
+                        listingId: item.listingId,
+                        variantId: item.variantId,
+                        quantity: item.quantity,
+                        unitPrice: item.unitPrice,
+                        title: item.title,
+                        sku: item.sku || null,
+                      })),
+                      currency: marketCurrency,
+                      subtotalAmount: subtotal.toFixed(2),
+                      discountAmount: "0",
+                      shippingAmount: "0",
+                      taxAmount: "0",
+                      totalAmount: total.toFixed(2),
+                      paymentStatus: "pending", // Will be marked as paid when converted
+                      shippingName: shippingName.trim() || null,
+                      shippingPhone: shippingPhone.trim() || null,
+                      shippingAddressLine1: shippingAddressLine1.trim() || null,
+                      shippingAddressLine2: shippingAddressLine2.trim() || null,
+                      shippingCity: shippingCity.trim() || null,
+                      shippingRegion: shippingRegion.trim() || null,
+                      shippingPostalCode: shippingPostalCode.trim() || null,
+                      shippingCountry: shippingCountry.trim() || null,
+                      billingName: billingSameAsShipping
+                        ? shippingName.trim() || null
+                        : billingName.trim() || null,
+                      billingPhone: billingSameAsShipping
+                        ? shippingPhone.trim() || null
+                        : billingPhone.trim() || null,
+                      billingAddressLine1: billingSameAsShipping
+                        ? shippingAddressLine1.trim() || null
+                        : billingAddressLine1.trim() || null,
+                      billingAddressLine2: billingSameAsShipping
+                        ? shippingAddressLine2.trim() || null
+                        : billingAddressLine2.trim() || null,
+                      billingCity: billingSameAsShipping
+                        ? shippingCity.trim() || null
+                        : billingCity.trim() || null,
+                      billingRegion: billingSameAsShipping
+                        ? shippingRegion.trim() || null
+                        : billingRegion.trim() || null,
+                      billingPostalCode: billingSameAsShipping
+                        ? shippingPostalCode.trim() || null
+                        : billingPostalCode.trim() || null,
+                      billingCountry: billingSameAsShipping
+                        ? shippingCountry.trim() || null
+                        : billingCountry.trim() || null,
+                    });
+
+                    if (!draftResult.success || !draftResult.draftId) {
+                      toast.error(draftResult.error || "Failed to create draft order");
+                      setShowMarkAsPaidDialog(false);
+                      setLoading(false);
+                      return;
+                    }
+
+                    // Step 3: Immediately convert draft to order and mark as paid
+                    const orderResult = await completeDraftOrder(draftResult.draftId, true);
+
+                    if (orderResult.success && orderResult.orderId) {
+                      toast.success("Order created and marked as paid");
+                      setShowMarkAsPaidDialog(false);
+                      router.push(`/dashboard/orders/${orderResult.orderId}`);
+                    } else {
+                      toast.error(orderResult.error || "Failed to convert draft to order");
+                      setShowMarkAsPaidDialog(false);
+                      setPaymentStatus("pending");
+                    }
+                  }
+                } catch (error) {
+                  toast.error("Failed to mark as paid");
+                  setShowMarkAsPaidDialog(false);
+                  setPaymentStatus("pending");
+                } finally {
+                  setLoading(false);
+                }
               }}
+              disabled={loading}
             >
-              Confirm
+              {loading ? "Processing..." : "Confirm"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2131,4 +2459,6 @@ export default function CreateOrderForm({
       </Dialog>
     </div>
   );
-}
+});
+
+export default CreateOrderForm;

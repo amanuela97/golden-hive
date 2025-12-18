@@ -45,9 +45,17 @@ export function DraftOrdersTable({
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const getStatusBadge = (invoiceSent: boolean, paymentStatus: string) => {
-    if (paymentStatus === "paid") {
+  const getStatusBadge = (
+    completed: boolean,
+    invoiceSent: boolean,
+    paymentStatus: string
+  ) => {
+    // If draft is completed (converted to order), show as Completed
+    if (completed) {
       return <Badge className="bg-green-100 text-green-800">Completed</Badge>;
+    }
+    if (paymentStatus === "paid") {
+      return <Badge className="bg-green-100 text-green-800">Paid</Badge>;
     }
     if (invoiceSent) {
       return <Badge className="bg-blue-100 text-blue-800">Invoice sent</Badge>;
@@ -185,6 +193,7 @@ export function DraftOrdersTable({
         header: "Status",
         cell: ({ row }) => {
           return getStatusBadge(
+            row.original.completed,
             row.original.invoiceSent,
             row.original.paymentStatus
           );

@@ -13,9 +13,11 @@ import {
   userRoles,
   roles,
   orderEvents,
+  orderPayments,
+  customers,
   user,
 } from "@/db/schema";
-import { eq, and, sql, or, desc, inArray } from "drizzle-orm";
+import { eq, and, sql, or, desc, inArray, isNull } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
@@ -135,10 +137,8 @@ export async function listDraftOrders(
       return { success: false, error: storeError };
     }
 
-    // Build where conditions - only non-completed drafts
-    const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof sql>> = [
-      eq(draftOrders.completed, false),
-    ];
+    // Build where conditions
+    const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof sql>> = [];
 
     // Store isolation
     if (!isAdmin && storeId) {
@@ -155,17 +155,29 @@ export async function listDraftOrders(
 
     // Apply view filter
     const selectedView = filters.selectedView || "all";
-    if (selectedView === "open") {
+    if (selectedView === "all") {
+      // "all" view shows all drafts (both completed and non-completed)
+      // No additional filter needed
+    } else if (selectedView === "open") {
+      // Only show non-completed, pending payment drafts
+      conditions.push(eq(draftOrders.completed, false));
       conditions.push(eq(draftOrders.paymentStatus, "pending"));
       // TODO: Check invoice sent status (need draft_events table or metadata)
     } else if (selectedView === "invoice_sent") {
+      // Only show non-completed drafts with invoice sent
+      conditions.push(eq(draftOrders.completed, false));
       // TODO: Check invoice sent status
     } else if (selectedView === "open_and_invoice_sent") {
+      // Only show non-completed, pending payment drafts
+      conditions.push(eq(draftOrders.completed, false));
       conditions.push(eq(draftOrders.paymentStatus, "pending"));
       // TODO: Check invoice sent status
     } else if (selectedView === "completed") {
-      // Show completed drafts
+      // Show only completed drafts
       conditions.push(eq(draftOrders.completed, true));
+    } else {
+      // Default: show only non-completed drafts for any other view
+      conditions.push(eq(draftOrders.completed, false));
     }
 
     // Search filter
@@ -519,12 +531,14 @@ export async function deleteDraftOrders(
 
     const { storeId, isAdmin } = await getStoreIdForUser();
 
-    // Get drafts to check permissions
+    // Get drafts to check permissions and check if they were converted to orders
     const draftsData = await db
       .select({
         id: draftOrders.id,
         storeId: draftOrders.storeId,
         completed: draftOrders.completed,
+        convertedToOrderId: draftOrders.convertedToOrderId,
+        draftNumber: draftOrders.draftNumber,
       })
       .from(draftOrders)
       .where(inArray(draftOrders.id, draftIds));
@@ -533,19 +547,9 @@ export async function deleteDraftOrders(
       return { success: false, error: "No draft orders found" };
     }
 
-    // Filter to only non-completed drafts
-    const validDrafts = draftsData.filter((d) => !d.completed);
-
-    if (validDrafts.length === 0) {
-      return {
-        success: false,
-        error: "No valid draft orders to delete (drafts may be completed)",
-      };
-    }
-
-    // Check permissions
+    // Check permissions - drafts can always be deleted regardless of completion status
     const validDraftIds: string[] = [];
-    for (const draft of validDrafts) {
+    for (const draft of draftsData) {
       if (isAdmin) {
         validDraftIds.push(draft.id);
       } else if (storeId && draft.storeId === storeId) {
@@ -560,14 +564,47 @@ export async function deleteDraftOrders(
       };
     }
 
-    // Don't actually delete draft orders - they should remain as historical records
-    // Instead, we'll mark them as deleted or just prevent deletion
-    // For now, we'll prevent deletion entirely to preserve draft history
+    // Before deleting, check if any drafts were converted to orders and add timeline events
+    const draftsToDelete = draftsData.filter((d) => validDraftIds.includes(d.id));
+    const draftsWithOrders = draftsToDelete.filter(
+      (d) => d.convertedToOrderId !== null
+    );
+
+    if (draftsWithOrders.length > 0) {
+      // Add timeline events to orders indicating the draft was deleted
+      const userId = session.user.id;
+      for (const draft of draftsWithOrders) {
+        if (draft.convertedToOrderId) {
+          try {
+            await db.insert(orderEvents).values({
+              orderId: draft.convertedToOrderId,
+              type: "system",
+              visibility: "internal",
+              message: `Original draft order #${draft.draftNumber} was deleted`,
+              createdBy: userId,
+              metadata: {
+                draftId: draft.id,
+                draftNumber: draft.draftNumber,
+                action: "draft_deleted",
+              } as Record<string, unknown>,
+            });
+          } catch (error) {
+            // Log error but don't fail the deletion
+            console.error(
+              `Failed to add timeline event for order ${draft.convertedToOrderId}:`,
+              error
+            );
+          }
+        }
+      }
+    }
+
+    // Delete draft orders (cascade will handle draftOrderItems)
+    await db.delete(draftOrders).where(inArray(draftOrders.id, validDraftIds));
 
     return {
-      success: false,
-      error:
-        "Draft orders cannot be deleted. They are kept as historical records.",
+      success: true,
+      deletedCount: validDraftIds.length,
     };
   } catch (error) {
     console.error("Error deleting draft orders:", error);
@@ -683,12 +720,135 @@ async function completeDraftOrderInternal(
 
     // Use transaction to create order and mark draft as completed
     return await db.transaction(async (tx) => {
+      // Step 0: Ensure customerId exists - find or create customer if needed
+      let finalCustomerId = draft.customerId;
+      
+      if (!finalCustomerId && draft.customerEmail) {
+        // Get user email if available (for logged-in user check)
+        let userEmail: string | null = null;
+        if (session && !skipAuth) {
+          const userData = await tx
+            .select({ email: user.email })
+            .from(user)
+            .where(eq(user.id, session.user.id))
+            .limit(1);
+          userEmail = userData[0]?.email || null;
+        }
+
+        // Check if this email belongs to the logged-in user
+        const isLoggedInUser =
+          userEmail &&
+          userEmail.toLowerCase() === draft.customerEmail.toLowerCase();
+
+        let existingCustomer;
+
+        if (isLoggedInUser && session) {
+          // Priority 1: If email matches logged-in user, first check by userId
+          existingCustomer = await tx
+            .select({
+              id: customers.id,
+              userId: customers.userId,
+              storeId: customers.storeId,
+            })
+            .from(customers)
+            .where(eq(customers.userId, session.user.id))
+            .limit(1);
+
+          // Priority 2: If no customer found by userId, check by email (regardless of storeId)
+          if (existingCustomer.length === 0) {
+            existingCustomer = await tx
+              .select({
+                id: customers.id,
+                userId: customers.userId,
+                storeId: customers.storeId,
+              })
+              .from(customers)
+              .where(eq(customers.email, draft.customerEmail))
+              .limit(1);
+          }
+        } else {
+          // For other users' emails: Check if customer exists with SAME email AND SAME storeId
+          existingCustomer = await tx
+            .select({
+              id: customers.id,
+              userId: customers.userId,
+              storeId: customers.storeId,
+            })
+            .from(customers)
+            .where(
+              and(
+                eq(customers.email, draft.customerEmail),
+                draft.storeId
+                  ? eq(customers.storeId, draft.storeId)
+                  : isNull(customers.storeId)
+              )
+            )
+            .limit(1);
+        }
+
+        if (existingCustomer.length > 0) {
+          // Found existing customer - use it and update if needed
+          const customer = existingCustomer[0];
+
+          // Update customer record if needed
+          const updateData: {
+            storeId?: string | null;
+            userId?: string;
+            firstName?: string | null;
+            lastName?: string | null;
+            phone?: string | null;
+          } = {};
+
+          // Link userId if this is the logged-in user and userId is missing
+          if (isLoggedInUser && session && !customer.userId) {
+            updateData.userId = session.user.id;
+          }
+
+          // Update storeId if customer has null storeId but we have one
+          if (draft.storeId && !customer.storeId) {
+            updateData.storeId = draft.storeId;
+          }
+
+          // Update name/phone if we have more recent data
+          if (draft.customerFirstName && !updateData.firstName) {
+            updateData.firstName = draft.customerFirstName;
+          }
+          if (draft.customerLastName && !updateData.lastName) {
+            updateData.lastName = draft.customerLastName;
+          }
+
+          if (Object.keys(updateData).length > 0) {
+            await tx
+              .update(customers)
+              .set(updateData)
+              .where(eq(customers.id, customer.id));
+          }
+
+          finalCustomerId = customer.id;
+        } else {
+          // No existing customer found - create a new one
+          const newCustomer = await tx
+            .insert(customers)
+            .values({
+              storeId: draft.storeId,
+              userId: isLoggedInUser && session ? session.user.id : null,
+              email: draft.customerEmail,
+              firstName: draft.customerFirstName || null,
+              lastName: draft.customerLastName || null,
+              phone: null, // Draft doesn't store customer phone in customer table
+            })
+            .returning();
+
+          finalCustomerId = newCustomer[0].id;
+        }
+      }
+
       // Step 1: Create new Order record
       const newOrder = await tx
         .insert(orders)
         .values({
           storeId: draft.storeId,
-          customerId: draft.customerId,
+          customerId: finalCustomerId, // Use the found/created customerId
           customerEmail: draft.customerEmail,
           customerFirstName: draft.customerFirstName,
           customerLastName: draft.customerLastName,
@@ -771,7 +931,19 @@ async function completeDraftOrderInternal(
         }
       }
 
-      // Step 4: Generate timeline events
+      // Step 4: Create payment record if marked as paid (manual payment)
+      if (markAsPaid) {
+        await tx.insert(orderPayments).values({
+          orderId: orderId,
+          amount: draft.totalAmount,
+          currency: draft.currency,
+          provider: "manual", // Manual payment method
+          providerPaymentId: null, // No gateway transaction ID
+          status: "completed", // Payment is complete
+        });
+      }
+
+      // Step 5: Generate timeline events
       const createdBy = skipAuth ? null : (session.user.id || null);
       await tx.insert(orderEvents).values([
         {
@@ -797,21 +969,23 @@ async function completeDraftOrderInternal(
         },
       ]);
 
+      // Add payment event if marked as paid
       if (markAsPaid) {
         await tx.insert(orderEvents).values({
           orderId: orderId,
           type: "payment",
           visibility: "internal",
-          message: "Payment received",
+          message: "Payment marked as paid manually",
           createdBy: createdBy,
-          metadata: { amount: draft.totalAmount, method: skipAuth ? "stripe" : "manual" } as Record<
-            string,
-            unknown
-          >,
+          metadata: { 
+            amount: draft.totalAmount, 
+            method: "manual",
+            currency: draft.currency,
+          } as Record<string, unknown>,
         });
       }
 
-      // Step 5: Mark draft as completed
+      // Step 6: Mark draft as completed
       await tx
         .update(draftOrders)
         .set({
@@ -821,6 +995,64 @@ async function completeDraftOrderInternal(
           updatedAt: new Date(),
         })
         .where(eq(draftOrders.id, draftId));
+
+      // Step 7: Send order confirmation email
+      try {
+        const resend = (await import("@/lib/resend")).default;
+        const OrderConfirmationEmail = (
+          await import("@/app/[locale]/components/order-confirmation-email")
+        ).default;
+
+        const customerName =
+          draft.customerFirstName && draft.customerLastName
+            ? `${draft.customerFirstName} ${draft.customerLastName}`
+            : draft.customerEmail || "Customer";
+
+        const orderUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/orders/${orderId}`;
+
+        await resend.emails.send({
+          from: "Golden Hive <goldenhive@resend.dev>",
+          to: draft.customerEmail,
+          subject: `Order Confirmation #${orderNumber}`,
+          react: OrderConfirmationEmail({
+            orderNumber: Number(orderNumber),
+            customerName,
+            customerEmail: draft.customerEmail,
+            items: draft.items.map((item) => ({
+              title: item.title,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              lineTotal: item.lineTotal || "0",
+              sku: item.sku || null,
+            })),
+            subtotal: draft.subtotalAmount,
+            discount: draft.discountAmount || "0",
+            shipping: draft.shippingAmount || "0",
+            tax: draft.taxAmount || "0",
+            total: draft.totalAmount,
+            currency: draft.currency,
+            paymentStatus: markAsPaid ? "paid" : "pending",
+            orderStatus: "open",
+            shippingAddress: draft.shippingAddressLine1 ||
+              draft.shippingCity ||
+              draft.shippingCountry
+              ? {
+                  name: draft.shippingName || null,
+                  line1: draft.shippingAddressLine1 || null,
+                  line2: draft.shippingAddressLine2 || null,
+                  city: draft.shippingCity || null,
+                  region: draft.shippingRegion || null,
+                  postalCode: draft.shippingPostalCode || null,
+                  country: draft.shippingCountry || null,
+                }
+              : null,
+            orderUrl,
+          }),
+        });
+      } catch (emailError) {
+        // Log error but don't fail the order creation
+        console.error("Failed to send order confirmation email:", emailError);
+      }
 
       return {
         success: true,
@@ -1371,7 +1603,6 @@ export async function createDraftOrder(input: {
     return await db.transaction(async (tx) => {
       // Determine storeId (for admins, get from line items)
       let finalStoreId = storeId;
-
       if (isAdmin && input.lineItems.length > 0) {
         const listingIds = [
           ...new Set(input.lineItems.map((item) => item.listingId)),
@@ -1385,6 +1616,123 @@ export async function createDraftOrder(input: {
           finalStoreId = listingsResult[0].storeId;
         }
       }
+      
+      // Find or create customer if customerId is not provided but email is
+      let finalCustomerId = input.customerId;
+      if (!finalCustomerId && input.customerEmail) {
+        const userEmail = session.user.email;
+        const userId = session.user.id;
+        
+        // Check if this email belongs to the logged-in user
+        const isLoggedInUser =
+          userEmail &&
+          userEmail.toLowerCase() === input.customerEmail.toLowerCase();
+
+        let existingCustomer;
+
+        if (isLoggedInUser) {
+          // Priority 1: If email matches logged-in user, first check by userId
+          existingCustomer = await tx
+            .select({
+              id: customers.id,
+              userId: customers.userId,
+              storeId: customers.storeId,
+            })
+            .from(customers)
+            .where(eq(customers.userId, userId))
+            .limit(1);
+
+          // Priority 2: If no customer found by userId, check by email (regardless of storeId)
+          if (existingCustomer.length === 0) {
+            existingCustomer = await tx
+              .select({
+                id: customers.id,
+                userId: customers.userId,
+                storeId: customers.storeId,
+              })
+              .from(customers)
+              .where(eq(customers.email, input.customerEmail))
+              .limit(1);
+          }
+        } else {
+          // For other users' emails: Check if customer exists with SAME email AND SAME storeId
+          existingCustomer = await tx
+            .select({
+              id: customers.id,
+              userId: customers.userId,
+              storeId: customers.storeId,
+            })
+            .from(customers)
+            .where(
+              and(
+                eq(customers.email, input.customerEmail),
+                finalStoreId
+                  ? eq(customers.storeId, finalStoreId)
+                  : isNull(customers.storeId)
+              )
+            )
+            .limit(1);
+        }
+
+        if (existingCustomer.length > 0) {
+          // Found existing customer
+          const customer = existingCustomer[0];
+          
+          // Update customer record if needed
+          const updateData: {
+            storeId?: string | null;
+            userId?: string;
+            firstName?: string | null;
+            lastName?: string | null;
+            phone?: string | null;
+          } = {};
+
+          // Link userId if this is the logged-in user and userId is missing
+          if (isLoggedInUser && !customer.userId) {
+            updateData.userId = userId;
+          }
+
+          // Update storeId if customer has null storeId but we have one
+          if (finalStoreId && !customer.storeId) {
+            updateData.storeId = finalStoreId;
+          }
+
+          // Update name/phone if we have more recent data
+          if (input.customerFirstName && !updateData.firstName) {
+            updateData.firstName = input.customerFirstName;
+          }
+          if (input.customerLastName && !updateData.lastName) {
+            updateData.lastName = input.customerLastName;
+          }
+          if (input.customerPhone && !updateData.phone) {
+            updateData.phone = input.customerPhone;
+          }
+
+          if (Object.keys(updateData).length > 0) {
+            await tx
+              .update(customers)
+              .set(updateData)
+              .where(eq(customers.id, customer.id));
+          }
+
+          finalCustomerId = customer.id;
+        } else {
+          // No existing customer found - create a new one
+          const newCustomer = await tx
+            .insert(customers)
+            .values({
+              storeId: finalStoreId,
+              userId: isLoggedInUser ? userId : null,
+              email: input.customerEmail,
+              firstName: input.customerFirstName || null,
+              lastName: input.customerLastName || null,
+              phone: input.customerPhone || null,
+            })
+            .returning({ id: customers.id });
+
+          finalCustomerId = newCustomer[0].id;
+        }
+      }
 
       // Create draft order
       const newDraft = await tx
@@ -1392,7 +1740,7 @@ export async function createDraftOrder(input: {
         .values({
           storeId: finalStoreId,
           marketId: userMarketId, // Snapshot market at transaction time
-          customerId: input.customerId,
+          customerId: finalCustomerId, // Use the found/created customerId
           customerEmail: input.customerEmail,
           customerFirstName: input.customerFirstName,
           customerLastName: input.customerLastName,

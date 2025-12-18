@@ -33,7 +33,6 @@ import { Link } from "@/i18n/navigation";
 import { formatDistanceToNow } from "date-fns";
 import toast from "react-hot-toast";
 import {
-  deleteOrders,
   archiveOrders,
   unarchiveOrders,
 } from "@/app/[locale]/actions/orders";
@@ -49,8 +48,7 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
     { id: "date", desc: true }, // Sort by date, latest first
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  // Orders cannot be deleted - delete functionality removed
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
 
   const paymentStatusOptions = useMemo(
@@ -378,43 +376,7 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
     },
   });
 
-  const handleBulkDelete = useCallback(async () => {
-    // Get selected order IDs from rowSelection state
-    const selectedIds = Object.keys(rowSelection)
-      .map((rowIndex) => {
-        const row = table.getRowModel().rows[parseInt(rowIndex)];
-        return row?.original.id;
-      })
-      .filter((id): id is string => !!id);
-
-    if (selectedIds.length === 0) {
-      return;
-    }
-
-    setDeleting(true);
-    try {
-      const result = await deleteOrders(selectedIds);
-
-      if (result.success) {
-        const deletedCount = result.deletedCount || selectedIds.length;
-        toast.success(
-          `${deletedCount} order${deletedCount > 1 ? "s" : ""} deleted successfully`
-        );
-        // Clear selection
-        setRowSelection({});
-        setBulkDeleteConfirm(false);
-        // Refresh data
-        onDataChange();
-      } else {
-        toast.error(result.error || "Failed to delete orders");
-      }
-    } catch (error) {
-      toast.error("Failed to delete orders");
-      console.error("Bulk delete error:", error);
-    } finally {
-      setDeleting(false);
-    }
-  }, [table, rowSelection, onDataChange]);
+  // Orders cannot be deleted - delete functionality removed
 
   const selectedCount = Object.keys(rowSelection).length;
   const selectedRows = table.getRowModel().rows.filter((row) =>
@@ -433,12 +395,13 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
       condition: boolean;
     }> = [];
 
-    // Check if all selected orders are unpaid and not archived
+    // Check if all selected orders are unpaid, not archived, and not canceled
     const allUnpaidNotArchived = selectedOrders.every(
       (order) =>
         order.paymentStatus === "pending" &&
         !order.archivedAt &&
-        order.status !== "archived"
+        order.status !== "archived" &&
+        order.status !== "canceled"
     );
     if (allUnpaidNotArchived) {
       actions.push({
@@ -451,13 +414,16 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
       });
     }
 
-    // Check if all selected orders are paid and unfulfilled
+    // Check if all selected orders are paid, unfulfilled, not archived, and not canceled
     const allPaidUnfulfilled = selectedOrders.every(
       (order) =>
         (order.paymentStatus === "paid" ||
           order.paymentStatus === "partially_refunded") &&
         (order.fulfillmentStatus === "unfulfilled" ||
-          order.fulfillmentStatus === "partial")
+          order.fulfillmentStatus === "partial") &&
+        !order.archivedAt &&
+        order.status !== "archived" &&
+        order.status !== "canceled"
     );
     if (allPaidUnfulfilled) {
       actions.push({
@@ -538,22 +504,10 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
       });
     }
 
-    // Delete is always available (with confirmation)
-    actions.push({
-      label: bulkDeleteConfirm ? "Confirm Delete" : "Delete",
-      action: () => {
-        if (bulkDeleteConfirm) {
-          handleBulkDelete();
-        } else {
-          setBulkDeleteConfirm(true);
-        }
-      },
-      variant: "destructive",
-      condition: true,
-    });
+    // Orders cannot be deleted - delete action removed
 
     return actions;
-  }, [selectedOrders, bulkDeleteConfirm, table, onDataChange, handleBulkDelete]);
+  }, [selectedOrders, table, onDataChange]);
 
   const availableActions = getAvailableBulkActions();
 
@@ -572,7 +526,7 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
                 variant={action.variant}
                 size="sm"
                 onClick={action.action}
-                disabled={bulkActionLoading || deleting}
+                disabled={bulkActionLoading}
               >
                 {action.label}
               </Button>
@@ -582,9 +536,8 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
               size="sm"
               onClick={() => {
                 setRowSelection({});
-                setBulkDeleteConfirm(false);
               }}
-              disabled={bulkActionLoading || deleting}
+              disabled={bulkActionLoading}
             >
               Cancel
             </Button>

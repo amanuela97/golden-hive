@@ -18,7 +18,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  ArrowLeft,
   MoreVertical,
   Copy,
   Trash2,
@@ -34,6 +33,10 @@ interface DraftOrderActionsProps {
   draftNumber: number;
   customerEmail: string | null;
   userRole: "admin" | "seller" | "customer";
+  isFormModified?: boolean;
+  onSave?: () => void;
+  onCancel?: () => void;
+  formLoading?: boolean;
 }
 
 export default function DraftOrderActions({
@@ -41,6 +44,10 @@ export default function DraftOrderActions({
   draftNumber,
   customerEmail,
   userRole,
+  isFormModified = false,
+  onSave,
+  onCancel,
+  formLoading = false,
 }: DraftOrderActionsProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -87,13 +94,6 @@ export default function DraftOrderActions({
     <>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => router.push("/dashboard/draft_orders")}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
           <div>
             <h1 className="text-3xl font-bold">Draft Order #{draftNumber}</h1>
             <p className="text-sm text-muted-foreground">
@@ -102,6 +102,24 @@ export default function DraftOrderActions({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Save and Cancel buttons - only show when form is modified */}
+          {isFormModified && (
+            <>
+              <Button
+                variant="outline"
+                onClick={onCancel}
+                disabled={loading || formLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={onSave}
+                disabled={loading || formLoading}
+              >
+                {formLoading ? "Saving..." : "Save"}
+              </Button>
+            </>
+          )}
           <Button variant="outline" onClick={handleDuplicate} disabled={loading}>
             <Copy className="h-4 w-4 mr-2" />
             Duplicate

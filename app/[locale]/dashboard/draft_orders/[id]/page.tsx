@@ -6,9 +6,8 @@ import { userRoles, roles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
 import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
-import CreateOrderForm from "../../orders/components/CreateOrderForm";
 import { getDraftOrder } from "@/app/[locale]/actions/draft-orders";
-import DraftOrderActions from "./DraftOrderActions";
+import DraftOrderPageClient from "./DraftOrderPageClient";
 
 interface DraftOrderPageProps {
   params: Promise<{ id: string }>;
@@ -121,23 +120,13 @@ export default async function DraftOrderPage({ params }: DraftOrderPageProps) {
 
   return (
     <DashboardWrapper userRole={roleName}>
-      <div className="space-y-6">
-        {/* Header with actions */}
-        <DraftOrderActions 
-          draftId={draftId}
-          draftNumber={draftData.draftNumber}
-          customerEmail={draftData.customerEmail}
-          userRole={roleName}
-        />
-        
-        {/* Form */}
-        <CreateOrderForm
-          userRole={roleName}
-          cancelRedirectPath="/dashboard/draft_orders"
-          draftId={draftId}
-          initialData={initialData}
-        />
-      </div>
+      <DraftOrderPageClient
+        draftId={draftId}
+        draftNumber={draftData.draftNumber}
+        customerEmail={draftData.customerEmail}
+        userRole={roleName}
+        initialData={initialData}
+      />
     </DashboardWrapper>
   );
 }

@@ -366,13 +366,17 @@ export const store = pgTable("store", {
   storeCurrency: text("store_currency").notNull().default("EUR"),
   unitSystem: text("unit_system").notNull().default("Metric system"), // "Metric system" | "Imperial system"
   stripeAccountId: text("stripe_account_id"), // Stripe Connect account ID
+  stripeOnboardingComplete: boolean("stripe_onboarding_complete").default(
+    false
+  ), // Track if onboarding is complete
+  stripeChargesEnabled: boolean("stripe_charges_enabled").default(false), // Track if charges are enabled
+  stripePayoutsEnabled: boolean("stripe_payouts_enabled").default(false), // Track if payouts are enabled
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
     .$onUpdate(() => new Date())
     .notNull(),
 });
-
 
 // ===================================
 // STORE MEMBERS
@@ -622,6 +626,12 @@ export const orders = pgTable("orders", {
   canceledAt: timestamp("canceled_at"),
   archivedAt: timestamp("archived_at"), // When order was archived
 
+  // Invoice fields
+  invoiceNumber: text("invoice_number"), // Sequential invoice number (INV-2025-000431)
+  invoiceIssuedAt: timestamp("invoice_issued_at"), // When invoice was issued
+  invoiceLockedAt: timestamp("invoice_locked_at"), // When financials were locked
+  invoicePdfUrl: text("invoice_pdf_url"), // Cloudinary URL for invoice PDF
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -806,7 +816,10 @@ export const orderPayments = pgTable("order_payments", {
   currency: text("currency").notNull(),
   provider: text("provider"), // 'stripe', 'paypal', 'cash', etc.
   providerPaymentId: text("provider_payment_id"), // Stripe payment intent ID, etc.
-  platformFeeAmount: numeric("platform_fee_amount", { precision: 10, scale: 2 }), // 5% platform fee
+  platformFeeAmount: numeric("platform_fee_amount", {
+    precision: 10,
+    scale: 2,
+  }), // 5% platform fee
   netAmountToStore: numeric("net_amount_to_store", { precision: 10, scale: 2 }), // Amount store receives
   stripePaymentIntentId: text("stripe_payment_intent_id"), // Stripe PaymentIntent ID
   stripeCheckoutSessionId: text("stripe_checkout_session_id"), // Stripe Checkout Session ID
