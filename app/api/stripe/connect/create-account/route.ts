@@ -20,14 +20,22 @@ export async function POST(req: NextRequest) {
     const { storeId } = body;
 
     if (!storeId) {
-      return NextResponse.json({ error: "storeId is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "storeId is required" },
+        { status: 400 }
+      );
     }
 
     // 1) Authorize membership - check if user is a member of this store
     const member = await db
       .select()
       .from(storeMembers)
-      .where(and(eq(storeMembers.storeId, storeId), eq(storeMembers.userId, session.user.id)))
+      .where(
+        and(
+          eq(storeMembers.storeId, storeId),
+          eq(storeMembers.userId, session.user.id)
+        )
+      )
       .limit(1);
 
     if (member.length === 0) {
@@ -46,7 +54,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (existing[0].stripeAccountId) {
-      return NextResponse.json({ stripeAccountId: existing[0].stripeAccountId });
+      return NextResponse.json({
+        stripeAccountId: existing[0].stripeAccountId,
+      });
     }
 
     // 3) Create connected account
@@ -64,13 +74,26 @@ export async function POST(req: NextRequest) {
       .set({ stripeAccountId: account.id })
       .where(eq(store.id, storeId));
 
-    return NextResponse.json({ stripeAccountId: account.id });
+    // 5) Immediately generate onboarding link
+    const link = await stripe.accountLinks.create({
+      account: account.id,
+      refresh_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/settings/payments?refresh=true`,
+      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/settings/payments?success=true`,
+      type: "account_onboarding",
+    });
+
+    return NextResponse.json({
+      stripeAccountId: account.id,
+      onboardingUrl: link.url,
+    });
   } catch (error) {
     console.error("Error creating Stripe account:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to create account" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to create account",
+      },
       { status: 500 }
     );
   }
 }
-

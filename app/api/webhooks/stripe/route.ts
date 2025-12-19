@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { db } from "@/db";
-import { draftOrders, orders, orderEvents, orderPayments } from "@/db/schema";
+import { draftOrders, orders, orderEvents, orderPayments, store } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { completeDraftOrderFromWebhook } from "@/app/[locale]/actions/draft-orders";
@@ -179,6 +179,50 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       );
     }
+  }
+
+  // Handle account.updated event to update store Stripe status
+  if (event.type === "account.updated") {
+    const account = event.data.object as Stripe.Account;
+
+    try {
+      // Find store by stripeAccountId
+      const storeData = await db
+        .select({
+          id: store.id,
+        })
+        .from(store)
+        .where(eq(store.stripeAccountId, account.id))
+        .limit(1);
+
+      if (storeData.length > 0) {
+        // Update store with current Stripe account status
+        await db
+          .update(store)
+          .set({
+            stripeChargesEnabled: account.charges_enabled || false,
+            stripePayoutsEnabled: account.payouts_enabled || false,
+            stripeOnboardingComplete:
+              account.details_submitted &&
+              account.charges_enabled &&
+              account.payouts_enabled,
+            updatedAt: new Date(),
+          })
+          .where(eq(store.id, storeData[0].id));
+
+        console.log("Updated store Stripe status:", {
+          storeId: storeData[0].id,
+          chargesEnabled: account.charges_enabled,
+          payoutsEnabled: account.payouts_enabled,
+          detailsSubmitted: account.details_submitted,
+        });
+      }
+    } catch (error) {
+      console.error("Error updating store Stripe status:", error);
+      // Don't fail the webhook - just log the error
+    }
+
+    return NextResponse.json({ received: true });
   }
 
   return NextResponse.json({ received: true });

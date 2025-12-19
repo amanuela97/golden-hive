@@ -64,13 +64,17 @@ import {
   createDraftOrder,
   updateDraftOrder,
   completeDraftOrder,
+  getDraftOrder,
 } from "@/app/[locale]/actions/draft-orders";
+import { getStoreOwnerEmail } from "@/app/[locale]/actions/orders";
 import { searchCustomers } from "@/app/[locale]/actions/customers";
 import { getAllStores } from "@/app/[locale]/actions/store-members";
 import { getMarketsForUser, getMarket } from "@/app/[locale]/actions/markets";
 import toast from "react-hot-toast";
 import Image from "next/image";
 import countriesData from "@/data/countries.json";
+import { SetupBannerWrapper } from "../../components/shared/SetupBannerWrapper";
+import { SendDraftInvoiceDialog } from "./SendDraftInvoiceDialog";
 
 type Country = {
   value: string;
@@ -293,8 +297,9 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
   );
   const [showSendInvoiceDialog, setShowSendInvoiceDialog] = useState(false);
   const [showMarkAsPaidDialog, setShowMarkAsPaidDialog] = useState(false);
-  const [invoiceEmail, setInvoiceEmail] = useState("");
-  const [invoiceMessage, setInvoiceMessage] = useState("");
+  const [currentDraftId, setCurrentDraftId] = useState<string | null>(draftId || null);
+  const [currentDraftNumber, setCurrentDraftNumber] = useState<number | null>(null);
+  const [storeOwnerEmail, setStoreOwnerEmail] = useState<string | null>(null);
 
   // Addresses
   const [shippingName, setShippingName] = useState("");
@@ -503,6 +508,54 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
       return () => clearTimeout(timer);
     }
   }, [isEditMode, currentFormState, onFormModified]);
+
+  // Fetch store owner email when draft exists
+  useEffect(() => {
+    const fetchStoreOwnerEmail = async () => {
+      if (!currentDraftId) return;
+
+      try {
+        // Get draft to find storeId
+        const draftResult = await getDraftOrder(currentDraftId);
+        if (draftResult.success && draftResult.data?.storeId) {
+          const result = await getStoreOwnerEmail(draftResult.data.storeId);
+          if (result.success && result.email) {
+            setStoreOwnerEmail(result.email);
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching store owner email:", error);
+      }
+    };
+
+    fetchStoreOwnerEmail();
+  }, [currentDraftId]);
+
+  // Fetch draft number when draftId prop changes
+  useEffect(() => {
+    const fetchDraftInfo = async () => {
+      if (draftId) {
+        setCurrentDraftId(draftId);
+        try {
+          const draftResult = await getDraftOrder(draftId);
+          if (draftResult.success && draftResult.data) {
+            setCurrentDraftNumber(draftResult.data.draftNumber);
+            // Also fetch store owner email
+            if (draftResult.data.storeId) {
+              const result = await getStoreOwnerEmail(draftResult.data.storeId);
+              if (result.success && result.email) {
+                setStoreOwnerEmail(result.email);
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error fetching draft info:", error);
+        }
+      }
+    };
+
+    fetchDraftInfo();
+  }, [draftId]);
 
   // Expose handlers to parent via ref
   useImperativeHandle(ref, () => ({
@@ -1218,6 +1271,15 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
 
         if (result.success) {
           toast.success("Draft order updated successfully");
+          // Update current draft ID and number if available
+          if (draftId) {
+            setCurrentDraftId(draftId);
+            // Fetch draft to get draft number
+            const draftResult = await getDraftOrder(draftId);
+            if (draftResult.success && draftResult.data) {
+              setCurrentDraftNumber(draftResult.data.draftNumber);
+            }
+          }
           // Reset modification tracking after successful save
           initialFormStateRef.current = currentFormState;
           if (onFormModified) {
@@ -1286,6 +1348,9 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
 
         if (result.success && result.draftId) {
           toast.success("Draft order created successfully");
+          // Update current draft ID and number
+          setCurrentDraftId(result.draftId);
+          setCurrentDraftNumber(result.draftNumber || null);
           // Redirect to draft order detail page
           router.push(`/dashboard/draft_orders/${result.draftId}`);
         } else {
@@ -1304,6 +1369,7 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
+      <SetupBannerWrapper />
       {!isEditMode && (
         <div className="flex items-center justify-between">
           <h1 className="text-3xl font-bold">Create Order</h1>
@@ -1611,9 +1677,103 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => {
-                        setInvoiceEmail(customerEmail);
-                        setShowSendInvoiceDialog(true);
+                      onClick={async () => {
+                        // If draft not saved, save it first
+                        if (!currentDraftId) {
+                          // Validate form first
+                          if (lineItems.length === 0) {
+                            toast.error("Please add at least one line item");
+                            return;
+                          }
+                          if (!customerEmail.trim()) {
+                            toast.error("Please enter customer email");
+                            return;
+                          }
+
+                          setLoading(true);
+                          try {
+                            const result = await createDraftOrder({
+                              customerId: selectedCustomerId || null,
+                              customerEmail: customerEmail.trim(),
+                              customerFirstName: customerFirstName.trim() || null,
+                              customerLastName: customerLastName.trim() || null,
+                              customerPhone: customerPhone.trim() || null,
+                              lineItems: lineItems.map((item) => ({
+                                listingId: item.listingId,
+                                variantId: item.variantId,
+                                quantity: item.quantity,
+                                unitPrice: item.unitPrice,
+                                title: item.title,
+                                sku: item.sku || null,
+                              })),
+                              currency: marketCurrency,
+                              subtotalAmount: subtotal.toFixed(2),
+                              discountAmount: "0",
+                              shippingAmount: "0",
+                              taxAmount: "0",
+                              totalAmount: total.toFixed(2),
+                              paymentStatus,
+                              shippingName: shippingName.trim() || null,
+                              shippingPhone: shippingPhone.trim() || null,
+                              shippingAddressLine1: shippingAddressLine1.trim() || null,
+                              shippingAddressLine2: shippingAddressLine2.trim() || null,
+                              shippingCity: shippingCity.trim() || null,
+                              shippingRegion: shippingRegion.trim() || null,
+                              shippingPostalCode: shippingPostalCode.trim() || null,
+                              shippingCountry: shippingCountry.trim() || null,
+                              billingName: billingSameAsShipping
+                                ? shippingName.trim() || null
+                                : billingName.trim() || null,
+                              billingPhone: billingSameAsShipping
+                                ? shippingPhone.trim() || null
+                                : billingPhone.trim() || null,
+                              billingAddressLine1: billingSameAsShipping
+                                ? shippingAddressLine1.trim() || null
+                                : billingAddressLine1.trim() || null,
+                              billingAddressLine2: billingSameAsShipping
+                                ? shippingAddressLine2.trim() || null
+                                : billingAddressLine2.trim() || null,
+                              billingCity: billingSameAsShipping
+                                ? shippingCity.trim() || null
+                                : billingCity.trim() || null,
+                              billingRegion: billingSameAsShipping
+                                ? shippingRegion.trim() || null
+                                : billingRegion.trim() || null,
+                              billingPostalCode: billingSameAsShipping
+                                ? shippingPostalCode.trim() || null
+                                : billingPostalCode.trim() || null,
+                              billingCountry: billingSameAsShipping
+                                ? shippingCountry.trim() || null
+                                : billingCountry.trim() || null,
+                            });
+
+                            if (result.success && result.draftId) {
+                              setCurrentDraftId(result.draftId);
+                              setCurrentDraftNumber(result.draftNumber || null);
+                              // Fetch store owner email
+                              if (result.draftId) {
+                                const draftResult = await getDraftOrder(result.draftId);
+                                if (draftResult.success && draftResult.data?.storeId) {
+                                  const emailResult = await getStoreOwnerEmail(draftResult.data.storeId);
+                                  if (emailResult.success && emailResult.email) {
+                                    setStoreOwnerEmail(emailResult.email);
+                                  }
+                                }
+                              }
+                              setShowSendInvoiceDialog(true);
+                            } else {
+                              toast.error(result.error || "Failed to create draft order");
+                            }
+                          } catch (error) {
+                            toast.error("Failed to create draft order");
+                            console.error("Create draft error:", error);
+                          } finally {
+                            setLoading(false);
+                          }
+                        } else {
+                          // Draft already exists, just show dialog
+                          setShowSendInvoiceDialog(true);
+                        }
                       }}
                       disabled={loading || !customerEmail}
                     >
@@ -1866,57 +2026,18 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
       </form>
 
       {/* Send Invoice Dialog */}
-      <Dialog
+      <SendDraftInvoiceDialog
         open={showSendInvoiceDialog}
         onOpenChange={setShowSendInvoiceDialog}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Send Invoice</DialogTitle>
-            <DialogDescription>
-              You can send an invoice after saving the draft order.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="invoice-email">Email</Label>
-              <Input
-                id="invoice-email"
-                type="email"
-                value={invoiceEmail}
-                onChange={(e) => setInvoiceEmail(e.target.value)}
-                placeholder="customer@example.com"
-              />
-            </div>
-            <div>
-              <Label htmlFor="invoice-message">Message (optional)</Label>
-              <Textarea
-                id="invoice-message"
-                value={invoiceMessage}
-                onChange={(e) => setInvoiceMessage(e.target.value)}
-                placeholder="Add a custom message to the invoice..."
-                rows={4}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowSendInvoiceDialog(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                setShowSendInvoiceDialog(false);
-                toast("Invoice will be sent after saving the draft order");
-              }}
-            >
-              Save for Later
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        draftId={currentDraftId}
+        draftNumber={currentDraftNumber}
+        customerEmail={customerEmail || null}
+        storeOwnerEmail={storeOwnerEmail}
+        onSuccess={() => {
+          // Refresh or update UI after successful invoice send
+          router.refresh();
+        }}
+      />
 
       {/* Mark as Paid Dialog */}
       <Dialog

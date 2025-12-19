@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { getAllCategoryRules } from "../../../actions/category-rules";
 import CategoryManagement from "../admin/CategoryManagement";
 import TranslationsPage from "../../translations/page";
@@ -116,7 +116,11 @@ export default function SettingsContent({
     case "profile":
       return <ProfileTab />;
     case "payments":
-      return <PaymentsTab />;
+      return (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-[400px]"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div></div>}>
+          <PaymentsTab />
+        </Suspense>
+      );
     case "shipping-billing":
       return <ShippingTab />;
     case "store":

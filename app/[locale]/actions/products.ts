@@ -33,6 +33,21 @@ export async function createProductAction(data: CreateListingData) {
   try {
     const user = await getCurrentUser();
 
+    // Check store setup for sellers
+    const { getStoreIdForUser } = await import("./store-members");
+    const { storeId, isAdmin, error: storeError } = await getStoreIdForUser();
+
+    if (storeError) {
+      return { success: false, error: storeError };
+    }
+
+    if (!isAdmin && !storeId) {
+      return {
+        success: false,
+        error: "Store not found. Please set up your store first in Settings > Store to add products.",
+      };
+    }
+
     const product = await createListing({
       ...data,
       producerId: user.id,

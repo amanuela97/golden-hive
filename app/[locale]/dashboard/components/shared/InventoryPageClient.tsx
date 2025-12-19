@@ -68,8 +68,12 @@ export default function InventoryPageClient({
       data: initialData,
       totalCount: initialTotalCount,
     },
-    staleTime: 1000, // Consider data stale after 1 second
-    refetchInterval: 3000, // Poll every 3 seconds for realtime updates
+    staleTime: 5000, // Consider data stale after 5 seconds
+    refetchInterval: (query) => {
+      // Only poll if page is visible and user is on inventory page
+      if (document.hidden) return false;
+      return 10000; // Poll every 10 seconds instead of 3
+    },
   });
 
   const data = useMemo(() => inventoryData?.data || [], [inventoryData?.data]);

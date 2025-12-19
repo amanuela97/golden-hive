@@ -834,13 +834,38 @@ export async function getAllListingsWithUsers(): Promise<
     const adminEmails = process.env.ADMIN_LIST?.split(",") || [];
 
     // Get inventory info for all listings in parallel
-    const inventoryPromises = result.map((r) =>
-      getListingInventoryInfo(r.id).then((info) => ({ id: r.id, ...info }))
-    );
-    const inventoryData = await Promise.all(inventoryPromises);
+    const listingIds = result.map(r => r.id);
+    const inventoryData = await db
+      .select({
+        listingId: listingVariants.listingId,
+        variantCount: sql<number>`count(distinct ${listingVariants.id})::int`,
+        totalStock: sql<number>`COALESCE(SUM(${inventoryLevels.available})::int, 0)`,
+      })
+      .from(listingVariants)
+      .leftJoin(inventoryItems, eq(inventoryItems.variantId, listingVariants.id))
+      .leftJoin(inventoryLevels, eq(inventoryLevels.inventoryItemId, inventoryItems.id))
+      .where(inArray(listingVariants.listingId, listingIds))
+      .groupBy(listingVariants.listingId);
+
+    // Batch variant images query:
+    const variantImages = await db
+      .select({
+        listingId: listingVariants.listingId,
+        imageUrl: listingVariants.imageUrl,
+      })
+      .from(listingVariants)
+      .where(
+        and(
+          inArray(listingVariants.listingId, listingIds),
+          isNotNull(listingVariants.imageUrl)
+        )
+      )
+      .groupBy(listingVariants.listingId, listingVariants.imageUrl)
+      .limit(1); // Get first variant image per listing
+
     const inventoryMap = new Map(
       inventoryData.map((d) => [
-        d.id,
+        d.listingId,
         { variantCount: d.variantCount, totalStock: d.totalStock },
       ])
     );
@@ -1006,13 +1031,38 @@ export async function getListingsByProducer(
       .orderBy(listing.createdAt);
 
     // Get inventory info for all listings in parallel
-    const inventoryPromises = result.map((r) =>
-      getListingInventoryInfo(r.id).then((info) => ({ id: r.id, ...info }))
-    );
-    const inventoryData = await Promise.all(inventoryPromises);
+    const listingIds = result.map(r => r.id);
+    const inventoryData = await db
+      .select({
+        listingId: listingVariants.listingId,
+        variantCount: sql<number>`count(distinct ${listingVariants.id})::int`,
+        totalStock: sql<number>`COALESCE(SUM(${inventoryLevels.available})::int, 0)`,
+      })
+      .from(listingVariants)
+      .leftJoin(inventoryItems, eq(inventoryItems.variantId, listingVariants.id))
+      .leftJoin(inventoryLevels, eq(inventoryLevels.inventoryItemId, inventoryItems.id))
+      .where(inArray(listingVariants.listingId, listingIds))
+      .groupBy(listingVariants.listingId);
+
+    // Batch variant images query:
+    const variantImages = await db
+      .select({
+        listingId: listingVariants.listingId,
+        imageUrl: listingVariants.imageUrl,
+      })
+      .from(listingVariants)
+      .where(
+        and(
+          inArray(listingVariants.listingId, listingIds),
+          isNotNull(listingVariants.imageUrl)
+        )
+      )
+      .groupBy(listingVariants.listingId, listingVariants.imageUrl)
+      .limit(1); // Get first variant image per listing
+
     const inventoryMap = new Map(
       inventoryData.map((d) => [
-        d.id,
+        d.listingId,
         { variantCount: d.variantCount, totalStock: d.totalStock },
       ])
     );

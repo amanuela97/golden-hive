@@ -6,6 +6,7 @@ import ProductForm from "../../components/shared/ProductForm";
 import { createProductAction } from "../../../actions/products";
 import { type CreateListingData, type UpdateListingData } from "@/lib/listing";
 import toast from "react-hot-toast";
+import { SetupBannerWrapper } from "../../components/shared/SetupBannerWrapper";
 
 interface NewProductFormProps {
   isAdmin: boolean;
@@ -35,12 +36,15 @@ export default function NewProductForm({ isAdmin }: NewProductFormProps) {
   };
 
   return (
-    <ProductForm
-      mode="create"
-      onSubmit={handleSubmit}
-      isLoading={isLoading}
-      basePath="/dashboard"
-      isAdmin={isAdmin}
-    />
+    <div>
+      <SetupBannerWrapper />
+      <ProductForm
+        mode="create"
+        onSubmit={handleSubmit}
+        isLoading={isLoading}
+        basePath="/dashboard"
+        isAdmin={isAdmin}
+      />
+    </div>
   );
 }

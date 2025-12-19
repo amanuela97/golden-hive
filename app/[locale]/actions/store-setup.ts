@@ -1,11 +1,19 @@
 "use server";
 
 import { db } from "@/db";
-import { store, storeMembers, user, roles, userRoles, markets } from "@/db/schema";
+import {
+  store,
+  storeMembers,
+  user,
+  roles,
+  userRoles,
+  markets,
+} from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { autoAssignMarketToUser, getDefaultMarket } from "./markets";
+import { getStoreIdForUser } from "./store-members";
 
 export interface CreateStoreInput {
   storeName: string;
@@ -18,9 +26,7 @@ export interface CreateStoreInput {
  * For admins: creates or finds the shared admin store
  * For sellers: creates their own store
  */
-export async function createStoreForUser(
-  input: CreateStoreInput
-): Promise<{
+export async function createStoreForUser(input: CreateStoreInput): Promise<{
   success: boolean;
   storeId?: string;
   error?: string;
@@ -146,3 +152,93 @@ export async function createStoreForUser(
   }
 }
 
+/**
+ * Get store setup status including Stripe account information
+ */
+export async function getStoreSetupStatus(): Promise<{
+  hasStore: boolean;
+  hasStripeAccount: boolean;
+  stripeAccountId: string | null;
+  stripeChargesEnabled: boolean;
+  stripePayoutsEnabled: boolean;
+  stripeOnboardingComplete: boolean;
+  storeId: string | null;
+}> {
+  try {
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session?.user?.id) {
+      return {
+        hasStore: false,
+        hasStripeAccount: false,
+        stripeAccountId: null,
+        stripeChargesEnabled: false,
+        stripePayoutsEnabled: false,
+        stripeOnboardingComplete: false,
+        storeId: null,
+      };
+    }
+
+    const { storeId } = await getStoreIdForUser();
+
+    if (!storeId) {
+      return {
+        hasStore: false,
+        hasStripeAccount: false,
+        stripeAccountId: null,
+        stripeChargesEnabled: false,
+        stripePayoutsEnabled: false,
+        stripeOnboardingComplete: false,
+        storeId: null,
+      };
+    }
+
+    const storeData = await db
+      .select({
+        stripeAccountId: store.stripeAccountId,
+        stripeChargesEnabled: store.stripeChargesEnabled,
+        stripePayoutsEnabled: store.stripePayoutsEnabled,
+        stripeOnboardingComplete: store.stripeOnboardingComplete,
+      })
+      .from(store)
+      .where(eq(store.id, storeId))
+      .limit(1);
+
+    if (storeData.length === 0) {
+      return {
+        hasStore: true,
+        hasStripeAccount: false,
+        stripeAccountId: null,
+        stripeChargesEnabled: false,
+        stripePayoutsEnabled: false,
+        stripeOnboardingComplete: false,
+        storeId,
+      };
+    }
+
+    const storeInfo = storeData[0];
+
+    return {
+      hasStore: true,
+      hasStripeAccount: !!storeInfo.stripeAccountId,
+      stripeAccountId: storeInfo.stripeAccountId,
+      stripeChargesEnabled: storeInfo.stripeChargesEnabled || false,
+      stripePayoutsEnabled: storeInfo.stripePayoutsEnabled || false,
+      stripeOnboardingComplete: storeInfo.stripeOnboardingComplete || false,
+      storeId,
+    };
+  } catch (error) {
+    console.error("Error getting store setup status:", error);
+    return {
+      hasStore: false,
+      hasStripeAccount: false,
+      stripeAccountId: null,
+      stripeChargesEnabled: false,
+      stripePayoutsEnabled: false,
+      stripeOnboardingComplete: false,
+      storeId: null,
+    };
+  }
+}

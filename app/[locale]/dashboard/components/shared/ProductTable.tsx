@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -42,6 +42,8 @@ import {
 import { Link } from "@/i18n/navigation";
 import Image from "next/image";
 import toast from "react-hot-toast";
+import { getStoreSetupStatus } from "@/app/[locale]/actions/store-setup";
+import { checkStripePaymentReadiness } from "@/app/[locale]/actions/stripe-connect";
 // Categories are now handled via taxonomy - no longer using old category system
 
 interface ProductTableProps {
@@ -81,7 +83,35 @@ export default function ProductTable({
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("createdAt-asc");
+  const [canCreateProduct, setCanCreateProduct] = useState(true);
   // Categories are now handled via taxonomy - removed old category system
+
+  // Check Stripe setup status for all users (sellers and admins)
+  useEffect(() => {
+    const checkSetupStatus = async () => {
+      try {
+        const [setupStatus, paymentReadiness] = await Promise.all([
+          getStoreSetupStatus(),
+          checkStripePaymentReadiness(),
+        ]);
+
+        // Allow product creation only if store is set up AND Stripe is ready
+        // This applies to both sellers and admins
+        const canCreate =
+          setupStatus.hasStore &&
+          setupStatus.hasStripeAccount &&
+          paymentReadiness.isReady;
+
+        setCanCreateProduct(canCreate);
+      } catch (error) {
+        console.error("Error checking setup status:", error);
+        // On error, allow creation (fail open) - server action will still block
+        setCanCreateProduct(true);
+      }
+    };
+
+    checkSetupStatus();
+  }, []);
 
   const columns = useMemo<ColumnDef<Listing>[]>(
     () => [
@@ -597,12 +627,14 @@ export default function ProductTable({
               </Select>
             </div>
           </div>
-          <Link href={`${basePath}/products/new`}>
-            <Button>
-              <Plus className="w-4 h-4 mr-2" />
-              Add Product
-            </Button>
-          </Link>
+          {canCreateProduct && (
+            <Link href={`${basePath}/products/new`}>
+              <Button>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Product
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
 

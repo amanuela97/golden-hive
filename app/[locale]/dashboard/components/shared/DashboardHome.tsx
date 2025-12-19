@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSession } from "@/lib/auth-client";
 import { Package, Users, ShoppingCart, TrendingUp } from "lucide-react";
+import { DashboardSetupTodo } from "./DashboardSetupTodo";
 
 interface DashboardHomeProps {
   userRole: "admin" | "seller" | "customer";
@@ -28,6 +29,9 @@ export function DashboardHome({ userRole, stats }: DashboardHomeProps) {
           account today.
         </p>
       </div>
+
+      {/* Setup Todo List - Only show for admin and seller */}
+      {(userRole === "admin" || userRole === "seller") && <DashboardSetupTodo />}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

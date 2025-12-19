@@ -631,6 +631,10 @@ export const orders = pgTable("orders", {
   invoiceIssuedAt: timestamp("invoice_issued_at"), // When invoice was issued
   invoiceLockedAt: timestamp("invoice_locked_at"), // When financials were locked
   invoicePdfUrl: text("invoice_pdf_url"), // Cloudinary URL for invoice PDF
+  invoiceToken: text("invoice_token").unique(), // Secure token for payment link
+  invoiceExpiresAt: timestamp("invoice_expires_at"), // Token expiration (e.g., 30 days)
+  invoiceSentAt: timestamp("invoice_sent_at"), // Track when invoice was sent
+  invoiceSentCount: integer("invoice_sent_count").default(0), // How many times sent
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")

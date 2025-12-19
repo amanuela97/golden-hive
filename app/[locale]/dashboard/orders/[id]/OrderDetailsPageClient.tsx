@@ -40,8 +40,10 @@ import { PaymentSummary } from "./components/PaymentSummary";
 import { OrderTimeline } from "./components/OrderTimeline";
 import { OrderSidebar } from "./components/OrderSidebar";
 import { CancelOrderDialog } from "./components/CancelOrderDialog";
-import { archiveOrders, unarchiveOrders } from "@/app/[locale]/actions/orders";
+import { SendInvoiceDialog } from "./components/SendInvoiceDialog";
+import { archiveOrders, unarchiveOrders, getStoreOwnerEmail } from "@/app/[locale]/actions/orders";
 import toast from "react-hot-toast";
+import { useEffect } from "react";
 
 interface OrderItem {
   id: string;
@@ -106,6 +108,7 @@ interface OrderData {
   paidAt: Date | null;
   fulfilledAt: Date | null;
   canceledAt: Date | null;
+  storeId?: string | null;
   items: OrderItem[];
   events: OrderEvent[];
 }
@@ -138,11 +141,31 @@ export default function OrderDetailsPageClient({
   const canCancel = (userRole === "admin" || userRole === "seller") && !isArchived && !isCanceled;
   const canArchive = (userRole === "admin" || userRole === "seller") && !isArchived && !isCanceled;
   const canUnarchive = (userRole === "admin" || userRole === "seller") && isArchived;
+  const canSendInvoice = (userRole === "admin" || userRole === "seller") && !isPaid && !isArchived && !isCanceled;
 
   // Dialog states
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
+  const [showSendInvoiceDialog, setShowSendInvoiceDialog] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [storeOwnerEmail, setStoreOwnerEmail] = useState<string | null>(null);
+
+  // Fetch store owner email
+  useEffect(() => {
+    const fetchStoreOwnerEmail = async () => {
+      if (orderData.storeId && (userRole === "admin" || userRole === "seller")) {
+        try {
+          const result = await getStoreOwnerEmail(orderData.storeId);
+          if (result.success && result.email) {
+            setStoreOwnerEmail(result.email);
+          }
+        } catch (error) {
+          console.error("Error fetching store owner email:", error);
+        }
+      }
+    };
+    fetchStoreOwnerEmail();
+  }, [orderData.storeId, userRole]);
 
   const getPaymentStatusColor = (status: string) => {
     const colors: Record<string, string> = {
@@ -280,6 +303,11 @@ export default function OrderDetailsPageClient({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  {canSendInvoice && (
+                    <DropdownMenuItem onClick={() => setShowSendInvoiceDialog(true)}>
+                      Send invoice
+                    </DropdownMenuItem>
+                  )}
                   {canArchive && (
                     <DropdownMenuItem onClick={() => setShowArchiveDialog(true)}>
                       Archive order
@@ -371,6 +399,17 @@ export default function OrderDetailsPageClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Send Invoice Dialog */}
+      <SendInvoiceDialog
+        open={showSendInvoiceDialog}
+        onOpenChange={setShowSendInvoiceDialog}
+        orderId={orderData.id}
+        orderNumber={orderData.orderNumber}
+        customerEmail={orderData.customerEmail}
+        storeOwnerEmail={storeOwnerEmail}
+        onSuccess={handleRefresh}
+      />
     </div>
   );
 }

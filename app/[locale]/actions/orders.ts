@@ -18,6 +18,7 @@ import {
   user,
   shippingBillingInfo,
   orderEvents,
+  orderPayments,
 } from "@/db/schema";
 import {
   eq,
@@ -32,6 +33,11 @@ import {
 } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { generateInvoiceForOrder } from "./invoice";
+import {
+  generateInvoiceToken,
+  getInvoiceExpirationDate,
+} from "@/lib/invoice-token";
 
 export type OrderRow = {
   id: string;
@@ -1139,7 +1145,36 @@ export async function createOrder(input: CreateOrderInput): Promise<{
     }
 
     if (!isAdmin && !storeId) {
-      return { success: false, error: "Store not found" };
+      return {
+        success: false,
+        error:
+          "Store not found. Please set up your store first in Settings > Store.",
+      };
+    }
+
+    // Check Stripe payment readiness for non-admin users
+    if (!isAdmin && storeId) {
+      const { getStoreSetupStatus } = await import("./store-setup");
+      const { checkStripePaymentReadiness } = await import("./stripe-connect");
+
+      const setupStatus = await getStoreSetupStatus();
+      const paymentReadiness = await checkStripePaymentReadiness();
+
+      if (!setupStatus.hasStripeAccount) {
+        return {
+          success: false,
+          error:
+            "Stripe account not connected. Please connect your Stripe account in Settings > Payments to create orders.",
+        };
+      }
+
+      if (!paymentReadiness.isReady) {
+        return {
+          success: false,
+          error:
+            "Stripe onboarding incomplete. Please complete your Stripe onboarding in Settings > Payments to create orders.",
+        };
+      }
     }
 
     const session = await auth.api.getSession({
@@ -2284,6 +2319,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
     placedAt: Date | null;
     createdAt: Date;
     archivedAt: Date | null;
+    storeId: string | null;
     internalNote: string | null;
     notes: string | null;
     tags: string | null;
@@ -2473,6 +2509,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
         placedAt: order.placedAt,
         createdAt: order.createdAt,
         archivedAt: order.archivedAt,
+        storeId: order.storeId ?? null,
         internalNote: order.internalNote,
         notes: order.notes,
         tags: order.tags,
@@ -2614,13 +2651,13 @@ export async function archiveOrders(
 
     await db.transaction(async (tx) => {
       await tx
-      .update(orders)
-      .set({
-        archivedAt: new Date(),
-        status: "archived",
-        updatedAt: new Date(),
-      })
-      .where(inArray(orders.id, validOrderIds));
+        .update(orders)
+        .set({
+          archivedAt: new Date(),
+          status: "archived",
+          updatedAt: new Date(),
+        })
+        .where(inArray(orders.id, validOrderIds));
 
       // Create timeline events for each archived order
       for (const orderId of validOrderIds) {
@@ -2716,13 +2753,13 @@ export async function unarchiveOrders(
 
     await db.transaction(async (tx) => {
       await tx
-      .update(orders)
-      .set({
-        archivedAt: null,
-        status: "open",
-        updatedAt: new Date(),
-      })
-      .where(inArray(orders.id, validOrderIds));
+        .update(orders)
+        .set({
+          archivedAt: null,
+          status: "open",
+          updatedAt: new Date(),
+        })
+        .where(inArray(orders.id, validOrderIds));
 
       // Create timeline events for each unarchived order
       for (const orderId of validOrderIds) {
@@ -2828,6 +2865,20 @@ export async function cancelOrder(input: {
       .from(orderItems)
       .where(eq(orderItems.orderId, input.orderId));
 
+    // Get payment information for refund processing
+    const paymentData = await db
+      .select({
+        id: orderPayments.id,
+        amount: orderPayments.amount,
+        currency: orderPayments.currency,
+        provider: orderPayments.provider,
+        stripePaymentIntentId: orderPayments.stripePaymentIntentId,
+        stripeCheckoutSessionId: orderPayments.stripeCheckoutSessionId,
+        status: orderPayments.status,
+      })
+      .from(orderPayments)
+      .where(eq(orderPayments.orderId, input.orderId));
+
     await db.transaction(async (tx) => {
       // Restock inventory if requested and order is unfulfilled
       if (
@@ -2853,6 +2904,76 @@ export async function cancelOrder(input: {
         }
       }
 
+      // Handle refunds if payment was made and refund method is "original"
+      let newPaymentStatus = order.paymentStatus;
+      if (
+        input.refundMethod === "original" &&
+        order.paymentStatus === "paid" &&
+        paymentData.length > 0
+      ) {
+        // TODO: Implement Stripe refund processing
+        // 1. For each payment in paymentData:
+        //    - If provider === "stripe" and stripePaymentIntentId exists:
+        //      a. Call Stripe API to create refund: stripe.refunds.create({ payment_intent: stripePaymentIntentId, amount: amount })
+        //      b. Create refund record in orderPayments table with:
+        //         - orderId: input.orderId
+        //         - amount: negative amount (or positive with type="refund")
+        //         - provider: "stripe"
+        //         - providerPaymentId: refund.id from Stripe
+        //         - status: "completed"
+        //      c. Update original payment status if needed
+        //    - If provider === "manual":
+        //      a. Just create refund record (no Stripe API call)
+        // 2. Update order paymentStatus:
+        //    - If full refund: paymentStatus = "refunded"
+        //    - If partial refund: paymentStatus = "partially_refunded"
+        // 3. Add timeline event for refund
+
+        // Calculate total paid amount
+        const totalPaid = paymentData
+          .filter((p) => p.status === "completed")
+          .reduce((sum, p) => sum + parseFloat(p.amount), 0);
+
+        // For now, just update payment status to "refunded" (will be implemented with Stripe)
+        // TODO: When Stripe refund is implemented, check if refund is full or partial
+        newPaymentStatus = "refunded";
+
+        // Create refund record placeholder (will be replaced with actual Stripe refund)
+        // Note: Store refund amount as positive, the negative will be handled in calculations
+        for (const payment of paymentData) {
+          if (payment.status === "completed") {
+            const refundAmount = parseFloat(payment.amount);
+            await tx.insert(orderPayments).values({
+              orderId: input.orderId,
+              amount: refundAmount.toString(), // Store as positive, mark as refund in providerPaymentId or metadata
+              currency: payment.currency,
+              provider: payment.provider || "manual",
+              providerPaymentId: null, // TODO: Set to Stripe refund ID when implemented (e.g., "refund_re_xxx")
+              status: "completed",
+              // TODO: When implementing Stripe refunds:
+              // - Call stripe.refunds.create({ payment_intent: payment.stripePaymentIntentId, amount: refundAmount * 100 })
+              // - Set providerPaymentId to refund.id
+              // - Handle platform fee refunds if applicable
+            });
+          }
+        }
+
+        // Add timeline event for refund
+        await tx.insert(orderEvents).values({
+          orderId: input.orderId,
+          type: "payment",
+          visibility: "internal",
+          message: `Refund processed${input.refundMethod === "original" ? " via original payment method" : ""}`,
+          createdBy: session.user.id,
+          metadata: {
+            refundMethod: input.refundMethod,
+            totalRefunded: totalPaid.toString(),
+            currency: order.currency,
+            // TODO: Add Stripe refund IDs when implemented
+          } as Record<string, unknown>,
+        });
+      }
+
       // Update order status and internal note
       const updatedInternalNote = input.internalNote
         ? order.internalNote
@@ -2865,6 +2986,7 @@ export async function cancelOrder(input: {
         .set({
           status: "canceled",
           canceledAt: new Date(),
+          paymentStatus: newPaymentStatus,
           internalNote: updatedInternalNote,
           updatedAt: new Date(),
         })
@@ -2886,40 +3008,11 @@ export async function cancelOrder(input: {
       });
     });
 
-    // Generate invoice - ALWAYS generate invoice when canceling an order
-    // This ensures invoice is locked and PDF exists
-    // Do this AFTER the transaction to avoid transaction timeout
-    console.log("Starting invoice generation for order:", input.orderId);
-    try {
-      const { generateInvoiceForOrder } = await import(
-        "@/app/[locale]/actions/invoice"
-      );
-      const invoiceResult = await generateInvoiceForOrder(input.orderId);
-
-      if (!invoiceResult.success || !invoiceResult.invoicePdfUrl) {
-        console.error("Failed to generate invoice:", {
-          success: invoiceResult.success,
-          error: invoiceResult.error,
-          invoiceNumber: invoiceResult.invoiceNumber,
-          invoicePdfUrl: invoiceResult.invoicePdfUrl,
-        });
-        // Log error but don't fail cancellation - invoice generation failure shouldn't prevent cancellation
-        // However, we should investigate why it's failing
-      } else {
-        console.log("Invoice generated successfully:", {
-          invoiceNumber: invoiceResult.invoiceNumber,
-          invoicePdfUrl: invoiceResult.invoicePdfUrl,
-        });
-      }
-    } catch (invoiceError) {
-      // Log the error but don't fail the entire cancellation
-      console.error("Error generating invoice for canceled order:", invoiceError);
-      console.error("Invoice error details:", {
-        message: invoiceError instanceof Error ? invoiceError.message : "Unknown error",
-        stack: invoiceError instanceof Error ? invoiceError.stack : undefined,
-      });
-      // Don't throw - we want cancellation to succeed even if invoice generation fails
-    }
+    // Note: Invoice generation is NOT performed during cancellation
+    // Invoices should only be generated:
+    // 1. When order is fulfilled/completed (for accounting purposes)
+    // 2. When explicitly requested by admin
+    // 3. Not during cancellation (following Shopify's pattern)
 
     // Send cancellation email (if requested)
     if (input.sendNotification && order.customerEmail) {
@@ -2951,7 +3044,7 @@ export async function cancelOrder(input: {
       } catch (emailError) {
         // Log error but don't fail the cancellation
         console.error("Failed to send cancellation email:", emailError);
-        // Don't throw - invoice was generated, email failure shouldn't fail cancellation
+        // Don't throw - email failure shouldn't fail cancellation
       }
     }
 
@@ -2961,6 +3054,266 @@ export async function cancelOrder(input: {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to cancel order",
+    };
+  }
+}
+
+/**
+ * Get store owner email (admin member of the store)
+ */
+export async function getStoreOwnerEmail(storeId: string): Promise<{
+  success: boolean;
+  email?: string | null;
+  error?: string;
+}> {
+  try {
+    const ownerData = await db
+      .select({
+        email: user.email,
+      })
+      .from(storeMembers)
+      .innerJoin(user, eq(storeMembers.userId, user.id))
+      .where(
+        and(eq(storeMembers.storeId, storeId), eq(storeMembers.role, "admin"))
+      )
+      .limit(1);
+
+    if (ownerData.length === 0) {
+      return { success: false, error: "Store owner not found" };
+    }
+
+    return { success: true, email: ownerData[0].email };
+  } catch (error) {
+    console.error("Error getting store owner email:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to get store owner email",
+    };
+  }
+}
+
+/**
+ * Send invoice for an order
+ * Follows the steps from inst.md:
+ * 1. Validate order state
+ * 2. Lock financial snapshot (if requested)
+ * 3. Generate invoice number
+ * 4. Generate invoice document (PDF)
+ * 5. Create payment session / link
+ * 6. Send invoice email
+ * 7. Update order state
+ * 8. Timeline / audit log entry
+ */
+export async function sendInvoiceForOrder(input: {
+  orderId: string;
+  fromEmail: string;
+  toEmail: string;
+  customMessage?: string | null;
+  lockPrices: boolean;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session?.user?.id) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    const { storeId, isAdmin } = await getStoreIdForUser();
+
+    // Get order with all necessary data
+    const orderData = await db
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        status: orders.status,
+        storeId: orders.storeId,
+        paymentStatus: orders.paymentStatus,
+        customerEmail: orders.customerEmail,
+        customerFirstName: orders.customerFirstName,
+        customerLastName: orders.customerLastName,
+        totalAmount: orders.totalAmount,
+        currency: orders.currency,
+        invoiceNumber: orders.invoiceNumber,
+        invoiceLockedAt: orders.invoiceLockedAt,
+        invoicePdfUrl: orders.invoicePdfUrl,
+        invoiceToken: orders.invoiceToken,
+        invoiceExpiresAt: orders.invoiceExpiresAt,
+      })
+      .from(orders)
+      .where(eq(orders.id, input.orderId))
+      .limit(1);
+
+    if (orderData.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
+
+    const order = orderData[0];
+
+    // Check permissions
+    if (!isAdmin && storeId && order.storeId !== storeId) {
+      return {
+        success: false,
+        error: "You don't have permission to send invoice for this order",
+      };
+    }
+
+    // Step 1: Validate order state (gatekeeping)
+    if (order.status === "canceled") {
+      return {
+        success: false,
+        error: "Cannot send invoice for canceled order",
+      };
+    }
+
+    if (order.status === "archived") {
+      return {
+        success: false,
+        error:
+          "Cannot send invoice for archived order. Please unarchive it first.",
+      };
+    }
+
+    // Check if order is fully paid
+    const isFullyPaid =
+      order.paymentStatus === "paid" ||
+      order.paymentStatus === "partially_refunded";
+    if (isFullyPaid) {
+      return {
+        success: false,
+        error: "Cannot send invoice for fully paid order",
+      };
+    }
+
+    if (!order.customerEmail) {
+      return { success: false, error: "Order has no customer email" };
+    }
+
+    // Check if order has items
+    const itemsCount = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, input.orderId));
+
+    if (!itemsCount[0] || itemsCount[0].count === 0) {
+      return { success: false, error: "Order has no items" };
+    }
+
+    // Step 2: Lock financials if requested
+    if (input.lockPrices && !order.invoiceLockedAt) {
+      await db
+        .update(orders)
+        .set({
+          invoiceLockedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, input.orderId));
+    }
+
+    // Step 3 & 4: Generate invoice number and PDF if not already generated
+    let invoiceNumber = order.invoiceNumber;
+    let invoicePdfUrl = order.invoicePdfUrl;
+
+    if (!invoiceNumber || !invoicePdfUrl) {
+      const invoiceResult = await generateInvoiceForOrder(input.orderId);
+      if (!invoiceResult.success) {
+        return {
+          success: false,
+          error: invoiceResult.error || "Failed to generate invoice",
+        };
+      }
+      invoiceNumber = invoiceResult.invoiceNumber || null;
+      invoicePdfUrl = invoiceResult.invoicePdfUrl || null;
+    }
+
+    // Step 5: Create payment link (generate token for invoice payment)
+    // Reuse existing token if valid, otherwise generate new one
+    let invoiceToken = order.invoiceToken;
+    let expiresAt = order.invoiceExpiresAt;
+
+    if (!invoiceToken || !expiresAt || new Date(expiresAt) < new Date()) {
+      invoiceToken = generateInvoiceToken();
+      expiresAt = getInvoiceExpirationDate(30); // 30 days
+    }
+
+    const paymentUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pay/invoice/${invoiceToken}`;
+
+    // Step 6: Send invoice email
+    const resend = (await import("@/lib/resend")).default;
+    const OrderInvoiceEmail = (
+      await import("@/app/[locale]/components/order-invoice-email")
+    ).default;
+
+    const customerName =
+      order.customerFirstName && order.customerLastName
+        ? `${order.customerFirstName} ${order.customerLastName}`
+        : order.customerEmail || "Customer";
+
+    const emailResult = await resend.emails.send({
+      from: input.fromEmail.includes("@")
+        ? `Golden Hive <${input.fromEmail}>`
+        : "Golden Hive <goldenhive@resend.dev>",
+      to: input.toEmail,
+      subject: `Invoice ${invoiceNumber || `#${order.orderNumber}`} - Payment Required`,
+      react: OrderInvoiceEmail({
+        invoiceNumber: invoiceNumber || "",
+        orderNumber: order.orderNumber,
+        customerName,
+        totalAmount: order.totalAmount,
+        currency: order.currency,
+        paymentUrl,
+        customMessage: input.customMessage,
+        invoicePdfUrl: invoicePdfUrl || null,
+        expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+      }),
+    });
+
+    if (emailResult.error) {
+      return {
+        success: false,
+        error: `Failed to send email: ${emailResult.error.message}`,
+      };
+    }
+
+    // Step 7: Update order state
+    await db
+      .update(orders)
+      .set({
+        invoiceToken,
+        invoiceExpiresAt: expiresAt,
+        invoiceSentAt: new Date(),
+        invoiceSentCount: sql`COALESCE(${orders.invoiceSentCount}, 0) + 1`,
+        paymentStatus: "pending", // Ensure payment status is pending
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, input.orderId));
+
+    // Step 8: Create timeline event
+    await db.insert(orderEvents).values({
+      orderId: input.orderId,
+      type: "invoice_sent",
+      visibility: "public",
+      message: `Invoice ${invoiceNumber || `#${order.orderNumber}`} was sent to ${input.toEmail}`,
+      metadata: {
+        invoiceNumber,
+        toEmail: input.toEmail,
+        fromEmail: input.fromEmail,
+        lockPrices: input.lockPrices,
+      },
+      createdBy: session.user.id,
+      createdAt: new Date(),
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error sending invoice:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to send invoice",
     };
   }
 }

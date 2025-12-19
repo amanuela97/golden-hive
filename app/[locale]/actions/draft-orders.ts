@@ -1108,6 +1108,7 @@ export async function completeDraftOrderFromWebhook(
 export async function sendInvoice(
   draftId: string,
   email: string,
+  fromEmail?: string,
   message?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
@@ -1191,7 +1192,9 @@ export async function sendInvoice(
     ).default;
 
     const emailResult = await resend.emails.send({
-      from: "Golden Hive <goldenhive@resend.dev>", // Update with your domain
+      from: fromEmail && fromEmail.includes("@")
+        ? `Golden Hive <${fromEmail}>`
+        : "Golden Hive <goldenhive@resend.dev>",
       to: email,
       subject: `Invoice #${draft.draftNumber} - Payment Required`,
       react: DraftInvoiceEmail({
@@ -1579,7 +1582,33 @@ export async function createDraftOrder(input: {
     }
 
     if (!isAdmin && !storeId) {
-      return { success: false, error: "Store not found" };
+      return { 
+        success: false, 
+        error: "Store not found. Please set up your store first in Settings > Store." 
+      };
+    }
+
+    // Check Stripe payment readiness for non-admin users
+    if (!isAdmin && storeId) {
+      const { getStoreSetupStatus } = await import("./store-setup");
+      const { checkStripePaymentReadiness } = await import("./stripe-connect");
+      
+      const setupStatus = await getStoreSetupStatus();
+      const paymentReadiness = await checkStripePaymentReadiness();
+      
+      if (!setupStatus.hasStripeAccount) {
+        return {
+          success: false,
+          error: "Stripe account not connected. Please connect your Stripe account in Settings > Payments to create orders.",
+        };
+      }
+      
+      if (!paymentReadiness.isReady) {
+        return {
+          success: false,
+          error: "Stripe onboarding incomplete. Please complete your Stripe onboarding in Settings > Payments to create orders.",
+        };
+      }
     }
 
     const session = await auth.api.getSession({
