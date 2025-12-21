@@ -584,6 +584,9 @@ export const orders = pgTable("orders", {
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 })
     .default("0")
     .notNull(),
+  refundedAmount: numeric("refunded_amount", { precision: 10, scale: 2 })
+    .default("0")
+    .notNull(),
 
   // Statuses
   status: orderStatusEnum("status").default("open").notNull(),
@@ -631,6 +634,7 @@ export const orders = pgTable("orders", {
   invoiceIssuedAt: timestamp("invoice_issued_at"), // When invoice was issued
   invoiceLockedAt: timestamp("invoice_locked_at"), // When financials were locked
   invoicePdfUrl: text("invoice_pdf_url"), // Cloudinary URL for invoice PDF
+  invoicePublicId: text("invoice_public_id"), // Cloudinary public_id for generating signed URLs
   invoiceToken: text("invoice_token").unique(), // Secure token for payment link
   invoiceExpiresAt: timestamp("invoice_expires_at"), // Token expiration (e.g., 30 days)
   invoiceSentAt: timestamp("invoice_sent_at"), // Track when invoice was sent
@@ -828,6 +832,9 @@ export const orderPayments = pgTable("order_payments", {
   stripePaymentIntentId: text("stripe_payment_intent_id"), // Stripe PaymentIntent ID
   stripeCheckoutSessionId: text("stripe_checkout_session_id"), // Stripe Checkout Session ID
   status: text("status").default("pending"),
+  type: text("type").default("payment"), // 'payment' or 'refund'
+  reason: text("reason"), // Refund reason (customer request, damaged, returned, fraud, other)
+  stripeRefundId: text("stripe_refund_id"), // Stripe Refund ID for refunds
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

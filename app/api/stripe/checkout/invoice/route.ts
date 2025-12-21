@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { db } from "@/db";
-import { draftOrders, draftOrderItems, store } from "@/db/schema";
+import { draftOrders, draftOrderItems, store, listing, listingVariants } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getDraftOrderByToken } from "@/app/[locale]/actions/invoice-payment";
 
@@ -58,26 +58,63 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Get draft items with product images and names for Stripe Checkout
+    const draftItems = await db
+      .select({
+        title: draftOrderItems.title,
+        quantity: draftOrderItems.quantity,
+        unitPrice: draftOrderItems.unitPrice,
+        lineTotal: draftOrderItems.lineTotal,
+        variantImageUrl: listingVariants.imageUrl,
+        listingImageUrl: listing.imageUrl,
+        listingName: listing.name,
+        variantTitle: listingVariants.title,
+      })
+      .from(draftOrderItems)
+      .leftJoin(listing, eq(draftOrderItems.listingId, listing.id))
+      .leftJoin(listingVariants, eq(draftOrderItems.variantId, listingVariants.id))
+      .where(eq(draftOrderItems.draftOrderId, draft.id));
+
     // Calculate amounts (convert to cents)
     const totalAmountCents = Math.round(parseFloat(draft.totalAmount) * 100);
     const platformFeeCents = Math.round(totalAmountCents * 0.05); // 5% platform fee
 
+    // Create line items for each product with images
+    const lineItems = draftItems.map((item) => {
+      const unitPriceCents = Math.round(parseFloat(item.unitPrice) * 100);
+      const imageUrl = item.variantImageUrl || item.listingImageUrl || null;
+      const productName = item.listingName || item.title;
+      const displayName = item.variantTitle 
+        ? `${productName} - ${item.variantTitle}`
+        : productName;
+
+      return {
+        price_data: {
+          currency: draft.currency.toLowerCase(),
+          unit_amount: unitPriceCents,
+          product_data: {
+            name: displayName,
+            description: item.title,
+            ...(imageUrl && { images: [imageUrl] }),
+          },
+        },
+        quantity: item.quantity,
+      };
+    });
+
     // Create Stripe Checkout Session with Connect (Destination Charges)
+    // IMPORTANT: Create on platform account (not connected account) so webhooks come to our endpoint
+    console.log("Creating Stripe Checkout Session for draft:", draft.id);
+    console.log("Store Stripe Account ID:", storeInfo.stripeAccountId);
+    console.log("Metadata to include:", {
+      draftId: draft.id,
+      storeId: storeInfo.id,
+      invoiceToken: token,
+    });
+    
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
-      line_items: [
-        {
-          price_data: {
-            currency: draft.currency.toLowerCase(),
-            unit_amount: totalAmountCents,
-            product_data: {
-              name: `Invoice #${draft.draftNumber}`,
-              description: `Payment for draft order #${draft.draftNumber}`,
-            },
-          },
-          quantity: 1,
-        },
-      ],
+      line_items: lineItems,
       payment_intent_data: {
         application_fee_amount: platformFeeCents, // Your 5% platform fee
         on_behalf_of: storeInfo.stripeAccountId, // Compliance & reporting
@@ -98,6 +135,13 @@ export async function POST(req: NextRequest) {
         storeId: storeInfo.id,
         invoiceToken: token,
       },
+    });
+
+    console.log("✅ Checkout session created:", {
+      sessionId: checkoutSession.id,
+      url: checkoutSession.url,
+      metadata: checkoutSession.metadata,
+      paymentIntent: checkoutSession.payment_intent,
     });
 
     return NextResponse.json({

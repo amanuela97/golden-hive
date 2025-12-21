@@ -19,6 +19,9 @@ import {
   shippingBillingInfo,
   orderEvents,
   orderPayments,
+  type Order,
+  type OrderItem,
+  type OrderEvent,
 } from "@/db/schema";
 import {
   eq,
@@ -700,17 +703,23 @@ async function checkStockAvailability(
 export async function adjustInventoryForOrder(
   orderItems: Array<{ variantId: string | null; quantity: number }>,
   storeId: string,
-  direction: "reserve" | "release" | "fulfill" | "commit",
+  direction: "reserve" | "release" | "fulfill" | "commit" | "restock",
   reason: string,
-  orderId?: string
+  orderId?: string,
+  skipAuth: boolean = false
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const session = await auth.api.getSession({
-      headers: await headers(),
-    });
+    let userId: string | null = null;
 
-    if (!session?.user?.id) {
-      return { success: false, error: "Unauthorized" };
+    if (!skipAuth) {
+      const session = await auth.api.getSession({
+        headers: await headers(),
+      });
+
+      if (!session?.user?.id) {
+        return { success: false, error: "Unauthorized" };
+      }
+      userId = session.user.id;
     }
 
     const locationId = await getDefaultInventoryLocation(storeId);
@@ -721,12 +730,13 @@ export async function adjustInventoryForOrder(
     // Map direction to event type
     const eventTypeMap: Record<
       typeof direction,
-      "reserve" | "release" | "fulfill" | "adjustment"
+      "reserve" | "release" | "fulfill" | "adjustment" | "restock"
     > = {
       reserve: "reserve",
       release: "release",
       fulfill: "fulfill",
       commit: "adjustment", // Payment commit is an adjustment
+      restock: "restock",
     };
     const eventType = eventTypeMap[direction];
     const referenceType = orderId ? "order" : "manual";
@@ -798,7 +808,7 @@ export async function adjustInventoryForOrder(
             eventType: eventType,
             referenceType: referenceType,
             referenceId: orderId || null,
-            createdBy: session.user.id,
+            createdBy: userId,
           });
 
           // Update snapshot SECOND
@@ -822,7 +832,7 @@ export async function adjustInventoryForOrder(
             eventType: eventType,
             referenceType: referenceType,
             referenceId: orderId || null,
-            createdBy: session.user.id,
+            createdBy: userId,
           });
 
           // Update snapshot SECOND
@@ -846,7 +856,7 @@ export async function adjustInventoryForOrder(
             eventType: eventType,
             referenceType: referenceType,
             referenceId: orderId || null,
-            createdBy: session.user.id,
+            createdBy: userId,
           });
 
           // Update snapshot SECOND
@@ -870,7 +880,7 @@ export async function adjustInventoryForOrder(
             eventType: eventType,
             referenceType: referenceType,
             referenceId: orderId || null,
-            createdBy: session.user.id,
+            createdBy: userId,
           });
 
           // Update snapshot SECOND
@@ -879,6 +889,29 @@ export async function adjustInventoryForOrder(
             .set({
               committed: sql`${inventoryLevels.committed} - ${quantity}`,
               onHand: sql`${inventoryLevels.available} + ${inventoryLevels.committed} - ${quantity}`, // Calculate on_hand (committed reduced)
+              updatedAt: new Date(),
+            })
+            .where(eq(inventoryLevels.id, level.id));
+        } else if (direction === "restock") {
+          // Restock: available += qty, on_hand += qty (items returned to inventory)
+          // Insert ledger entry FIRST
+          await tx.insert(inventoryAdjustments).values({
+            inventoryItemId: invItemId,
+            locationId: locationId,
+            change: quantity, // Positive because available increases
+            reason: reason,
+            eventType: "restock",
+            referenceType: referenceType,
+            referenceId: orderId || null,
+            createdBy: userId,
+          });
+
+          // Update snapshot SECOND
+          await tx
+            .update(inventoryLevels)
+            .set({
+              available: sql`${inventoryLevels.available} + ${quantity}`,
+              onHand: sql`${inventoryLevels.available} + ${inventoryLevels.committed} + ${quantity}`, // Calculate on_hand (available increased)
               updatedAt: new Date(),
             })
             .where(eq(inventoryLevels.id, level.id));
@@ -2299,71 +2332,39 @@ export async function deleteOrder(
 /**
  * Get order details with items
  */
+type OrderWithItems = Order & {
+  items: Array<
+    Pick<
+      OrderItem,
+      | "id"
+      | "title"
+      | "sku"
+      | "quantity"
+      | "unitPrice"
+      | "lineSubtotal"
+      | "lineTotal"
+      | "currency"
+    > & {
+      imageUrl: string | null;
+    }
+  >;
+  events: Array<
+    Pick<
+      OrderEvent,
+      | "id"
+      | "type"
+      | "visibility"
+      | "message"
+      | "metadata"
+      | "createdBy"
+      | "createdAt"
+    >
+  >;
+};
+
 export async function getOrderWithItems(orderId: string): Promise<{
   success: boolean;
-  data?: {
-    id: string;
-    orderNumber: number;
-    customerEmail: string | null;
-    customerFirstName: string | null;
-    customerLastName: string | null;
-    currency: string;
-    subtotalAmount: string;
-    discountAmount: string;
-    shippingAmount: string;
-    taxAmount: string;
-    totalAmount: string;
-    status: string;
-    paymentStatus: string;
-    fulfillmentStatus: string;
-    placedAt: Date | null;
-    createdAt: Date;
-    archivedAt: Date | null;
-    storeId: string | null;
-    internalNote: string | null;
-    notes: string | null;
-    tags: string | null;
-    shippingMethod: string | null;
-    shippingName: string | null;
-    shippingPhone: string | null;
-    shippingAddressLine1: string | null;
-    shippingAddressLine2: string | null;
-    shippingCity: string | null;
-    shippingRegion: string | null;
-    shippingPostalCode: string | null;
-    shippingCountry: string | null;
-    billingName: string | null;
-    billingPhone: string | null;
-    billingAddressLine1: string | null;
-    billingAddressLine2: string | null;
-    billingCity: string | null;
-    billingRegion: string | null;
-    billingPostalCode: string | null;
-    billingCountry: string | null;
-    paidAt: Date | null;
-    fulfilledAt: Date | null;
-    canceledAt: Date | null;
-    items: Array<{
-      id: string;
-      title: string;
-      sku: string | null;
-      quantity: number;
-      unitPrice: string;
-      lineSubtotal: string;
-      lineTotal: string;
-      currency: string;
-      imageUrl: string | null;
-    }>;
-    events: Array<{
-      id: string;
-      type: string;
-      visibility: string;
-      message: string;
-      metadata: Record<string, unknown> | null;
-      createdBy: string | null;
-      createdAt: Date;
-    }>;
-  };
+  data?: OrderWithItems;
   error?: string;
 }> {
   try {
@@ -2382,51 +2383,9 @@ export async function getOrderWithItems(orderId: string): Promise<{
       return { success: false, error: "Invalid order ID" };
     }
 
-    // Get order with all fields
+    // Get order with all fields - use selectAll to get all Order fields
     const orderData = await db
-      .select({
-        id: orders.id,
-        orderNumber: orders.orderNumber,
-        customerEmail: orders.customerEmail,
-        customerFirstName: orders.customerFirstName,
-        customerLastName: orders.customerLastName,
-        currency: orders.currency,
-        subtotalAmount: orders.subtotalAmount,
-        discountAmount: orders.discountAmount,
-        shippingAmount: orders.shippingAmount,
-        taxAmount: orders.taxAmount,
-        totalAmount: orders.totalAmount,
-        status: orders.status,
-        paymentStatus: orders.paymentStatus,
-        fulfillmentStatus: orders.fulfillmentStatus,
-        placedAt: orders.placedAt,
-        createdAt: orders.createdAt,
-        storeId: orders.storeId,
-        archivedAt: orders.archivedAt,
-        internalNote: orders.internalNote,
-        notes: orders.notes,
-        tags: orders.tags,
-        shippingMethod: orders.shippingMethod,
-        shippingName: orders.shippingName,
-        shippingPhone: orders.shippingPhone,
-        shippingAddressLine1: orders.shippingAddressLine1,
-        shippingAddressLine2: orders.shippingAddressLine2,
-        shippingCity: orders.shippingCity,
-        shippingRegion: orders.shippingRegion,
-        shippingPostalCode: orders.shippingPostalCode,
-        shippingCountry: orders.shippingCountry,
-        billingName: orders.billingName,
-        billingPhone: orders.billingPhone,
-        billingAddressLine1: orders.billingAddressLine1,
-        billingAddressLine2: orders.billingAddressLine2,
-        billingCity: orders.billingCity,
-        billingRegion: orders.billingRegion,
-        billingPostalCode: orders.billingPostalCode,
-        billingCountry: orders.billingCountry,
-        paidAt: orders.paidAt,
-        fulfilledAt: orders.fulfilledAt,
-        canceledAt: orders.canceledAt,
-      })
+      .select()
       .from(orders)
       .where(eq(orders.id, orderId))
       .limit(1);
@@ -2492,47 +2451,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
     return {
       success: true,
       data: {
-        id: order.id,
-        orderNumber: order.orderNumber,
-        customerEmail: order.customerEmail,
-        customerFirstName: order.customerFirstName,
-        customerLastName: order.customerLastName,
-        currency: order.currency,
-        subtotalAmount: order.subtotalAmount,
-        discountAmount: order.discountAmount,
-        shippingAmount: order.shippingAmount,
-        taxAmount: order.taxAmount,
-        totalAmount: order.totalAmount,
-        status: order.status,
-        paymentStatus: order.paymentStatus,
-        fulfillmentStatus: order.fulfillmentStatus,
-        placedAt: order.placedAt,
-        createdAt: order.createdAt,
-        archivedAt: order.archivedAt,
-        storeId: order.storeId ?? null,
-        internalNote: order.internalNote,
-        notes: order.notes,
-        tags: order.tags,
-        shippingMethod: order.shippingMethod,
-        shippingName: order.shippingName,
-        shippingPhone: order.shippingPhone,
-        shippingAddressLine1: order.shippingAddressLine1,
-        shippingAddressLine2: order.shippingAddressLine2,
-        shippingCity: order.shippingCity,
-        shippingRegion: order.shippingRegion,
-        shippingPostalCode: order.shippingPostalCode,
-        shippingCountry: order.shippingCountry,
-        billingName: order.billingName,
-        billingPhone: order.billingPhone,
-        billingAddressLine1: order.billingAddressLine1,
-        billingAddressLine2: order.billingAddressLine2,
-        billingCity: order.billingCity,
-        billingRegion: order.billingRegion,
-        billingPostalCode: order.billingPostalCode,
-        billingCountry: order.billingCountry,
-        paidAt: order.paidAt,
-        fulfilledAt: order.fulfilledAt,
-        canceledAt: order.canceledAt,
+        ...order,
         items: items.map((item) => ({
           id: item.id,
           title: item.title,
@@ -2808,6 +2727,7 @@ export async function cancelOrder(input: {
       return { success: false, error: "Unauthorized" };
     }
 
+    const userId = session.user.id;
     const { storeId, isAdmin } = await getStoreIdForUser();
 
     // Get order data
@@ -2964,7 +2884,7 @@ export async function cancelOrder(input: {
           type: "payment",
           visibility: "internal",
           message: `Refund processed${input.refundMethod === "original" ? " via original payment method" : ""}`,
-          createdBy: session.user.id,
+          createdBy: userId,
           metadata: {
             refundMethod: input.refundMethod,
             totalRefunded: totalPaid.toString(),
@@ -2998,7 +2918,7 @@ export async function cancelOrder(input: {
         type: "system",
         visibility: "internal",
         message: `Order canceled. Reason: ${input.cancellationReason}`,
-        createdBy: session.user.id,
+        createdBy: userId,
         metadata: {
           refundMethod: input.refundMethod,
           cancellationReason: input.cancellationReason,
@@ -3073,9 +2993,7 @@ export async function getStoreOwnerEmail(storeId: string): Promise<{
       })
       .from(storeMembers)
       .innerJoin(user, eq(storeMembers.userId, user.id))
-      .where(
-        and(eq(storeMembers.storeId, storeId), eq(storeMembers.role, "admin"))
-      )
+      .where(eq(storeMembers.storeId, storeId))
       .limit(1);
 
     if (ownerData.length === 0) {
@@ -3091,6 +3009,49 @@ export async function getStoreOwnerEmail(storeId: string): Promise<{
         error instanceof Error
           ? error.message
           : "Failed to get store owner email",
+    };
+  }
+}
+
+/**
+ * Get store owner email from a listing ID
+ */
+export async function getStoreOwnerEmailFromListing(
+  listingId: string
+): Promise<{
+  success: boolean;
+  email?: string | null;
+  error?: string;
+}> {
+  try {
+    // Get storeId from listing
+    const listingData = await db
+      .select({
+        storeId: listing.storeId,
+      })
+      .from(listing)
+      .where(eq(listing.id, listingId))
+      .limit(1);
+
+    if (listingData.length === 0) {
+      return { success: false, error: "Listing not found" };
+    }
+
+    const storeId = listingData[0].storeId;
+    if (!storeId) {
+      return { success: false, error: "Listing has no associated store" };
+    }
+
+    // Use the existing getStoreOwnerEmail function
+    return await getStoreOwnerEmail(storeId);
+  } catch (error) {
+    console.error("Error getting store owner email from listing:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to get store owner email from listing",
     };
   }
 }
@@ -3123,6 +3084,7 @@ export async function sendInvoiceForOrder(input: {
       return { success: false, error: "Unauthorized" };
     }
 
+    const userId = session.user.id;
     const { storeId, isAdmin } = await getStoreIdForUser();
 
     // Get order with all necessary data
@@ -3254,9 +3216,8 @@ export async function sendInvoiceForOrder(input: {
         : order.customerEmail || "Customer";
 
     const emailResult = await resend.emails.send({
-      from: input.fromEmail.includes("@")
-        ? `Golden Hive <${input.fromEmail}>`
-        : "Golden Hive <goldenhive@resend.dev>",
+      from:
+        process.env.RESEND_FROM_EMAIL || "Golden Hive <goldenhive@resend.dev>",
       to: input.toEmail,
       subject: `Invoice ${invoiceNumber || `#${order.orderNumber}`} - Payment Required`,
       react: OrderInvoiceEmail({
@@ -3304,7 +3265,7 @@ export async function sendInvoiceForOrder(input: {
         fromEmail: input.fromEmail,
         lockPrices: input.lockPrices,
       },
-      createdBy: session.user.id,
+      createdBy: userId,
       createdAt: new Date(),
     });
 
@@ -3314,6 +3275,189 @@ export async function sendInvoiceForOrder(input: {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to send invoice",
+    };
+  }
+}
+
+/**
+ * Send invoice PDF for an order
+ */
+export async function sendInvoicePdfForOrder(input: {
+  orderId: string;
+  fromEmail: string;
+  toEmail: string;
+  customMessage?: string | null;
+  lockPrices: boolean;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session?.user?.id) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    const userId = session.user.id;
+    const { storeId, isAdmin } = await getStoreIdForUser();
+
+    // Get order with invoice details
+    const orderData = await db
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        status: orders.status,
+        storeId: orders.storeId,
+        customerEmail: orders.customerEmail,
+        customerFirstName: orders.customerFirstName,
+        customerLastName: orders.customerLastName,
+        totalAmount: orders.totalAmount,
+        currency: orders.currency,
+        invoiceNumber: orders.invoiceNumber,
+        invoicePdfUrl: orders.invoicePdfUrl,
+        invoicePublicId: orders.invoicePublicId,
+        invoiceLockedAt: orders.invoiceLockedAt,
+      })
+      .from(orders)
+      .where(eq(orders.id, input.orderId))
+      .limit(1);
+
+    if (orderData.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
+
+    const order = orderData[0];
+
+    // Check permissions
+    if (!isAdmin && storeId && order.storeId !== storeId) {
+      return {
+        success: false,
+        error: "You don't have permission to send invoice PDF for this order",
+      };
+    }
+
+    // Validate order state
+    if (order.status === "canceled") {
+      return {
+        success: false,
+        error: "Cannot send invoice PDF for canceled order",
+      };
+    }
+
+    if (order.status === "archived") {
+      return {
+        success: false,
+        error:
+          "Cannot send invoice PDF for archived order. Please unarchive it first.",
+      };
+    }
+
+    if (!order.customerEmail) {
+      return {
+        success: false,
+        error: "Order has no customer email address",
+      };
+    }
+
+    // Step 2: Lock financials if requested
+    if (input.lockPrices && !order.invoiceLockedAt) {
+      await db
+        .update(orders)
+        .set({
+          invoiceLockedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, input.orderId));
+    }
+
+    // Ensure invoice PDF exists
+    let invoiceNumber = order.invoiceNumber;
+    let invoicePdfUrl = order.invoicePdfUrl;
+    let invoicePublicId = order.invoicePublicId;
+
+    if (!invoiceNumber || !invoicePdfUrl || !invoicePublicId) {
+      // Generate invoice if it doesn't exist
+      const invoiceResult = await generateInvoiceForOrder(input.orderId);
+      if (!invoiceResult.success) {
+        return {
+          success: false,
+          error: invoiceResult.error || "Failed to generate invoice PDF",
+        };
+      }
+      invoiceNumber = invoiceResult.invoiceNumber || null;
+      invoicePdfUrl = invoiceResult.invoicePdfUrl || null;
+      invoicePublicId = invoiceResult.invoicePublicId || null;
+    }
+
+    if (!invoicePublicId) {
+      return {
+        success: false,
+        error: "Invoice PDF not found. Please generate the invoice first.",
+      };
+    }
+
+    // Send email with the signed URL
+    const resend = (await import("@/lib/resend")).default;
+    const OrderInvoicePdfEmail = (
+      await import("@/app/[locale]/components/order-invoice-pdf-email")
+    ).default;
+
+    const customerName =
+      order.customerFirstName && order.customerLastName
+        ? `${order.customerFirstName} ${order.customerLastName}`
+        : order.customerEmail || "Customer";
+
+    const fromAddress =
+      process.env.RESEND_FROM_EMAIL || "Golden Hive <goldenhive@resend.dev>";
+
+    const emailResult = await resend.emails.send({
+      from: fromAddress,
+      to: input.toEmail,
+      replyTo:
+        input.fromEmail && input.fromEmail.includes("@")
+          ? input.fromEmail
+          : undefined,
+      subject: `Invoice ${invoiceNumber || `#${order.orderNumber}`} - ${order.customerEmail}`,
+      react: OrderInvoicePdfEmail({
+        invoiceNumber: invoiceNumber || `#${order.orderNumber}`,
+        orderNumber: order.orderNumber,
+        customerName,
+        totalAmount: order.totalAmount,
+        currency: order.currency,
+        customMessage: input.customMessage,
+        invoicePdfUrl: invoicePdfUrl,
+      }),
+    });
+
+    if (emailResult.error) {
+      return {
+        success: false,
+        error: `Failed to send email: ${emailResult.error.message}`,
+      };
+    }
+
+    // Log timeline event
+    await db.insert(orderEvents).values({
+      orderId: input.orderId,
+      type: "email",
+      visibility: "internal",
+      message: `Invoice PDF sent to ${input.toEmail}`,
+      metadata: {
+        invoiceNumber,
+        toEmail: input.toEmail,
+        fromEmail: input.fromEmail,
+      },
+      createdBy: userId,
+      createdAt: new Date(),
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error sending invoice PDF:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to send invoice PDF",
     };
   }
 }
@@ -3916,6 +4060,407 @@ export async function getCustomerShippingBillingInfo(
         error instanceof Error
           ? error.message
           : "Failed to get customer shipping/billing info",
+    };
+  }
+}
+
+/**
+ * Process refund for an order (all 9 steps from inst.md)
+ */
+export async function processRefund(input: {
+  orderId: string;
+  refundType: "full" | "partial";
+  amount?: string; // Required for partial refunds
+  restockItems: boolean;
+  reason?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session?.user?.id) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    const userId = session.user.id;
+
+    // Step 1 & 2: Validate refund request
+    const orderData = await db
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        storeId: orders.storeId,
+        totalAmount: orders.totalAmount,
+        refundedAmount: orders.refundedAmount,
+        currency: orders.currency,
+        paymentStatus: orders.paymentStatus,
+        fulfillmentStatus: orders.fulfillmentStatus,
+        status: orders.status,
+        customerEmail: orders.customerEmail,
+        customerFirstName: orders.customerFirstName,
+        customerLastName: orders.customerLastName,
+        invoiceNumber: orders.invoiceNumber,
+      })
+      .from(orders)
+      .where(eq(orders.id, input.orderId))
+      .limit(1);
+
+    if (orderData.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
+
+    const order = orderData[0];
+
+    // Precondition checks
+    if (
+      order.paymentStatus !== "paid" &&
+      order.paymentStatus !== "partially_refunded"
+    ) {
+      return {
+        success: false,
+        error: "Order must be paid or partially refunded to process a refund",
+      };
+    }
+
+    if (order.status === "draft") {
+      return { success: false, error: "Draft orders cannot be refunded" };
+    }
+
+    const totalPaid = parseFloat(order.totalAmount);
+    const alreadyRefunded = parseFloat(order.refundedAmount || "0");
+    const maxRefundable = totalPaid - alreadyRefunded;
+
+    let refundAmount: number;
+    if (input.refundType === "full") {
+      refundAmount = maxRefundable;
+    } else {
+      if (!input.amount) {
+        return {
+          success: false,
+          error: "Refund amount is required for partial refunds",
+        };
+      }
+      refundAmount = parseFloat(input.amount);
+      if (isNaN(refundAmount) || refundAmount <= 0) {
+        return { success: false, error: "Invalid refund amount" };
+      }
+      if (refundAmount > maxRefundable) {
+        return {
+          success: false,
+          error: `Refund amount cannot exceed ${maxRefundable.toFixed(2)} ${order.currency}`,
+        };
+      }
+    }
+
+    // Get order items for inventory adjustment
+    const orderItemsData = await db
+      .select({
+        id: orderItems.id,
+        variantId: orderItems.variantId,
+        listingId: orderItems.listingId,
+        quantity: orderItems.quantity,
+        title: orderItems.title,
+      })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, input.orderId));
+
+    if (orderItemsData.length === 0) {
+      return { success: false, error: "Order has no items" };
+    }
+
+    // Get payment information for Stripe refunds
+    const paymentData = await db
+      .select({
+        id: orderPayments.id,
+        stripePaymentIntentId: orderPayments.stripePaymentIntentId,
+        stripeCheckoutSessionId: orderPayments.stripeCheckoutSessionId,
+        provider: orderPayments.provider,
+        providerPaymentId: orderPayments.providerPaymentId,
+        amount: orderPayments.amount,
+        status: orderPayments.status,
+        platformFeeAmount: orderPayments.platformFeeAmount,
+        netAmountToStore: orderPayments.netAmountToStore,
+      })
+      .from(orderPayments)
+      .where(
+        and(
+          eq(orderPayments.orderId, input.orderId),
+          eq(orderPayments.type, "payment")
+        )
+      );
+
+    // Get store Stripe account ID if needed
+    let storeStripeAccountId: string | null = null;
+    if (order.storeId) {
+      const storeData = await db
+        .select({
+          stripeAccountId: store.stripeAccountId,
+        })
+        .from(store)
+        .where(eq(store.id, order.storeId))
+        .limit(1);
+
+      if (storeData.length > 0) {
+        storeStripeAccountId = storeData[0].stripeAccountId;
+      }
+    }
+
+    // Step 3: Process payment refund (before transaction for Stripe API call)
+    let stripeRefundId: string | null = null;
+    let refundProvider: string = "manual";
+
+    // Find the payment to refund (use the first completed Stripe payment)
+    const paymentToRefund = paymentData.find(
+      (p) =>
+        p.status === "completed" &&
+        p.provider === "stripe" &&
+        p.stripePaymentIntentId
+    );
+
+    if (
+      paymentToRefund &&
+      paymentToRefund.stripePaymentIntentId &&
+      storeStripeAccountId
+    ) {
+      // Process Stripe refund
+      try {
+        const { stripe } = await import("@/lib/stripe");
+        const refundAmountCents = Math.round(refundAmount * 100);
+
+        console.log(`[Refund] Creating Stripe refund:`, {
+          paymentIntentId: paymentToRefund.stripePaymentIntentId,
+          amount: refundAmountCents,
+          refundType: input.refundType,
+          stripeAccount: storeStripeAccountId,
+        });
+
+        // For Stripe Connect with destination charges, payment intents are on the platform account
+        // Refunds must be created on the platform account (not connected account)
+        // First, retrieve the payment intent to get the charge ID
+        const paymentIntent = await stripe.paymentIntents.retrieve(
+          paymentToRefund.stripePaymentIntentId
+        );
+
+        console.log(`[Refund] Payment intent retrieved:`, {
+          id: paymentIntent.id,
+          status: paymentIntent.status,
+          latest_charge: paymentIntent.latest_charge,
+        });
+
+        // Get the charge ID from the payment intent
+        const chargeId = paymentIntent.latest_charge;
+
+        if (!chargeId) {
+          throw new Error("No charge found on payment intent");
+        }
+
+        // Create refund on the platform account using the charge ID
+        // Stripe will automatically reverse the transfer when reverse_transfer: true
+        const refund = await stripe.refunds.create({
+          charge: typeof chargeId === "string" ? chargeId : chargeId.id,
+          amount:
+            input.refundType === "partial" ? refundAmountCents : undefined, // Omit for full refund
+          refund_application_fee: false,
+          reverse_transfer: true, // Automatically reverses transfer to connected account
+        });
+
+        stripeRefundId = refund.id;
+        refundProvider = "stripe";
+        console.log(
+          `[Refund] ✅ Stripe refund created successfully: ${refund.id}`,
+          {
+            status: refund.status,
+            amount: refund.amount,
+            currency: refund.currency,
+          }
+        );
+      } catch (stripeError) {
+        console.error("[Refund] ❌ Stripe refund failed:", stripeError);
+        if (stripeError instanceof Error) {
+          console.error("[Refund] Error message:", stripeError.message);
+          console.error("[Refund] Error stack:", stripeError.stack);
+        }
+        // If Stripe refund fails, we should still proceed but mark as manual
+        // This allows the refund to be processed manually if Stripe API fails
+        refundProvider = "manual";
+        // Note: stripeRefundId remains null, which is correct for manual refunds
+      }
+    } else {
+      // No Stripe payment found or missing required data
+      if (paymentData.length === 0) {
+        console.log(
+          "[Refund] No payment records found, processing as manual refund"
+        );
+      } else if (!paymentToRefund) {
+        console.log(
+          "[Refund] No Stripe payment found, processing as manual refund"
+        );
+      } else if (!storeStripeAccountId) {
+        console.log(
+          "[Refund] Store Stripe account ID not found, processing as manual refund"
+        );
+      }
+    }
+
+    // Process refund in transaction
+    await db.transaction(async (tx) => {
+      // Create refund record in orderPayments
+      await tx.insert(orderPayments).values({
+        orderId: input.orderId,
+        amount: refundAmount.toString(),
+        currency: order.currency,
+        provider: refundProvider,
+        providerPaymentId: stripeRefundId || null, // Set to refund ID for Stripe, null for manual
+        stripePaymentIntentId: paymentToRefund?.stripePaymentIntentId || null,
+        stripeCheckoutSessionId:
+          paymentToRefund?.stripeCheckoutSessionId || null,
+        stripeRefundId: stripeRefundId,
+        type: "refund",
+        reason: input.reason || null,
+        status: "completed",
+        // For refunds, we typically don't set platformFeeAmount or netAmountToStore
+        // as those are calculated from the original payment
+      });
+
+      // Step 4: Update payment status
+      const newRefundedAmount = alreadyRefunded + refundAmount;
+      const newPaymentStatus =
+        newRefundedAmount >= totalPaid ? "refunded" : "partially_refunded";
+
+      await tx
+        .update(orders)
+        .set({
+          paymentStatus: newPaymentStatus,
+          refundedAmount: newRefundedAmount.toString(),
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, input.orderId));
+
+      // Step 5: Inventory adjustment (ONLY if chosen)
+      if (input.restockItems && order.storeId) {
+        for (const item of orderItemsData) {
+          if (item.variantId) {
+            await adjustInventoryForOrder(
+              [{ variantId: item.variantId, quantity: item.quantity }],
+              order.storeId,
+              "restock",
+              "refund",
+              input.orderId,
+              true // skipAuth for transaction context
+            );
+          }
+        }
+      }
+
+      // Step 6: Order status update (optional)
+      // Shopify does not force cancellation on refund
+      // We'll keep the order status as is unless fully refunded and unfulfilled
+      if (
+        newPaymentStatus === "refunded" &&
+        order.fulfillmentStatus === "unfulfilled"
+      ) {
+        // Optionally auto-cancel, but we'll leave it open per Shopify behavior
+        // await tx.update(orders).set({ status: "canceled" }).where(eq(orders.id, input.orderId));
+      }
+
+      // Step 9: Timeline / audit log
+      const restockMessage = input.restockItems ? " Inventory restocked." : "";
+      const refundMethod = refundProvider === "stripe" ? "Stripe" : "manual";
+      await tx.insert(orderEvents).values({
+        orderId: input.orderId,
+        type: "refund_processed",
+        visibility: "internal",
+        message: `Refund of ${refundAmount.toFixed(2)} ${order.currency} processed (${refundMethod}).${restockMessage}`,
+        metadata: {
+          refundAmount,
+          refundType: input.refundType,
+          reason: input.reason,
+          restockItems: input.restockItems,
+          stripeRefundId: stripeRefundId,
+        },
+        createdBy: userId,
+        createdAt: new Date(),
+      });
+    });
+
+    // Step 7: Generate refund document (credit note/receipt)
+    // This will be done asynchronously to not block the response
+    (async () => {
+      try {
+        const { generateRefundReceipt } = await import("./refund");
+        await generateRefundReceipt({
+          orderId: input.orderId,
+          refundAmount: refundAmount.toString(),
+          currency: order.currency,
+          reason: input.reason,
+        });
+      } catch (receiptError) {
+        console.error(
+          "[Refund] Error generating refund receipt:",
+          receiptError
+        );
+        // Don't fail the refund if receipt generation fails
+      }
+    })();
+
+    // Step 8: Send refund confirmation email
+    if (order.customerEmail) {
+      try {
+        const resend = (await import("@/lib/resend")).default;
+        const RefundConfirmationEmail = (
+          await import("@/app/[locale]/components/refund-confirmation-email")
+        ).default;
+
+        const customerName =
+          order.customerFirstName && order.customerLastName
+            ? `${order.customerFirstName} ${order.customerLastName}`
+            : order.customerEmail || "Customer";
+
+        let fromAddress =
+          process.env.RESEND_FROM_EMAIL ||
+          "Golden Hive <goldenhive@resend.dev>";
+        if (fromAddress.includes("yourdomain.com")) {
+          fromAddress = "Golden Hive <goldenhive@resend.dev>";
+        }
+
+        await resend.emails.send({
+          from: fromAddress,
+          to: order.customerEmail,
+          subject: `Refund Processed - Order #${order.orderNumber}`,
+          react: RefundConfirmationEmail({
+            orderNumber: order.orderNumber,
+            invoiceNumber: order.invoiceNumber,
+            customerName,
+            refundAmount: refundAmount.toString(),
+            currency: order.currency,
+            refundedItems: orderItemsData.map((item) => ({
+              title: item.title,
+              quantity: item.quantity,
+            })),
+            refundMethod:
+              refundProvider === "stripe"
+                ? "original payment method"
+                : "manual",
+          }),
+        });
+
+        console.log(
+          `[Refund] Confirmation email sent to ${order.customerEmail}`
+        );
+      } catch (emailError) {
+        console.error("[Refund] Error sending confirmation email:", emailError);
+        // Don't fail the refund if email fails
+      }
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error processing refund:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to process refund",
     };
   }
 }

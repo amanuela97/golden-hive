@@ -5,7 +5,11 @@ import { db } from "@/db";
 import { userRoles, roles, store, storeMembers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
-import { getCustomer, getCustomerOrders, getVendorsForFilter } from "@/app/[locale]/actions/customers";
+import {
+  getCustomer,
+  getCustomerOrders,
+  getStoresForFilter,
+} from "@/app/[locale]/actions/customers";
 import { DashboardWrapper } from "@/app/[locale]/dashboard/components/shared/DashboardWrapper";
 import CustomerDetailPageClient from "./CustomerDetailPageClient";
 import { Button } from "@/components/ui/button";
@@ -20,9 +24,11 @@ interface CustomerDetailPageProps {
 export default async function CustomerDetailPage({
   params,
 }: CustomerDetailPageProps) {
-  const locale = await getLocale();
+  // Parallelize independent operations
+  const [locale, headersList] = await Promise.all([getLocale(), headers()]);
+
   const session = await auth.api.getSession({
-    headers: await headers(),
+    headers: headersList,
   });
 
   if (!session) {
@@ -69,7 +75,7 @@ export default async function CustomerDetailPage({
   }
 
   const { id } = await params;
-  
+
   // Validate customer ID format (should be a valid UUID)
   if (!id || typeof id !== "string" || id.length !== 36) {
     return (
@@ -85,9 +91,12 @@ export default async function CustomerDetailPage({
             <div className="flex flex-col items-center justify-center text-center space-y-4">
               <AlertCircle className="h-16 w-16 text-muted-foreground" />
               <div>
-                <h2 className="text-2xl font-semibold mb-2">Customer Not Found</h2>
+                <h2 className="text-2xl font-semibold mb-2">
+                  Customer Not Found
+                </h2>
                 <p className="text-muted-foreground">
-                  The customer ID is invalid or incorrect. Please check the customer ID and try again.
+                  The customer ID is invalid or incorrect. Please check the
+                  customer ID and try again.
                 </p>
               </div>
             </div>
@@ -97,10 +106,13 @@ export default async function CustomerDetailPage({
     );
   }
 
-  const customerResult = await getCustomer(id);
-  const ordersResult = await getCustomerOrders(id);
-  const vendorsResult = await getVendorsForFilter();
-  const isAdmin = vendorsResult.success;
+  // Parallelize independent data fetching
+  const [customerResult, ordersResult, storesResult] = await Promise.all([
+    getCustomer(id),
+    getCustomerOrders(id),
+    getStoresForFilter(),
+  ]);
+  const isAdmin = storesResult.success;
 
   // Handle orders loading error gracefully - show customer even if orders fail to load
   if (!ordersResult.success) {
@@ -121,9 +133,12 @@ export default async function CustomerDetailPage({
             <div className="flex flex-col items-center justify-center text-center space-y-4">
               <AlertCircle className="h-16 w-16 text-muted-foreground" />
               <div>
-                <h2 className="text-2xl font-semibold mb-2">Customer Not Found</h2>
+                <h2 className="text-2xl font-semibold mb-2">
+                  Customer Not Found
+                </h2>
                 <p className="text-muted-foreground">
-                  {customerResult.error || "The customer does not exist or you don't have permission to view it."}
+                  {customerResult.error ||
+                    "The customer does not exist or you don't have permission to view it."}
                 </p>
               </div>
             </div>
@@ -137,10 +152,11 @@ export default async function CustomerDetailPage({
     <DashboardWrapper userRole={roleName}>
       <CustomerDetailPageClient
         customerData={customerResult.data}
-        ordersData={ordersResult.success && ordersResult.data ? ordersResult.data : []}
+        ordersData={
+          ordersResult.success && ordersResult.data ? ordersResult.data : []
+        }
         isAdmin={isAdmin}
       />
     </DashboardWrapper>
   );
 }
-

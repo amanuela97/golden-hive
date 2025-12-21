@@ -127,18 +127,15 @@ export async function listDraftOrders(
   error?: string;
 }> {
   try {
-    const {
-      storeId,
-      isAdmin,
-      error: storeError,
-    } = await getStoreIdForUser();
+    const { storeId, isAdmin, error: storeError } = await getStoreIdForUser();
 
     if (storeError) {
       return { success: false, error: storeError };
     }
 
     // Build where conditions
-    const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof sql>> = [];
+    const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof sql>> =
+      [];
 
     // Store isolation
     if (!isAdmin && storeId) {
@@ -166,12 +163,12 @@ export async function listDraftOrders(
     } else if (selectedView === "invoice_sent") {
       // Only show non-completed drafts with invoice sent
       conditions.push(eq(draftOrders.completed, false));
-      // TODO: Check invoice sent status
+      conditions.push(sql`${draftOrders.invoiceSentAt} IS NOT NULL`);
     } else if (selectedView === "open_and_invoice_sent") {
-      // Only show non-completed, pending payment drafts
+      // Only show non-completed, pending payment drafts with invoice sent
       conditions.push(eq(draftOrders.completed, false));
       conditions.push(eq(draftOrders.paymentStatus, "pending"));
-      // TODO: Check invoice sent status
+      conditions.push(sql`${draftOrders.invoiceSentAt} IS NOT NULL`);
     } else if (selectedView === "completed") {
       // Show only completed drafts
       conditions.push(eq(draftOrders.completed, true));
@@ -233,6 +230,7 @@ export async function listDraftOrders(
         updatedAt: draftOrders.updatedAt,
         storeId: draftOrders.storeId,
         completed: draftOrders.completed,
+        invoiceSentAt: draftOrders.invoiceSentAt,
       })
       .from(draftOrders)
       .where(
@@ -245,10 +243,6 @@ export async function listDraftOrders(
       .orderBy(desc(draftOrders.createdAt))
       .limit(pageSize)
       .offset(offset);
-
-    // TODO: Get invoice sent status from draft_events or metadata
-    // For now, set to false
-    const invoiceSentMap = new Map<string, Date>();
 
     return {
       success: true,
@@ -263,8 +257,8 @@ export async function listDraftOrders(
         paymentStatus: draft.paymentStatus as "pending" | "paid",
         createdAt: draft.createdAt,
         updatedAt: draft.updatedAt,
-        invoiceSent: invoiceSentMap.has(draft.id),
-        invoiceSentAt: invoiceSentMap.get(draft.id) || null,
+        invoiceSent: draft.invoiceSentAt !== null,
+        invoiceSentAt: draft.invoiceSentAt,
         storeId: draft.storeId,
         completed: draft.completed,
       })),
@@ -318,8 +312,15 @@ export async function getDraftOrder(draftId: string): Promise<{
     storeId: string | null;
     marketId: string | null;
     shippingMethod: string | null;
+    invoiceToken: string | null;
+    invoiceExpiresAt: Date | null;
+    invoiceSentAt: Date | null;
+    invoiceSentCount: number;
     createdAt: Date;
     updatedAt: Date;
+    completed: boolean;
+    completedAt: Date | null;
+    convertedToOrderId: string | null;
     items: Array<{
       id: string;
       listingId: string | null;
@@ -332,6 +333,8 @@ export async function getDraftOrder(draftId: string): Promise<{
       lineTotal: string;
       currency: string;
       imageUrl: string | null;
+      variantImageUrl: string | null;
+      listingImageUrl: string | null;
     }>;
   };
   error?: string;
@@ -386,10 +389,16 @@ export async function getDraftOrder(draftId: string): Promise<{
         billingCountry: draftOrders.billingCountry,
         shippingMethod: draftOrders.shippingMethod,
         marketId: draftOrders.marketId,
+        invoiceToken: draftOrders.invoiceToken,
+        invoiceExpiresAt: draftOrders.invoiceExpiresAt,
+        invoiceSentAt: draftOrders.invoiceSentAt,
+        invoiceSentCount: draftOrders.invoiceSentCount,
         createdAt: draftOrders.createdAt,
         updatedAt: draftOrders.updatedAt,
         storeId: draftOrders.storeId,
         completed: draftOrders.completed,
+        completedAt: draftOrders.completedAt,
+        convertedToOrderId: draftOrders.convertedToOrderId,
       })
       .from(draftOrders)
       .where(eq(draftOrders.id, draftId))
@@ -400,11 +409,6 @@ export async function getDraftOrder(draftId: string): Promise<{
     }
 
     const draft = draftData[0];
-
-    // Check if draft is completed
-    if (draft.completed) {
-      return { success: false, error: "Draft order is already completed" };
-    }
 
     // Check permissions
     if (!isAdmin && draft.storeId !== storeId) {
@@ -482,9 +486,16 @@ export async function getDraftOrder(draftId: string): Promise<{
         billingCountry: draft.billingCountry,
         shippingMethod: draft.shippingMethod,
         marketId: draft.marketId,
+        invoiceToken: draft.invoiceToken,
+        invoiceExpiresAt: draft.invoiceExpiresAt,
+        invoiceSentAt: draft.invoiceSentAt,
+        invoiceSentCount: draft.invoiceSentCount || 0,
         createdAt: draft.createdAt,
         updatedAt: draft.updatedAt,
         storeId: draft.storeId,
+        completed: draft.completed,
+        completedAt: draft.completedAt,
+        convertedToOrderId: draft.convertedToOrderId,
         items: items.map((item) => ({
           id: item.id,
           listingId: item.listingId,
@@ -497,6 +508,8 @@ export async function getDraftOrder(draftId: string): Promise<{
           lineTotal: item.lineTotal,
           currency: item.currency,
           imageUrl: item.variantImageUrl || item.listingImageUrl || null,
+          variantImageUrl: item.variantImageUrl || null,
+          listingImageUrl: item.listingImageUrl || null,
         })),
       },
     };
@@ -565,7 +578,9 @@ export async function deleteDraftOrders(
     }
 
     // Before deleting, check if any drafts were converted to orders and add timeline events
-    const draftsToDelete = draftsData.filter((d) => validDraftIds.includes(d.id));
+    const draftsToDelete = draftsData.filter((d) =>
+      validDraftIds.includes(d.id)
+    );
     const draftsWithOrders = draftsToDelete.filter(
       (d) => d.convertedToOrderId !== null
     );
@@ -697,15 +712,141 @@ async function completeDraftOrderInternal(
     }
 
     // Get draft with items
-    const draftResult = await getDraftOrder(draftId);
-    if (!draftResult.success || !draftResult.data) {
-      return {
-        success: false,
-        error: draftResult.error || "Draft order not found",
+    let draft;
+    if (!skipAuth) {
+      // Get draft with items (requires auth)
+      const draftResult = await getDraftOrder(draftId);
+      if (!draftResult.success || !draftResult.data) {
+        return {
+          success: false,
+          error: draftResult.error || "Draft order not found",
+        };
+      }
+      draft = draftResult.data;
+    } else {
+      // For webhook calls, fetch draft data directly without auth
+      const draftQuery = await db
+        .select({
+          id: draftOrders.id,
+          draftNumber: draftOrders.draftNumber,
+          customerId: draftOrders.customerId,
+          customerEmail: draftOrders.customerEmail,
+          customerFirstName: draftOrders.customerFirstName,
+          customerLastName: draftOrders.customerLastName,
+          currency: draftOrders.currency,
+          subtotalAmount: draftOrders.subtotalAmount,
+          discountAmount: draftOrders.discountAmount,
+          shippingAmount: draftOrders.shippingAmount,
+          taxAmount: draftOrders.taxAmount,
+          totalAmount: draftOrders.totalAmount,
+          paymentStatus: draftOrders.paymentStatus,
+          shippingName: draftOrders.shippingName,
+          shippingPhone: draftOrders.shippingPhone,
+          shippingAddressLine1: draftOrders.shippingAddressLine1,
+          shippingAddressLine2: draftOrders.shippingAddressLine2,
+          shippingCity: draftOrders.shippingCity,
+          shippingRegion: draftOrders.shippingRegion,
+          shippingPostalCode: draftOrders.shippingPostalCode,
+          shippingCountry: draftOrders.shippingCountry,
+          billingName: draftOrders.billingName,
+          billingPhone: draftOrders.billingPhone,
+          billingAddressLine1: draftOrders.billingAddressLine1,
+          billingAddressLine2: draftOrders.billingAddressLine2,
+          billingCity: draftOrders.billingCity,
+          billingRegion: draftOrders.billingRegion,
+          billingPostalCode: draftOrders.billingPostalCode,
+          billingCountry: draftOrders.billingCountry,
+          storeId: draftOrders.storeId,
+          marketId: draftOrders.marketId,
+          shippingMethod: draftOrders.shippingMethod,
+          invoiceToken: draftOrders.invoiceToken,
+          invoiceExpiresAt: draftOrders.invoiceExpiresAt,
+          invoiceSentAt: draftOrders.invoiceSentAt,
+          invoiceSentCount: draftOrders.invoiceSentCount,
+          createdAt: draftOrders.createdAt,
+          updatedAt: draftOrders.updatedAt,
+        })
+        .from(draftOrders)
+        .where(eq(draftOrders.id, draftId))
+        .limit(1);
+
+      if (draftQuery.length === 0) {
+        return { success: false, error: "Draft order not found" };
+      }
+
+      const draftData = draftQuery[0];
+
+      // Get draft items
+      const draftItems = await db
+        .select({
+          id: draftOrderItems.id,
+          listingId: draftOrderItems.listingId,
+          variantId: draftOrderItems.variantId,
+          title: draftOrderItems.title,
+          sku: draftOrderItems.sku,
+          quantity: draftOrderItems.quantity,
+          unitPrice: draftOrderItems.unitPrice,
+          lineSubtotal: draftOrderItems.lineSubtotal,
+          lineTotal: draftOrderItems.lineTotal,
+          currency: draftOrderItems.currency,
+        })
+        .from(draftOrderItems)
+        .where(eq(draftOrderItems.draftOrderId, draftId));
+
+      // Map to the expected format
+      draft = {
+        id: draftData.id,
+        draftNumber: Number(draftData.draftNumber),
+        customerId: draftData.customerId,
+        customerEmail: draftData.customerEmail,
+        customerFirstName: draftData.customerFirstName,
+        customerLastName: draftData.customerLastName,
+        currency: draftData.currency,
+        subtotalAmount: draftData.subtotalAmount,
+        discountAmount: draftData.discountAmount,
+        shippingAmount: draftData.shippingAmount,
+        taxAmount: draftData.taxAmount,
+        totalAmount: draftData.totalAmount,
+        paymentStatus: draftData.paymentStatus as "pending" | "paid",
+        shippingName: draftData.shippingName,
+        shippingPhone: draftData.shippingPhone,
+        shippingAddressLine1: draftData.shippingAddressLine1,
+        shippingAddressLine2: draftData.shippingAddressLine2,
+        shippingCity: draftData.shippingCity,
+        shippingRegion: draftData.shippingRegion,
+        shippingPostalCode: draftData.shippingPostalCode,
+        shippingCountry: draftData.shippingCountry,
+        billingName: draftData.billingName,
+        billingPhone: draftData.billingPhone,
+        billingAddressLine1: draftData.billingAddressLine1,
+        billingAddressLine2: draftData.billingAddressLine2,
+        billingCity: draftData.billingCity,
+        billingRegion: draftData.billingRegion,
+        billingPostalCode: draftData.billingPostalCode,
+        billingCountry: draftData.billingCountry,
+        storeId: draftData.storeId,
+        marketId: draftData.marketId,
+        shippingMethod: draftData.shippingMethod,
+        invoiceToken: draftData.invoiceToken,
+        invoiceExpiresAt: draftData.invoiceExpiresAt,
+        invoiceSentAt: draftData.invoiceSentAt,
+        invoiceSentCount: draftData.invoiceSentCount,
+        createdAt: draftData.createdAt,
+        updatedAt: draftData.updatedAt,
+        items: draftItems.map((item) => ({
+          id: item.id,
+          listingId: item.listingId,
+          variantId: item.variantId,
+          title: item.title,
+          sku: item.sku,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          lineSubtotal: item.lineSubtotal,
+          lineTotal: item.lineTotal,
+          currency: item.currency,
+        })),
       };
     }
-
-    const draft = draftResult.data;
 
     // Validate draft state
     if (draft.items.length === 0) {
@@ -719,43 +860,32 @@ async function completeDraftOrderInternal(
     const draftNumber = draft.draftNumber;
 
     // Use transaction to create order and mark draft as completed
-    return await db.transaction(async (tx) => {
-      // Step 0: Ensure customerId exists - find or create customer if needed
-      let finalCustomerId = draft.customerId;
-      
-      if (!finalCustomerId && draft.customerEmail) {
-        // Get user email if available (for logged-in user check)
-        let userEmail: string | null = null;
-        if (session && !skipAuth) {
-          const userData = await tx
-            .select({ email: user.email })
-            .from(user)
-            .where(eq(user.id, session.user.id))
-            .limit(1);
-          userEmail = userData[0]?.email || null;
-        }
+    return await db
+      .transaction(async (tx) => {
+        // Step 0: Ensure customerId exists - find or create customer if needed
+        let finalCustomerId = draft.customerId;
 
-        // Check if this email belongs to the logged-in user
-        const isLoggedInUser =
-          userEmail &&
-          userEmail.toLowerCase() === draft.customerEmail.toLowerCase();
+        if (!finalCustomerId && draft.customerEmail) {
+          // Get user email if available (for logged-in user check)
+          let userEmail: string | null = null;
+          if (session && !skipAuth) {
+            const userData = await tx
+              .select({ email: user.email })
+              .from(user)
+              .where(eq(user.id, session.user.id))
+              .limit(1);
+            userEmail = userData[0]?.email || null;
+          }
 
-        let existingCustomer;
+          // Check if this email belongs to the logged-in user
+          const isLoggedInUser =
+            userEmail &&
+            userEmail.toLowerCase() === draft.customerEmail.toLowerCase();
 
-        if (isLoggedInUser && session) {
-          // Priority 1: If email matches logged-in user, first check by userId
-          existingCustomer = await tx
-            .select({
-              id: customers.id,
-              userId: customers.userId,
-              storeId: customers.storeId,
-            })
-            .from(customers)
-            .where(eq(customers.userId, session.user.id))
-            .limit(1);
+          let existingCustomer;
 
-          // Priority 2: If no customer found by userId, check by email (regardless of storeId)
-          if (existingCustomer.length === 0) {
+          if (isLoggedInUser && session) {
+            // Priority 1: If email matches logged-in user, first check by userId
             existingCustomer = await tx
               .select({
                 id: customers.id,
@@ -763,303 +893,378 @@ async function completeDraftOrderInternal(
                 storeId: customers.storeId,
               })
               .from(customers)
-              .where(eq(customers.email, draft.customerEmail))
+              .where(eq(customers.userId, session.user.id))
+              .limit(1);
+
+            // Priority 2: If no customer found by userId, check by email (regardless of storeId)
+            if (existingCustomer.length === 0) {
+              existingCustomer = await tx
+                .select({
+                  id: customers.id,
+                  userId: customers.userId,
+                  storeId: customers.storeId,
+                })
+                .from(customers)
+                .where(eq(customers.email, draft.customerEmail))
+                .limit(1);
+            }
+          } else {
+            // For other users' emails: Check if customer exists with SAME email AND SAME storeId
+            existingCustomer = await tx
+              .select({
+                id: customers.id,
+                userId: customers.userId,
+                storeId: customers.storeId,
+              })
+              .from(customers)
+              .where(
+                and(
+                  eq(customers.email, draft.customerEmail),
+                  draft.storeId
+                    ? eq(customers.storeId, draft.storeId)
+                    : isNull(customers.storeId)
+                )
+              )
               .limit(1);
           }
-        } else {
-          // For other users' emails: Check if customer exists with SAME email AND SAME storeId
-          existingCustomer = await tx
-            .select({
-              id: customers.id,
-              userId: customers.userId,
-              storeId: customers.storeId,
-            })
-            .from(customers)
-            .where(
-              and(
-                eq(customers.email, draft.customerEmail),
-                draft.storeId
-                  ? eq(customers.storeId, draft.storeId)
-                  : isNull(customers.storeId)
-              )
-            )
-            .limit(1);
+
+          if (existingCustomer.length > 0) {
+            // Found existing customer - use it and update if needed
+            const customer = existingCustomer[0];
+
+            // Update customer record if needed
+            const updateData: {
+              storeId?: string | null;
+              userId?: string;
+              firstName?: string | null;
+              lastName?: string | null;
+              phone?: string | null;
+            } = {};
+
+            // Link userId if this is the logged-in user and userId is missing
+            if (isLoggedInUser && session && !customer.userId) {
+              updateData.userId = session.user.id;
+            }
+
+            // Update storeId if customer has null storeId but we have one
+            if (draft.storeId && !customer.storeId) {
+              updateData.storeId = draft.storeId;
+            }
+
+            // Update name/phone if we have more recent data
+            if (draft.customerFirstName && !updateData.firstName) {
+              updateData.firstName = draft.customerFirstName;
+            }
+            if (draft.customerLastName && !updateData.lastName) {
+              updateData.lastName = draft.customerLastName;
+            }
+
+            if (Object.keys(updateData).length > 0) {
+              await tx
+                .update(customers)
+                .set(updateData)
+                .where(eq(customers.id, customer.id));
+            }
+
+            finalCustomerId = customer.id;
+          } else {
+            // No existing customer found - create a new one
+            const newCustomer = await tx
+              .insert(customers)
+              .values({
+                storeId: draft.storeId,
+                userId: isLoggedInUser && session ? session.user.id : null,
+                email: draft.customerEmail,
+                firstName: draft.customerFirstName || null,
+                lastName: draft.customerLastName || null,
+                phone: null, // Draft doesn't store customer phone in customer table
+              })
+              .returning();
+
+            finalCustomerId = newCustomer[0].id;
+          }
         }
 
-        if (existingCustomer.length > 0) {
-          // Found existing customer - use it and update if needed
-          const customer = existingCustomer[0];
-
-          // Update customer record if needed
-          const updateData: {
-            storeId?: string | null;
-            userId?: string;
-            firstName?: string | null;
-            lastName?: string | null;
-            phone?: string | null;
-          } = {};
-
-          // Link userId if this is the logged-in user and userId is missing
-          if (isLoggedInUser && session && !customer.userId) {
-            updateData.userId = session.user.id;
-          }
-
-          // Update storeId if customer has null storeId but we have one
-          if (draft.storeId && !customer.storeId) {
-            updateData.storeId = draft.storeId;
-          }
-
-          // Update name/phone if we have more recent data
-          if (draft.customerFirstName && !updateData.firstName) {
-            updateData.firstName = draft.customerFirstName;
-          }
-          if (draft.customerLastName && !updateData.lastName) {
-            updateData.lastName = draft.customerLastName;
-          }
-
-          if (Object.keys(updateData).length > 0) {
-            await tx
-              .update(customers)
-              .set(updateData)
-              .where(eq(customers.id, customer.id));
-          }
-
-          finalCustomerId = customer.id;
-        } else {
-          // No existing customer found - create a new one
-          const newCustomer = await tx
-            .insert(customers)
-            .values({
-              storeId: draft.storeId,
-              userId: isLoggedInUser && session ? session.user.id : null,
-              email: draft.customerEmail,
-              firstName: draft.customerFirstName || null,
-              lastName: draft.customerLastName || null,
-              phone: null, // Draft doesn't store customer phone in customer table
-            })
-            .returning();
-
-          finalCustomerId = newCustomer[0].id;
-        }
-      }
-
-      // Step 1: Create new Order record
-      const newOrder = await tx
-        .insert(orders)
-        .values({
-          storeId: draft.storeId,
-          customerId: finalCustomerId, // Use the found/created customerId
-          customerEmail: draft.customerEmail,
-          customerFirstName: draft.customerFirstName,
-          customerLastName: draft.customerLastName,
-          currency: draft.currency,
-          subtotalAmount: draft.subtotalAmount,
-          discountAmount: draft.discountAmount,
-          shippingAmount: draft.shippingAmount,
-          taxAmount: draft.taxAmount,
-          totalAmount: draft.totalAmount,
-          status: "open",
-          paymentStatus: markAsPaid ? "paid" : "pending",
-          fulfillmentStatus: "unfulfilled",
-          shippingName: draft.shippingName,
-          shippingPhone: draft.shippingPhone,
-          shippingAddressLine1: draft.shippingAddressLine1,
-          shippingAddressLine2: draft.shippingAddressLine2,
-          shippingCity: draft.shippingCity,
-          shippingRegion: draft.shippingRegion,
-          shippingPostalCode: draft.shippingPostalCode,
-          shippingCountry: draft.shippingCountry,
-          billingName: draft.billingName,
-          billingPhone: draft.billingPhone,
-          billingAddressLine1: draft.billingAddressLine1,
-          billingAddressLine2: draft.billingAddressLine2,
-          billingCity: draft.billingCity,
-          billingRegion: draft.billingRegion,
-          billingPostalCode: draft.billingPostalCode,
-          billingCountry: draft.billingCountry,
-          shippingMethod: draft.shippingMethod || null,
-          placedAt: new Date(),
-          paidAt: markAsPaid ? new Date() : null,
-        })
-        .returning();
-
-      if (newOrder.length === 0) {
-        throw new Error("Failed to create order");
-      }
-
-      const orderId = newOrder[0].id;
-      const orderNumber = newOrder[0].orderNumber;
-
-      // Step 2: Copy line items from draft to order
-      for (const item of draft.items) {
-        await tx.insert(orderItems).values({
-          orderId: orderId,
-          listingId: item.listingId,
-          variantId: item.variantId,
-          title: item.title,
-          sku: item.sku,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          currency: item.currency,
-          lineSubtotal: item.lineSubtotal,
-          lineTotal: item.lineTotal,
-          discountAmount: "0",
-          taxAmount: "0",
-        });
-      }
-
-      // Step 3: Adjust inventory (reserve items)
-      if (draft.storeId) {
-        const { adjustInventoryForOrder } = await import(
-          "@/app/[locale]/actions/orders"
-        );
-        const inventoryResult = await adjustInventoryForOrder(
-          draft.items.map((item) => ({
-            variantId: item.variantId,
-            quantity: item.quantity,
-          })),
-          draft.storeId,
-          "reserve",
-          "order_created",
-          orderId
-        );
-
-        if (!inventoryResult.success) {
-          throw new Error(
-            inventoryResult.error || "Failed to adjust inventory"
-          );
-        }
-      }
-
-      // Step 4: Create payment record if marked as paid (manual payment)
-      if (markAsPaid) {
-        await tx.insert(orderPayments).values({
-          orderId: orderId,
-          amount: draft.totalAmount,
-          currency: draft.currency,
-          provider: "manual", // Manual payment method
-          providerPaymentId: null, // No gateway transaction ID
-          status: "completed", // Payment is complete
-        });
-      }
-
-      // Step 5: Generate timeline events
-      const createdBy = skipAuth ? null : (session.user.id || null);
-      await tx.insert(orderEvents).values([
-        {
-          orderId: orderId,
-          type: "system",
-          visibility: "internal",
-          message: `Order created from draft #${draftNumber}`,
-          createdBy: createdBy,
-          metadata: {
-            source: "draft",
-            draftId: draftId,
-            draftNumber: draftNumber,
-            markAsPaid,
-          } as Record<string, unknown>,
-        },
-        {
-          orderId: orderId,
-          type: "system",
-          visibility: "internal",
-          message: `Order confirmation number generated: #${orderNumber}`,
-          createdBy: createdBy,
-          metadata: { orderNumber } as Record<string, unknown>,
-        },
-      ]);
-
-      // Add payment event if marked as paid
-      if (markAsPaid) {
-        await tx.insert(orderEvents).values({
-          orderId: orderId,
-          type: "payment",
-          visibility: "internal",
-          message: "Payment marked as paid manually",
-          createdBy: createdBy,
-          metadata: { 
-            amount: draft.totalAmount, 
-            method: "manual",
-            currency: draft.currency,
-          } as Record<string, unknown>,
-        });
-      }
-
-      // Step 6: Mark draft as completed
-      await tx
-        .update(draftOrders)
-        .set({
-          completed: true,
-          completedAt: new Date(),
-          convertedToOrderId: orderId,
-          updatedAt: new Date(),
-        })
-        .where(eq(draftOrders.id, draftId));
-
-      // Step 7: Send order confirmation email
-      try {
-        const resend = (await import("@/lib/resend")).default;
-        const OrderConfirmationEmail = (
-          await import("@/app/[locale]/components/order-confirmation-email")
-        ).default;
-
-        const customerName =
-          draft.customerFirstName && draft.customerLastName
-            ? `${draft.customerFirstName} ${draft.customerLastName}`
-            : draft.customerEmail || "Customer";
-
-        const orderUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/orders/${orderId}`;
-
-        await resend.emails.send({
-          from: "Golden Hive <goldenhive@resend.dev>",
-          to: draft.customerEmail,
-          subject: `Order Confirmation #${orderNumber}`,
-          react: OrderConfirmationEmail({
-            orderNumber: Number(orderNumber),
-            customerName,
+        // Step 1: Create new Order record
+        const newOrder = await tx
+          .insert(orders)
+          .values({
+            storeId: draft.storeId,
+            customerId: finalCustomerId, // Use the found/created customerId
             customerEmail: draft.customerEmail,
-            items: draft.items.map((item) => ({
-              title: item.title,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              lineTotal: item.lineTotal || "0",
-              sku: item.sku || null,
-            })),
-            subtotal: draft.subtotalAmount,
-            discount: draft.discountAmount || "0",
-            shipping: draft.shippingAmount || "0",
-            tax: draft.taxAmount || "0",
-            total: draft.totalAmount,
+            customerFirstName: draft.customerFirstName,
+            customerLastName: draft.customerLastName,
             currency: draft.currency,
+            subtotalAmount: draft.subtotalAmount,
+            discountAmount: draft.discountAmount,
+            shippingAmount: draft.shippingAmount,
+            taxAmount: draft.taxAmount,
+            totalAmount: draft.totalAmount,
+            status: "open",
             paymentStatus: markAsPaid ? "paid" : "pending",
-            orderStatus: "open",
-            shippingAddress: draft.shippingAddressLine1 ||
-              draft.shippingCity ||
-              draft.shippingCountry
-              ? {
-                  name: draft.shippingName || null,
-                  line1: draft.shippingAddressLine1 || null,
-                  line2: draft.shippingAddressLine2 || null,
-                  city: draft.shippingCity || null,
-                  region: draft.shippingRegion || null,
-                  postalCode: draft.shippingPostalCode || null,
-                  country: draft.shippingCountry || null,
-                }
-              : null,
-            orderUrl,
-          }),
-        });
-      } catch (emailError) {
-        // Log error but don't fail the order creation
-        console.error("Failed to send order confirmation email:", emailError);
-      }
+            fulfillmentStatus: "unfulfilled",
+            shippingName: draft.shippingName,
+            shippingPhone: draft.shippingPhone,
+            shippingAddressLine1: draft.shippingAddressLine1,
+            shippingAddressLine2: draft.shippingAddressLine2,
+            shippingCity: draft.shippingCity,
+            shippingRegion: draft.shippingRegion,
+            shippingPostalCode: draft.shippingPostalCode,
+            shippingCountry: draft.shippingCountry,
+            billingName: draft.billingName,
+            billingPhone: draft.billingPhone,
+            billingAddressLine1: draft.billingAddressLine1,
+            billingAddressLine2: draft.billingAddressLine2,
+            billingCity: draft.billingCity,
+            billingRegion: draft.billingRegion,
+            billingPostalCode: draft.billingPostalCode,
+            billingCountry: draft.billingCountry,
+            shippingMethod: draft.shippingMethod || null,
+            marketId: draft.marketId || null, // Copy marketId from draft
+            placedAt: new Date(),
+            paidAt: markAsPaid ? new Date() : null,
+            // Copy invoice fields from draft to order (if they exist)
+            invoiceToken: draft.invoiceToken || null,
+            invoiceExpiresAt: draft.invoiceExpiresAt || null,
+            invoiceSentAt: draft.invoiceSentAt || null,
+            invoiceSentCount: draft.invoiceSentCount || 0,
+          })
+          .returning();
 
-      return {
-        success: true,
-        orderId: orderId,
-        orderNumber: Number(orderNumber),
-      };
-    });
+        if (newOrder.length === 0) {
+          throw new Error("Failed to create order");
+        }
+
+        const orderId = newOrder[0].id;
+        const orderNumber = newOrder[0].orderNumber;
+
+        // Step 2: Copy line items from draft to order
+        for (const item of draft.items) {
+          await tx.insert(orderItems).values({
+            orderId: orderId,
+            listingId: item.listingId || null,
+            variantId: item.variantId || null,
+            title: item.title,
+            sku: item.sku || null,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            currency: item.currency,
+            lineSubtotal: item.lineSubtotal,
+            lineTotal: item.lineTotal,
+            discountAmount: "0",
+            taxAmount: "0",
+          });
+        }
+
+        // Step 3: Adjust inventory (reserve items)
+        if (draft.storeId) {
+          const { adjustInventoryForOrder } = await import(
+            "@/app/[locale]/actions/orders"
+          );
+          const inventoryResult = await adjustInventoryForOrder(
+            draft.items.map((item) => ({
+              variantId: item.variantId,
+              quantity: item.quantity,
+            })),
+            draft.storeId,
+            "reserve",
+            "order_created",
+            orderId,
+            skipAuth // Pass skipAuth to inventory adjustment
+          );
+
+          if (!inventoryResult.success) {
+            throw new Error(
+              inventoryResult.error || "Failed to adjust inventory"
+            );
+          }
+        }
+
+        // Step 4: Create payment record if marked as paid (manual payment)
+        if (markAsPaid) {
+          await tx.insert(orderPayments).values({
+            orderId: orderId,
+            amount: draft.totalAmount,
+            currency: draft.currency,
+            provider: "manual", // Manual payment method
+            providerPaymentId: null, // No gateway transaction ID
+            status: "completed", // Payment is complete
+          });
+        }
+
+        // Step 5: Generate timeline events
+        const createdBy = skipAuth ? null : session.user.id || null;
+        await tx.insert(orderEvents).values([
+          {
+            orderId: orderId,
+            type: "system",
+            visibility: "internal",
+            message: `Order created from draft #${draftNumber}`,
+            createdBy: createdBy,
+            metadata: {
+              source: "draft",
+              draftId: draftId,
+              draftNumber: draftNumber,
+              markAsPaid,
+            } as Record<string, unknown>,
+          },
+          {
+            orderId: orderId,
+            type: "system",
+            visibility: "internal",
+            message: `Order confirmation number generated: #${orderNumber}`,
+            createdBy: createdBy,
+            metadata: { orderNumber } as Record<string, unknown>,
+          },
+        ]);
+
+        // Add payment event if marked as paid
+        if (markAsPaid) {
+          await tx.insert(orderEvents).values({
+            orderId: orderId,
+            type: "payment",
+            visibility: "internal",
+            message: "Payment marked as paid manually",
+            createdBy: createdBy,
+            metadata: {
+              amount: draft.totalAmount,
+              method: "manual",
+              currency: draft.currency,
+            } as Record<string, unknown>,
+          });
+        }
+
+        // Step 6: Mark draft as completed and update payment status if marked as paid
+        await tx
+          .update(draftOrders)
+          .set({
+            completed: true,
+            completedAt: new Date(),
+            convertedToOrderId: orderId,
+            paymentStatus: markAsPaid ? "paid" : draft.paymentStatus, // Update payment status if marked as paid
+            updatedAt: new Date(),
+          })
+          .where(eq(draftOrders.id, draftId));
+
+        // Step 6.5: Generate invoice PDF for the order (for accounting records)
+        // Generate invoice for all orders, not just when marked as paid
+        // Note: This happens inside the transaction, but invoice generation will update the order
+        // We'll generate it after the transaction commits to avoid any potential issues
+
+        // Step 7: Send order confirmation email
+        try {
+          const resend = (await import("@/lib/resend")).default;
+          const OrderConfirmationEmail = (
+            await import("@/app/[locale]/components/order-confirmation-email")
+          ).default;
+
+          const customerName =
+            draft.customerFirstName && draft.customerLastName
+              ? `${draft.customerFirstName} ${draft.customerLastName}`
+              : draft.customerEmail || "Customer";
+
+          const orderUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/orders/${orderId}`;
+
+          if (!draft.customerEmail) {
+            throw new Error(
+              "Customer email is required to send confirmation email"
+            );
+          }
+
+          await resend.emails.send({
+            from: "Golden Hive <goldenhive@resend.dev>",
+            to: draft.customerEmail,
+            subject: `Order Confirmation #${orderNumber}`,
+            react: OrderConfirmationEmail({
+              orderNumber: Number(orderNumber),
+              customerName,
+              customerEmail: draft.customerEmail,
+              items: draft.items.map((item) => ({
+                title: item.title,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                lineTotal: item.lineTotal || "0",
+                sku: item.sku || null,
+              })),
+              subtotal: draft.subtotalAmount,
+              discount: draft.discountAmount || "0",
+              shipping: draft.shippingAmount || "0",
+              tax: draft.taxAmount || "0",
+              total: draft.totalAmount,
+              currency: draft.currency,
+              paymentStatus: markAsPaid ? "paid" : "pending",
+              orderStatus: "open",
+              shippingAddress:
+                draft.shippingAddressLine1 ||
+                draft.shippingCity ||
+                draft.shippingCountry
+                  ? {
+                      name: draft.shippingName || null,
+                      line1: draft.shippingAddressLine1 || null,
+                      line2: draft.shippingAddressLine2 || null,
+                      city: draft.shippingCity || null,
+                      region: draft.shippingRegion || null,
+                      postalCode: draft.shippingPostalCode || null,
+                      country: draft.shippingCountry || null,
+                    }
+                  : null,
+              orderUrl,
+            }),
+          });
+        } catch (emailError) {
+          // Log error but don't fail the order creation
+          console.error("Failed to send order confirmation email:", emailError);
+        }
+
+        return {
+          success: true,
+          orderId: orderId,
+          orderNumber: Number(orderNumber),
+        };
+      })
+      .then(async (result) => {
+        // After transaction commits, generate invoice PDF
+        // This runs asynchronously and won't block the response
+        if (result.success && result.orderId) {
+          // Generate invoice in background (don't await to avoid blocking)
+          (async () => {
+            try {
+              const { generateInvoiceForOrder } = await import(
+                "@/app/[locale]/actions/invoice"
+              );
+              console.log(
+                `[Invoice] Starting invoice generation for order ${result.orderId} (Order #${result.orderNumber})`
+              );
+              const invoiceResult = await generateInvoiceForOrder(
+                result.orderId
+              );
+              if (invoiceResult.success && invoiceResult.invoicePdfUrl) {
+                console.log(
+                  `[Invoice] ✅ Invoice PDF generated successfully for order #${result.orderNumber}: ${invoiceResult.invoicePdfUrl}`
+                );
+                console.log(
+                  `[Invoice] Invoice Number: ${invoiceResult.invoiceNumber}`
+                );
+              } else {
+                console.error(
+                  `[Invoice] ❌ Failed to generate invoice PDF for order #${result.orderNumber}:`,
+                  invoiceResult.error
+                );
+              }
+            } catch (pdfError) {
+              console.error(
+                `[Invoice] ❌ Exception during invoice PDF generation for order #${result.orderNumber}:`,
+                pdfError
+              );
+              if (pdfError instanceof Error) {
+                console.error(`[Invoice] Error message: ${pdfError.message}`);
+                console.error(`[Invoice] Error stack: ${pdfError.stack}`);
+              }
+            }
+          })();
+        }
+        return result;
+      });
   } catch (error) {
     console.error("Error completing draft order:", error);
     return {
@@ -1191,11 +1396,15 @@ export async function sendInvoice(
       await import("@/app/[locale]/components/draft-invoice-email")
     ).default;
 
+    // Use configured from address or fallback to default
+    // If RESEND_FROM_EMAIL contains placeholder "yourdomain.com", use default Resend email
+    const fromAddress =
+      process.env.RESEND_FROM_EMAIL || "Golden Hive <goldenhive@resend.dev>";
+
     const emailResult = await resend.emails.send({
-      from: fromEmail && fromEmail.includes("@")
-        ? `Golden Hive <${fromEmail}>`
-        : "Golden Hive <goldenhive@resend.dev>",
+      from: fromAddress,
       to: email,
+      replyTo: fromEmail && fromEmail.includes("@") ? fromEmail : undefined,
       subject: `Invoice #${draft.draftNumber} - Payment Required`,
       react: DraftInvoiceEmail({
         draftNumber: draft.draftNumber,
@@ -1216,9 +1425,20 @@ export async function sendInvoice(
     });
 
     if (emailResult.error) {
+      // Provide more helpful error message for Resend domain verification issues
+      const errorMessage = emailResult.error.message || "Unknown error";
+      let userFriendlyError = `Failed to send email: ${errorMessage}`;
+
+      if (
+        errorMessage.includes("testing emails") ||
+        errorMessage.includes("verify a domain")
+      ) {
+        userFriendlyError = `Email sending is limited in testing mode. To send invoices to customers, please verify your domain at https://resend.com/domains. Current error: ${errorMessage}`;
+      }
+
       return {
         success: false,
-        error: `Failed to send email: ${emailResult.error.message}`,
+        error: userFriendlyError,
       };
     }
 
@@ -1571,20 +1791,17 @@ export async function createDraftOrder(input: {
   error?: string;
 }> {
   try {
-    const {
-      storeId,
-      isAdmin,
-      error: storeError,
-    } = await getStoreIdForUser();
+    const { storeId, isAdmin, error: storeError } = await getStoreIdForUser();
 
     if (storeError) {
       return { success: false, error: storeError };
     }
 
     if (!isAdmin && !storeId) {
-      return { 
-        success: false, 
-        error: "Store not found. Please set up your store first in Settings > Store." 
+      return {
+        success: false,
+        error:
+          "Store not found. Please set up your store first in Settings > Store.",
       };
     }
 
@@ -1592,21 +1809,23 @@ export async function createDraftOrder(input: {
     if (!isAdmin && storeId) {
       const { getStoreSetupStatus } = await import("./store-setup");
       const { checkStripePaymentReadiness } = await import("./stripe-connect");
-      
+
       const setupStatus = await getStoreSetupStatus();
       const paymentReadiness = await checkStripePaymentReadiness();
-      
+
       if (!setupStatus.hasStripeAccount) {
         return {
           success: false,
-          error: "Stripe account not connected. Please connect your Stripe account in Settings > Payments to create orders.",
+          error:
+            "Stripe account not connected. Please connect your Stripe account in Settings > Payments to create orders.",
         };
       }
-      
+
       if (!paymentReadiness.isReady) {
         return {
           success: false,
-          error: "Stripe onboarding incomplete. Please complete your Stripe onboarding in Settings > Payments to create orders.",
+          error:
+            "Stripe onboarding incomplete. Please complete your Stripe onboarding in Settings > Payments to create orders.",
         };
       }
     }
@@ -1645,13 +1864,13 @@ export async function createDraftOrder(input: {
           finalStoreId = listingsResult[0].storeId;
         }
       }
-      
+
       // Find or create customer if customerId is not provided but email is
       let finalCustomerId = input.customerId;
       if (!finalCustomerId && input.customerEmail) {
         const userEmail = session.user.email;
         const userId = session.user.id;
-        
+
         // Check if this email belongs to the logged-in user
         const isLoggedInUser =
           userEmail &&
@@ -1706,7 +1925,7 @@ export async function createDraftOrder(input: {
         if (existingCustomer.length > 0) {
           // Found existing customer
           const customer = existingCustomer[0];
-          
+
           // Update customer record if needed
           const updateData: {
             storeId?: string | null;
@@ -1757,7 +1976,7 @@ export async function createDraftOrder(input: {
               lastName: input.customerLastName || null,
               phone: input.customerPhone || null,
             })
-            .returning({ id: customers.id });
+            .returning();
 
           finalCustomerId = newCustomer[0].id;
         }
@@ -2059,7 +2278,6 @@ export async function updateDraftOrder(
           customerEmail: input.customerEmail,
           customerFirstName: input.customerFirstName,
           customerLastName: input.customerLastName,
-          customerPhone: input.customerPhone,
           currency: input.currency,
           subtotalAmount: input.subtotalAmount,
           discountAmount: input.discountAmount,
@@ -2141,7 +2359,6 @@ export async function updateDraftOrder(
         const itemTitle = variant
           ? `${listingData[0].name} - ${variant.title}`
           : listingData[0].name;
-        const itemImageUrl = variant?.imageUrl || listingData[0].imageUrl;
         const itemSku = variant?.sku || item.sku;
 
         if (item.id && existingItemIds.has(item.id)) {
@@ -2155,7 +2372,6 @@ export async function updateDraftOrder(
               unitPrice: item.unitPrice,
               title: itemTitle,
               sku: itemSku,
-              imageUrl: itemImageUrl,
             })
             .where(eq(draftOrderItems.id, item.id));
         } else {
@@ -2168,7 +2384,11 @@ export async function updateDraftOrder(
             unitPrice: item.unitPrice,
             title: itemTitle,
             sku: itemSku,
-            imageUrl: itemImageUrl,
+            currency: input.currency,
+            lineSubtotal: (parseFloat(item.unitPrice) * item.quantity).toFixed(
+              2
+            ),
+            lineTotal: (parseFloat(item.unitPrice) * item.quantity).toFixed(2),
           });
         }
       }

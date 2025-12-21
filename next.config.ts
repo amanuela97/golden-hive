@@ -20,8 +20,11 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "lh3.googleusercontent.com",
       },
+      {
+        protocol: "https",
+        hostname: "hebbkx1anhila5yf.public.blob.vercel-storage.com",
+      },
     ],
-    domains: ["hebbkx1anhila5yf.public.blob.vercel-storage.com"],
   },
   turbopack: {
     root: process.cwd(),

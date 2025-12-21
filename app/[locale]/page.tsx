@@ -14,6 +14,9 @@ import { AboutSkeleton } from "./components/skeletons/about-skeleton";
 import { BenefitsSkeleton } from "./components/skeletons/benefits-skeleton";
 import { FaqSection } from "./components/faq-section";
 import { getTranslations } from "next-intl/server";
+import { getLocale } from "next-intl/server";
+
+export const revalidate = false; // means static by default, updated only on revalidation
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations();
@@ -41,12 +44,6 @@ export async function generateMetadata(): Promise<Metadata> {
     },
   };
 }
-
-export const dynamic = "force-dynamic";
-
-export const revalidate = false; // means static by default, updated only on revalidation
-
-import { getLocale } from "next-intl/server";
 
 async function HeroLoader() {
   const locale = await getLocale();

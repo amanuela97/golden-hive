@@ -1,0 +1,1 @@
+ALTER TABLE "orders" ADD COLUMN "invoice_public_id" text;

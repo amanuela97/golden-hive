@@ -7,12 +7,17 @@ import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
 import { DashboardWrapper } from "@/app/[locale]/dashboard/components/shared/DashboardWrapper";
 import { CustomerForm } from "@/app/[locale]/dashboard/components/shared/CustomerForm";
-import { getVendorsForFilter } from "@/app/[locale]/actions/customers";
+import { getStoresForFilter } from "@/app/[locale]/actions/customers";
 
 export default async function NewCustomerPage() {
-  const locale = await getLocale();
+  // Parallelize independent operations
+  const [locale, headersList] = await Promise.all([
+    getLocale(),
+    headers(),
+  ]);
+
   const session = await auth.api.getSession({
-    headers: await headers(),
+    headers: headersList,
   });
 
   if (!session) {
@@ -58,8 +63,8 @@ export default async function NewCustomerPage() {
     }
   }
 
-  const vendorsResult = await getVendorsForFilter();
-  const isAdmin = vendorsResult.success;
+  const storesResult = await getStoresForFilter();
+  const isAdmin = storesResult.success;
 
   return (
     <DashboardWrapper userRole={roleName}>

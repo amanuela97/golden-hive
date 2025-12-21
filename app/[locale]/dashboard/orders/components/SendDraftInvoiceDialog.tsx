@@ -26,6 +26,7 @@ interface SendDraftInvoiceDialogProps {
   customerEmail: string | null;
   storeOwnerEmail: string | null;
   onSuccess?: () => void;
+  onLoadingChange?: (loading: boolean) => void;
 }
 
 export function SendDraftInvoiceDialog({
@@ -36,21 +37,54 @@ export function SendDraftInvoiceDialog({
   customerEmail,
   storeOwnerEmail,
   onSuccess,
+  onLoadingChange,
 }: SendDraftInvoiceDialogProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [fromEmail, setFromEmail] = useState(storeOwnerEmail || "");
-  const [toEmail, setToEmail] = useState(customerEmail || "");
+  const [fromEmail, setFromEmail] = useState("");
+  const [toEmail, setToEmail] = useState("");
   const [customMessage, setCustomMessage] = useState("");
+  const [userEditedFromEmail, setUserEditedFromEmail] = useState(false);
 
-  // Update emails when dialog opens
+  // Debug logging
+  useEffect(() => {
+    console.log("SendDraftInvoiceDialog - storeOwnerEmail prop:", storeOwnerEmail);
+    console.log("SendDraftInvoiceDialog - fromEmail state:", fromEmail);
+  }, [storeOwnerEmail, fromEmail]);
+
+  // Update emails when dialog opens or when storeOwnerEmail/customerEmail changes
   useEffect(() => {
     if (open) {
-      setFromEmail(storeOwnerEmail || "");
-      setToEmail(customerEmail || "");
+      // Always update fromEmail if storeOwnerEmail is available and user hasn't edited it
+      if (storeOwnerEmail && !userEditedFromEmail) {
+        setFromEmail(storeOwnerEmail);
+      }
+      // Always update toEmail if customerEmail is available
+      if (customerEmail) {
+        setToEmail(customerEmail);
+      }
+      // Reset custom message when dialog opens
       setCustomMessage("");
+      // Reset user edited flag when dialog opens
+      setUserEditedFromEmail(false);
     }
-  }, [open, storeOwnerEmail, customerEmail]);
+  }, [open, storeOwnerEmail, customerEmail, userEditedFromEmail]);
+
+  // Also update fromEmail when storeOwnerEmail changes (even if dialog is already open)
+  // This handles the case where storeOwnerEmail arrives after the dialog opens
+  // But only if user hasn't manually edited it
+  useEffect(() => {
+    if (storeOwnerEmail && !userEditedFromEmail) {
+      setFromEmail(storeOwnerEmail);
+    }
+  }, [storeOwnerEmail, userEditedFromEmail]);
+
+  // Update toEmail when customerEmail changes
+  useEffect(() => {
+    if (customerEmail) {
+      setToEmail(customerEmail);
+    }
+  }, [customerEmail]);
 
   const handleSubmit = async () => {
     if (!draftId) {
@@ -58,7 +92,10 @@ export function SendDraftInvoiceDialog({
       return;
     }
 
-    if (!fromEmail || !fromEmail.includes("@")) {
+    // Use storeOwnerEmail if available and user hasn't edited, otherwise use fromEmail
+    const emailToUse = userEditedFromEmail ? fromEmail : (storeOwnerEmail || fromEmail);
+    
+    if (!emailToUse || !emailToUse.includes("@")) {
       toast.error("Please enter a valid 'From' email address");
       return;
     }
@@ -69,29 +106,66 @@ export function SendDraftInvoiceDialog({
     }
 
     setLoading(true);
+    if (onLoadingChange) {
+      onLoadingChange(true);
+    }
     try {
+      // Use storeOwnerEmail if available and user hasn't edited, otherwise use fromEmail
+      const emailToUse = userEditedFromEmail ? fromEmail : (storeOwnerEmail || fromEmail);
+      
+      console.log("Sending invoice with:", { draftId, toEmail, fromEmail: emailToUse });
+      
       const result = await sendInvoice(
         draftId,
         toEmail,
-        fromEmail,
+        emailToUse,
         customMessage.trim() || undefined
       );
 
+      console.log("Invoice send result:", result);
+
+      // Check if result is valid
+      if (!result) {
+        console.error("No result returned from sendInvoice");
+        toast.error("Failed to send invoice: No response from server");
+        return;
+      }
+
       if (result.success) {
         toast.success(`Invoice sent successfully to ${toEmail}`);
+        // Close dialog first
         onOpenChange(false);
+        // Call onSuccess callback (if provided)
         if (onSuccess) {
-          onSuccess();
+          try {
+            onSuccess();
+          } catch (error) {
+            console.error("Error in onSuccess callback:", error);
+          }
         }
-        router.refresh();
+        // Always redirect to draft_orders page after successful send
+        setTimeout(() => {
+          router.push("/dashboard/draft_orders");
+        }, 200);
       } else {
-        toast.error(result.error || "Failed to send invoice");
+        const errorMessage = result.error || "Failed to send invoice";
+        toast.error(errorMessage);
       }
     } catch (error) {
-      toast.error("Failed to send invoice");
       console.error("Send invoice error:", error);
+      const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred";
+      
+      // Check if it's a Next.js server action error
+      if (errorMessage.includes("unexpected response") || errorMessage.includes("Failed to fetch")) {
+        toast.error("Failed to send invoice: Server communication error. Please try again.");
+      } else {
+        toast.error(`Failed to send invoice: ${errorMessage}`);
+      }
     } finally {
       setLoading(false);
+      if (onLoadingChange) {
+        onLoadingChange(false);
+      }
     }
   };
 
@@ -101,8 +175,10 @@ export function SendDraftInvoiceDialog({
         <DialogHeader>
           <DialogTitle>Send Invoice</DialogTitle>
           <DialogDescription>
-            {draftNumber
+            {draftId && draftNumber
               ? `Send invoice #${draftNumber} to the customer. The invoice will include a payment link.`
+              : draftId
+              ? "Send invoice to the customer. The invoice will include a payment link."
               : "Save the draft order first, then send the invoice."}
           </DialogDescription>
         </DialogHeader>
@@ -121,8 +197,11 @@ export function SendDraftInvoiceDialog({
               <Input
                 id="from-email"
                 type="email"
-                value={fromEmail}
-                onChange={(e) => setFromEmail(e.target.value)}
+                value={userEditedFromEmail ? fromEmail : (storeOwnerEmail || fromEmail)}
+                onChange={(e) => {
+                  setFromEmail(e.target.value);
+                  setUserEditedFromEmail(true);
+                }}
                 placeholder="store@example.com"
               />
             </div>

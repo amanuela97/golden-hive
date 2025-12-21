@@ -22,6 +22,9 @@ interface InvoicePaymentPageClientProps {
       quantity: number;
       unitPrice: string;
       lineTotal: string;
+      imageUrl: string | null;
+      productName: string;
+      variantName: string | null;
     }>;
   };
   token: string;
@@ -100,20 +103,32 @@ export default function InvoicePaymentPageClient({
 
             <div>
               <h3 className="font-semibold mb-3">Order Summary</h3>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {draftData.items.map((item, idx) => (
                   <div
                     key={idx}
-                    className="flex justify-between items-center py-2 border-b"
+                    className="flex gap-4 items-start py-3 border-b"
                   >
-                    <div>
-                      <p className="font-medium">{item.title}</p>
-                      <p className="text-sm text-muted-foreground">
+                    {item.imageUrl && (
+                      <img 
+                        src={item.imageUrl} 
+                        alt={item.productName}
+                        className="w-20 h-20 object-cover rounded-md flex-shrink-0"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium">{item.productName}</p>
+                      {item.variantName && (
+                        <p className="text-sm text-muted-foreground">
+                          {item.variantName}
+                        </p>
+                      )}
+                      <p className="text-sm text-muted-foreground mt-1">
                         Qty: {item.quantity} × {item.unitPrice}{" "}
                         {draftData.currency}
                       </p>
                     </div>
-                    <p className="font-medium">
+                    <p className="font-medium flex-shrink-0">
                       {item.lineTotal} {draftData.currency}
                     </p>
                   </div>

@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { draftOrders, draftOrderItems, store } from "@/db/schema";
+import { draftOrders, draftOrderItems, store, listing, listingVariants } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { stripe } from "@/lib/stripe";
 
@@ -25,6 +25,9 @@ export async function getDraftOrderByToken(
       quantity: number;
       unitPrice: string;
       lineTotal: string;
+      imageUrl: string | null;
+      productName: string;
+      variantName: string | null;
     }>;
     storeId: string | null;
   };
@@ -74,15 +77,21 @@ export async function getDraftOrderByToken(
       return { success: false, error: "This invoice has expired" };
     }
 
-    // Get draft items
+    // Get draft items with product images and names
     const items = await db
       .select({
         title: draftOrderItems.title,
         quantity: draftOrderItems.quantity,
         unitPrice: draftOrderItems.unitPrice,
         lineTotal: draftOrderItems.lineTotal,
+        variantImageUrl: listingVariants.imageUrl,
+        listingImageUrl: listing.imageUrl,
+        listingName: listing.name,
+        variantTitle: listingVariants.title,
       })
       .from(draftOrderItems)
+      .leftJoin(listing, eq(draftOrderItems.listingId, listing.id))
+      .leftJoin(listingVariants, eq(draftOrderItems.variantId, listingVariants.id))
       .where(eq(draftOrderItems.draftOrderId, draft.id));
 
     return {
@@ -100,6 +109,9 @@ export async function getDraftOrderByToken(
           quantity: item.quantity,
           unitPrice: item.unitPrice,
           lineTotal: item.lineTotal,
+          imageUrl: item.variantImageUrl || item.listingImageUrl || null,
+          productName: item.listingName || item.title,
+          variantName: item.variantTitle || null,
         })),
         storeId: draft.storeId,
       },

@@ -13,66 +13,53 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
-import { sendInvoiceForOrder } from "@/app/[locale]/actions/orders";
+import { sendInvoicePdfForOrder } from "@/app/[locale]/actions/orders";
 import toast from "react-hot-toast";
 import { useRouter } from "@/i18n/navigation";
 import { Loader2 } from "lucide-react";
 
-interface SendInvoiceDialogProps {
+interface SendInvoicePdfDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orderId: string;
   orderNumber: number;
+  invoiceNumber: string | null;
   customerEmail: string | null;
   storeOwnerEmail: string | null;
   onSuccess: () => void;
 }
 
-export function SendInvoiceDialog({
+export function SendInvoicePdfDialog({
   open,
   onOpenChange,
   orderId,
   orderNumber,
+  invoiceNumber,
   customerEmail,
   storeOwnerEmail,
   onSuccess,
-}: SendInvoiceDialogProps) {
+}: SendInvoicePdfDialogProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [fromEmail, setFromEmail] = useState("");
   const [toEmail, setToEmail] = useState("");
   const [customMessage, setCustomMessage] = useState("");
-  const [lockPrices, setLockPrices] = useState(true);
-  const [userEditedFromEmail, setUserEditedFromEmail] = useState(false);
 
-  // Update emails when dialog opens
+  // Update emails when dialog opens or when storeOwnerEmail/customerEmail changes
   useEffect(() => {
     if (open) {
-      // Always update fromEmail if storeOwnerEmail is available and user hasn't edited it
-      if (storeOwnerEmail && !userEditedFromEmail) {
+      // Always update fromEmail if storeOwnerEmail is available
+      if (storeOwnerEmail) {
         setFromEmail(storeOwnerEmail);
       }
       // Always update toEmail if customerEmail is available
       if (customerEmail) {
         setToEmail(customerEmail);
       }
-      // Reset custom message and lock prices when dialog opens
+      // Reset custom message when dialog opens
       setCustomMessage("");
-      setLockPrices(true);
-      // Reset user edited flag when dialog opens
-      setUserEditedFromEmail(false);
     }
-  }, [open, storeOwnerEmail, customerEmail, userEditedFromEmail]);
-
-  // Also update fromEmail when storeOwnerEmail changes (even if dialog is already open)
-  // This handles the case where storeOwnerEmail arrives after the dialog opens
-  // But only if user hasn't manually edited it
-  useEffect(() => {
-    if (storeOwnerEmail && !userEditedFromEmail) {
-      setFromEmail(storeOwnerEmail);
-    }
-  }, [storeOwnerEmail, userEditedFromEmail]);
+  }, [open, storeOwnerEmail, customerEmail]);
 
   const handleSubmit = async () => {
     if (!fromEmail || !fromEmail.includes("@")) {
@@ -87,25 +74,25 @@ export function SendInvoiceDialog({
 
     setLoading(true);
     try {
-      const result = await sendInvoiceForOrder({
+      const result = await sendInvoicePdfForOrder({
         orderId,
         fromEmail,
         toEmail,
         customMessage: customMessage.trim() || null,
-        lockPrices: lockPrices,
+        lockPrices: false,
       });
 
       if (result.success) {
-        toast.success(`Invoice sent successfully to ${toEmail}`);
+        toast.success(`Invoice PDF sent successfully to ${toEmail}`);
         onOpenChange(false);
         onSuccess();
         router.refresh();
       } else {
-        toast.error(result.error || "Failed to send invoice");
+        toast.error(result.error || "Failed to send invoice PDF");
       }
     } catch (error) {
-      toast.error("Failed to send invoice");
-      console.error("Send invoice error:", error);
+      toast.error("Failed to send invoice PDF");
+      console.error("Send invoice PDF error:", error);
     } finally {
       setLoading(false);
     }
@@ -115,10 +102,11 @@ export function SendInvoiceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>Send Invoice</DialogTitle>
+          <DialogTitle>Send Invoice PDF</DialogTitle>
           <DialogDescription>
-            Send invoice #{orderNumber} to the customer. The invoice will
-            include a payment link.
+            Send the invoice PDF for Order #{orderNumber}
+            {invoiceNumber && ` (Invoice ${invoiceNumber})`} to the customer.
+            The PDF will be attached to the email.
           </DialogDescription>
         </DialogHeader>
 
@@ -129,13 +117,8 @@ export function SendInvoiceDialog({
             <Input
               id="from-email"
               type="email"
-              value={
-                userEditedFromEmail ? fromEmail : storeOwnerEmail || fromEmail
-              }
-              onChange={(e) => {
-                setFromEmail(e.target.value);
-                setUserEditedFromEmail(true);
-              }}
+              value={fromEmail}
+              onChange={(e) => setFromEmail(e.target.value)}
               placeholder="store@example.com"
             />
           </div>
@@ -159,29 +142,8 @@ export function SendInvoiceDialog({
               id="custom-message"
               value={customMessage}
               onChange={(e) => setCustomMessage(e.target.value)}
-              placeholder="Add a personal message to the invoice email..."
+              placeholder="Add a personal message to the email..."
               rows={3}
-            />
-          </div>
-
-          {/* Lock Prices Toggle */}
-          <div className="flex items-center justify-between space-x-2 rounded-lg border p-4">
-            <div className="space-y-0.5 flex-1">
-              <Label htmlFor="lock-prices" className="text-base cursor-pointer">
-                Lock prices (recommended)
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                Prevent product prices, discounts, taxes, and shipping from
-                changing after this invoice is sent.
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Required for accounting and tax compliance.
-              </p>
-            </div>
-            <Switch
-              id="lock-prices"
-              checked={lockPrices}
-              onCheckedChange={setLockPrices}
             />
           </div>
         </div>
@@ -201,7 +163,7 @@ export function SendInvoiceDialog({
                 Sending...
               </>
             ) : (
-              "Send Invoice"
+              "Send Invoice PDF"
             )}
           </Button>
         </DialogFooter>

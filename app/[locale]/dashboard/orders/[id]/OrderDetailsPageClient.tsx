@@ -2,7 +2,6 @@
 
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -24,24 +23,23 @@ import {
   Printer,
   Edit,
   RefreshCw,
-  Package,
   CreditCard,
-  MapPin,
-  User,
-  Tag,
-  AlertTriangle,
-  MessageSquare,
 } from "lucide-react";
 import { useRouter } from "@/i18n/navigation";
 import { format } from "date-fns";
-import Image from "next/image";
 import { FulfillmentCard } from "./components/FulfillmentCard";
 import { PaymentSummary } from "./components/PaymentSummary";
 import { OrderTimeline } from "./components/OrderTimeline";
 import { OrderSidebar } from "./components/OrderSidebar";
 import { CancelOrderDialog } from "./components/CancelOrderDialog";
 import { SendInvoiceDialog } from "./components/SendInvoiceDialog";
-import { archiveOrders, unarchiveOrders, getStoreOwnerEmail } from "@/app/[locale]/actions/orders";
+import { SendInvoicePdfDialog } from "./components/SendInvoicePdfDialog";
+import { RefundDialog } from "./components/RefundDialog";
+import {
+  archiveOrders,
+  unarchiveOrders,
+  getStoreOwnerEmail,
+} from "@/app/[locale]/actions/orders";
 import toast from "react-hot-toast";
 import { useEffect } from "react";
 
@@ -109,6 +107,9 @@ interface OrderData {
   fulfilledAt: Date | null;
   canceledAt: Date | null;
   storeId?: string | null;
+  invoiceNumber: string | null;
+  invoicePdfUrl: string | null;
+  refundedAmount?: string;
   items: OrderItem[];
   events: OrderEvent[];
 }
@@ -131,29 +132,64 @@ export default function OrderDetailsPageClient({
       : orderData.customerEmail || "N/A";
 
   // Determine action permissions based on role and order state
-  const isArchived = orderData.archivedAt !== null || orderData.status === "archived";
+  const isArchived =
+    orderData.archivedAt !== null || orderData.status === "archived";
   const isCanceled = orderData.status === "canceled";
-  const isPaid = orderData.paymentStatus === "paid" || orderData.paymentStatus === "partially_refunded";
+  const isPaid =
+    orderData.paymentStatus === "paid" ||
+    orderData.paymentStatus === "partially_refunded";
   const isFulfilled = orderData.fulfillmentStatus === "fulfilled";
-  const canRefund = (userRole === "admin" || userRole === "seller") && isPaid && !isArchived && !isCanceled;
-  const canEdit = userRole === "admin" && !isFulfilled && !isArchived && !isCanceled;
-  const canFulfill = (userRole === "admin" || userRole === "seller") && isPaid && !isFulfilled && !isArchived && !isCanceled;
-  const canCancel = (userRole === "admin" || userRole === "seller") && !isArchived && !isCanceled;
-  const canArchive = (userRole === "admin" || userRole === "seller") && !isArchived && !isCanceled;
-  const canUnarchive = (userRole === "admin" || userRole === "seller") && isArchived;
-  const canSendInvoice = (userRole === "admin" || userRole === "seller") && !isPaid && !isArchived && !isCanceled;
+  const canRefund =
+    (userRole === "admin" || userRole === "seller") &&
+    isPaid &&
+    !isArchived &&
+    !isCanceled;
+  const canEdit =
+    userRole === "admin" && !isFulfilled && !isArchived && !isCanceled;
+  const canFulfill =
+    (userRole === "admin" || userRole === "seller") &&
+    isPaid &&
+    !isFulfilled &&
+    !isArchived &&
+    !isCanceled;
+  const canCancel =
+    (userRole === "admin" || userRole === "seller") &&
+    !isArchived &&
+    !isCanceled;
+  const canArchive =
+    (userRole === "admin" || userRole === "seller") &&
+    !isArchived &&
+    !isCanceled;
+  const canUnarchive =
+    (userRole === "admin" || userRole === "seller") && isArchived;
+  const canSendInvoice =
+    (userRole === "admin" || userRole === "seller") &&
+    !isPaid &&
+    !isArchived &&
+    !isCanceled;
+  const canSendInvoicePdf =
+    (userRole === "admin" || userRole === "seller") &&
+    orderData.invoicePdfUrl &&
+    !isArchived &&
+    !isCanceled;
 
   // Dialog states
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [showSendInvoiceDialog, setShowSendInvoiceDialog] = useState(false);
+  const [showSendInvoicePdfDialog, setShowSendInvoicePdfDialog] =
+    useState(false);
+  const [showRefundDialog, setShowRefundDialog] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [storeOwnerEmail, setStoreOwnerEmail] = useState<string | null>(null);
 
   // Fetch store owner email
   useEffect(() => {
     const fetchStoreOwnerEmail = async () => {
-      if (orderData.storeId && (userRole === "admin" || userRole === "seller")) {
+      if (
+        orderData.storeId &&
+        (userRole === "admin" || userRole === "seller")
+      ) {
         try {
           const result = await getStoreOwnerEmail(orderData.storeId);
           if (result.success && result.email) {
@@ -248,24 +284,43 @@ export default function OrderDetailsPageClient({
           </Button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-3xl font-bold">Order #{orderData.orderNumber}</h1>
+              <h1 className="text-3xl font-bold">
+                Order #{orderData.orderNumber}
+              </h1>
               <Badge className={getPaymentStatusColor(orderData.paymentStatus)}>
                 {orderData.paymentStatus.replace(/_/g, " ")}
               </Badge>
-              <Badge className={getFulfillmentStatusColor(orderData.fulfillmentStatus)}>
+              <Badge
+                className={getFulfillmentStatusColor(
+                  orderData.fulfillmentStatus
+                )}
+              >
                 {orderData.fulfillmentStatus.replace(/_/g, " ")}
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground mt-1">
               {orderData.placedAt
-                ? format(new Date(orderData.placedAt), "MMM dd, yyyy 'at' HH:mm")
-                : format(new Date(orderData.createdAt), "MMM dd, yyyy 'at' HH:mm")}
+                ? format(
+                    new Date(orderData.placedAt),
+                    "MMM dd, yyyy 'at' HH:mm"
+                  )
+                : format(
+                    new Date(orderData.createdAt),
+                    "MMM dd, yyyy 'at' HH:mm"
+                  )}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+          >
+            <RefreshCw
+              className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
             Refresh
           </Button>
           <Button variant="outline" size="sm">
@@ -273,7 +328,11 @@ export default function OrderDetailsPageClient({
             Print
           </Button>
           {canRefund && (
-            <Button variant="outline" size="sm">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowRefundDialog(true)}
+            >
               <CreditCard className="mr-2 h-4 w-4" />
               Refund
             </Button>
@@ -298,18 +357,33 @@ export default function OrderDetailsPageClient({
               )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" disabled={isArchived || isCanceled}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={isArchived || isCanceled}
+                  >
                     <MoreVertical className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {canSendInvoice && (
-                    <DropdownMenuItem onClick={() => setShowSendInvoiceDialog(true)}>
+                    <DropdownMenuItem
+                      onClick={() => setShowSendInvoiceDialog(true)}
+                    >
                       Send invoice
                     </DropdownMenuItem>
                   )}
+                  {canSendInvoicePdf && (
+                    <DropdownMenuItem
+                      onClick={() => setShowSendInvoicePdfDialog(true)}
+                    >
+                      Send invoice PDF
+                    </DropdownMenuItem>
+                  )}
                   {canArchive && (
-                    <DropdownMenuItem onClick={() => setShowArchiveDialog(true)}>
+                    <DropdownMenuItem
+                      onClick={() => setShowArchiveDialog(true)}
+                    >
                       Archive order
                     </DropdownMenuItem>
                   )}
@@ -378,7 +452,8 @@ export default function OrderDetailsPageClient({
           <DialogHeader>
             <DialogTitle>Archive Order #{orderData.orderNumber}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to archive this order? Archived orders cannot be modified, but can be unarchived later.
+              Are you sure you want to archive this order? Archived orders
+              cannot be modified, but can be unarchived later.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -410,7 +485,31 @@ export default function OrderDetailsPageClient({
         storeOwnerEmail={storeOwnerEmail}
         onSuccess={handleRefresh}
       />
+
+      {/* Send Invoice PDF Dialog */}
+      <SendInvoicePdfDialog
+        open={showSendInvoicePdfDialog}
+        onOpenChange={setShowSendInvoicePdfDialog}
+        orderId={orderData.id}
+        orderNumber={orderData.orderNumber}
+        invoiceNumber={orderData.invoiceNumber}
+        customerEmail={orderData.customerEmail}
+        storeOwnerEmail={storeOwnerEmail}
+        onSuccess={handleRefresh}
+      />
+
+      {/* Refund Dialog */}
+      <RefundDialog
+        open={showRefundDialog}
+        onOpenChange={setShowRefundDialog}
+        orderId={orderData.id}
+        orderNumber={orderData.orderNumber}
+        totalAmount={orderData.totalAmount}
+        refundedAmount={orderData.refundedAmount || "0"}
+        currency={orderData.currency}
+        fulfillmentStatus={orderData.fulfillmentStatus}
+        onSuccess={handleRefresh}
+      />
     </div>
   );
 }
-

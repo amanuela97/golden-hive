@@ -1,20 +1,15 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/db";
-import { userRoles, roles } from "@/db/schema";
-import { eq } from "drizzle-orm";
 import { routing } from "./i18n/routing";
 import createIntlMiddleware from "next-intl/middleware";
-
-export const runtime = "nodejs";
 
 // Create next-intl middleware
 const intlMiddleware = createIntlMiddleware(routing);
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
-  
+
   // Add pathname to headers for layout to check
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-invoke-path", pathname);
@@ -35,12 +30,12 @@ export async function middleware(req: NextRequest) {
 
   // First run next-intl middleware for locale detection and routing
   const intlResponse = intlMiddleware(req);
-  
+
   // Add pathname to response headers for layout to check
   // This allows server components to know the current pathname
   // Use the final pathname after any redirects
   let finalPathname = pathname;
-  
+
   if (intlResponse instanceof NextResponse) {
     // Check if there's a redirect
     if (intlResponse.status >= 300 && intlResponse.status < 400) {
@@ -87,98 +82,35 @@ export async function middleware(req: NextRequest) {
   }
 
   // Handle dashboard access - all users go to /dashboard
+  // Note: Role checking is done at the page level, not in middleware
+  // This avoids expensive database queries on every request
   if (isDashboardRoute && session) {
-    try {
-      // Get user's role
-      const userRole = await db
-        .select({
-          roleName: roles.name,
-        })
-        .from(userRoles)
-        .innerJoin(roles, eq(userRoles.roleId, roles.id))
-        .where(eq(userRoles.userId, session.user.id))
-        .limit(1);
+    // Redirect old role-specific dashboard routes to unified /dashboard
+    const pathSegments = pathWithoutLocale.split("/");
+    const expectedRole = pathSegments[2]; // Extract role from /dashboard/{role}
+    const validRoles = ["admin", "seller", "customer"];
 
-      if (userRole.length === 0) {
-        // User has no role, redirect to onboarding
-        const onboardingUrl = new URL(`/${locale}/onboarding`, req.url);
-        return NextResponse.redirect(onboardingUrl);
-      }
-
-      // Redirect old role-specific dashboard routes to unified /dashboard
-      const pathSegments = pathWithoutLocale.split("/");
-      const expectedRole = pathSegments[2]; // Extract role from /dashboard/{role}
-      const validRoles = ["admin", "seller", "customer"];
-
-      if (
-        expectedRole &&
-        validRoles.includes(expectedRole) &&
-        pathSegments.length === 3
-      ) {
-        // Redirect /dashboard/{role} to /dashboard
-        const dashboardUrl = new URL(`/${locale}/dashboard`, req.url);
-        const response = NextResponse.redirect(dashboardUrl);
-        response.headers.set("x-invoke-path", `/${locale}/dashboard`);
-        return response;
-      }
-    } catch (error) {
-      console.error("Middleware error:", error);
-      // On error, redirect to login
-      const loginUrl = new URL(`/${locale}/login`, req.url);
-      const response = NextResponse.redirect(loginUrl);
-      response.headers.set("x-invoke-path", pathname);
-      return response;
-    }
-  }
-
-  // Redirect authenticated users from /login to unified dashboard
-  if (isAuthRoute && session) {
-    try {
-      const userRole = await db
-        .select({
-          roleName: roles.name,
-        })
-        .from(userRoles)
-        .innerJoin(roles, eq(userRoles.roleId, roles.id))
-        .where(eq(userRoles.userId, session.user.id))
-        .limit(1);
-
-      if (userRole.length > 0) {
-        const roleName = userRole[0].roleName.toLowerCase();
-        const needsStoreSetup = roleName === "admin" || roleName === "seller";
-
-        if (needsStoreSetup) {
-          // Check if user has a store
-          const { userHasStore } = await import("@/app/[locale]/actions/store-members");
-          const { hasStore } = await userHasStore();
-          
-          if (!hasStore) {
-            const storeSetupUrl = new URL(`/${locale}/store-setup`, req.url);
-            const response = NextResponse.redirect(storeSetupUrl);
-            response.headers.set("x-invoke-path", `/${locale}/store-setup`);
-            return response;
-          }
-        }
-
-        const dashboardUrl = new URL(`/${locale}/dashboard`, req.url);
-        const response = NextResponse.redirect(dashboardUrl);
-        response.headers.set("x-invoke-path", `/${locale}/dashboard`);
-        return response;
-      } else {
-        // User has no role, redirect to onboarding
-        const onboardingUrl = new URL(`/${locale}/onboarding`, req.url);
-        const response = NextResponse.redirect(onboardingUrl);
-        response.headers.set("x-invoke-path", `/${locale}/onboarding`);
-        return response;
-      }
-    } catch (error) {
-      console.error("Middleware error:", error);
-      // On error, redirect to dashboard
+    if (
+      expectedRole &&
+      validRoles.includes(expectedRole) &&
+      pathSegments.length === 3
+    ) {
+      // Redirect /dashboard/{role} to /dashboard
       const dashboardUrl = new URL(`/${locale}/dashboard`, req.url);
       const response = NextResponse.redirect(dashboardUrl);
       response.headers.set("x-invoke-path", `/${locale}/dashboard`);
       return response;
     }
+  }
+
+  // Redirect authenticated users from /login to unified dashboard
+  // Note: Role and store checking is done at the page level for better performance
+  // Middleware only handles basic routing redirects
+  if (isAuthRoute && session) {
+    const dashboardUrl = new URL(`/${locale}/dashboard`, req.url);
+    const response = NextResponse.redirect(dashboardUrl);
+    response.headers.set("x-invoke-path", `/${locale}/dashboard`);
+    return response;
   }
 
   // Ensure the header is set on the final response
@@ -191,7 +123,7 @@ export async function middleware(req: NextRequest) {
       intlResponse.headers.set("x-url", req.url);
     }
   }
-  
+
   // Return the intl middleware response
   return intlResponse;
 }

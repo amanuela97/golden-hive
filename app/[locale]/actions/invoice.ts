@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { orders, orderItems, store, listing, listingVariants } from "@/db/schema";
+import { orders, orderItems, store } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { v2 as cloudinary } from "cloudinary";
@@ -18,7 +18,7 @@ cloudinary.config({
  */
 async function generateInvoiceNumber(storeId: string): Promise<string> {
   const year = new Date().getFullYear();
-  
+
   // Get the highest invoice number for this year
   const existingInvoices = await db
     .select({ invoiceNumber: orders.invoiceNumber })
@@ -80,24 +80,33 @@ async function generateInvoicePdf(
   storeInfo: {
     storeName: string;
   }
-): Promise<string> {
+): Promise<{ secureUrl: string; publicId: string }> {
   try {
     console.log("Creating PDFDocument with pdf-lib...");
     const pdfDoc = await PDFDocument.create();
     const page = pdfDoc.addPage([595, 842]); // A4 size in points
     const { width, height } = page.getSize();
-    
+
     // Load standard fonts (built-in, no external files needed)
     const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const helveticaBoldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    
+    const helveticaBoldFont = await pdfDoc.embedFont(
+      StandardFonts.HelveticaBold
+    );
+
     const margin = 50;
     let yPosition = height - margin;
     const fontSize = 12;
     const lineHeight = 15;
-    
+
     // Helper function to add text
-    const addText = (text: string, x: number, y: number, size: number = fontSize, font = helveticaFont, color = rgb(0, 0, 0)) => {
+    const addText = (
+      text: string,
+      x: number,
+      y: number,
+      size: number = fontSize,
+      font = helveticaFont,
+      color = rgb(0, 0, 0)
+    ) => {
       page.drawText(text, {
         x,
         y,
@@ -106,11 +115,18 @@ async function generateInvoicePdf(
         color,
       });
     };
-    
+
     // Header
-    addText("INVOICE", width / 2 - 30, yPosition, 20, helveticaBoldFont, rgb(0, 0, 0));
+    addText(
+      "INVOICE",
+      width / 2 - 30,
+      yPosition,
+      20,
+      helveticaBoldFont,
+      rgb(0, 0, 0)
+    );
     yPosition -= 30;
-    
+
     // Invoice number and date
     addText(`Invoice Number: ${order.invoiceNumber}`, margin, yPosition);
     yPosition -= lineHeight;
@@ -122,13 +138,13 @@ async function generateInvoicePdf(
       yPosition
     );
     yPosition -= 30;
-    
+
     // Store info (seller)
     addText("From:", margin, yPosition, 14, helveticaBoldFont);
     yPosition -= lineHeight;
     addText(storeInfo.storeName, margin, yPosition);
     yPosition -= 30;
-    
+
     // Customer info (buyer)
     addText("Bill To:", margin, yPosition, 14, helveticaBoldFont);
     yPosition -= lineHeight;
@@ -161,7 +177,7 @@ async function generateInvoicePdf(
       }
     }
     yPosition -= 20;
-    
+
     // Line items table
     const tableTop = yPosition;
     const itemHeight = 20;
@@ -172,111 +188,190 @@ async function generateInvoicePdf(
       price: 80,
       total: 80,
     };
-    
+
     // Table header
     addText("Description", startX, tableTop, 10, helveticaBoldFont);
-    addText("Qty", startX + colWidths.description, tableTop, 10, helveticaBoldFont);
-    addText("Price", startX + colWidths.description + colWidths.quantity, tableTop, 10, helveticaBoldFont);
-    addText("Total", startX + colWidths.description + colWidths.quantity + colWidths.price, tableTop, 10, helveticaBoldFont);
-    
+    addText(
+      "Qty",
+      startX + colWidths.description,
+      tableTop,
+      10,
+      helveticaBoldFont
+    );
+    addText(
+      "Price",
+      startX + colWidths.description + colWidths.quantity,
+      tableTop,
+      10,
+      helveticaBoldFont
+    );
+    addText(
+      "Total",
+      startX + colWidths.description + colWidths.quantity + colWidths.price,
+      tableTop,
+      10,
+      helveticaBoldFont
+    );
+
     // Draw line under header
     page.drawLine({
       start: { x: startX, y: tableTop - 5 },
-      end: { x: startX + colWidths.description + colWidths.quantity + colWidths.price + colWidths.total, y: tableTop - 5 },
+      end: {
+        x:
+          startX +
+          colWidths.description +
+          colWidths.quantity +
+          colWidths.price +
+          colWidths.total,
+        y: tableTop - 5,
+      },
       thickness: 1,
       color: rgb(0, 0, 0),
     });
-    
+
     // Table rows
     let currentY = tableTop - 25;
     for (const item of items) {
       // Truncate title if too long
-      const title = item.title.length > 40 ? item.title.substring(0, 37) + "..." : item.title;
+      const title =
+        item.title.length > 40
+          ? item.title.substring(0, 37) + "..."
+          : item.title;
       addText(title, startX, currentY, 10);
-      addText(item.quantity.toString(), startX + colWidths.description, currentY, 10);
-      addText(`${parseFloat(item.unitPrice).toFixed(2)} ${order.currency}`, startX + colWidths.description + colWidths.quantity, currentY, 10);
-      addText(`${parseFloat(item.lineTotal).toFixed(2)} ${order.currency}`, startX + colWidths.description + colWidths.quantity + colWidths.price, currentY, 10);
+      addText(
+        item.quantity.toString(),
+        startX + colWidths.description,
+        currentY,
+        10
+      );
+      addText(
+        `${parseFloat(item.unitPrice).toFixed(2)} ${order.currency}`,
+        startX + colWidths.description + colWidths.quantity,
+        currentY,
+        10
+      );
+      addText(
+        `${parseFloat(item.lineTotal).toFixed(2)} ${order.currency}`,
+        startX + colWidths.description + colWidths.quantity + colWidths.price,
+        currentY,
+        10
+      );
       currentY -= itemHeight;
     }
-    
+
     // Totals
     currentY -= 10;
     const totalsX = startX + colWidths.description + colWidths.quantity;
     const totalsWidth = colWidths.price + colWidths.total;
-    
+
     addText("Subtotal:", totalsX, currentY, 10);
     const subtotalText = `${parseFloat(order.subtotalAmount).toFixed(2)} ${order.currency}`;
     addText(subtotalText, totalsX + totalsWidth - 80, currentY, 10);
     currentY -= itemHeight;
-    
+
     if (parseFloat(order.discountAmount) > 0) {
       addText("Discount:", totalsX, currentY, 10);
       const discountText = `-${parseFloat(order.discountAmount).toFixed(2)} ${order.currency}`;
       addText(discountText, totalsX + totalsWidth - 80, currentY, 10);
       currentY -= itemHeight;
     }
-    
+
     if (parseFloat(order.shippingAmount) > 0) {
       addText("Shipping:", totalsX, currentY, 10);
       const shippingText = `${parseFloat(order.shippingAmount).toFixed(2)} ${order.currency}`;
       addText(shippingText, totalsX + totalsWidth - 80, currentY, 10);
       currentY -= itemHeight;
     }
-    
+
     if (parseFloat(order.taxAmount) > 0) {
       addText("Tax:", totalsX, currentY, 10);
       const taxText = `${parseFloat(order.taxAmount).toFixed(2)} ${order.currency}`;
       addText(taxText, totalsX + totalsWidth - 80, currentY, 10);
       currentY -= itemHeight;
     }
-    
+
     // Total
     currentY -= 5;
     addText("Total:", totalsX, currentY, 12, helveticaBoldFont);
     const totalText = `${parseFloat(order.totalAmount).toFixed(2)} ${order.currency}`;
-    addText(totalText, totalsX + totalsWidth - 80, currentY, 12, helveticaBoldFont);
-    
+    addText(
+      totalText,
+      totalsX + totalsWidth - 80,
+      currentY,
+      12,
+      helveticaBoldFont
+    );
+
     // Payment terms
     currentY -= 40;
     addText("Payment Terms: Net 30 days", margin, currentY, 10);
-    
+
     // Footer
     const footerText = `Invoice generated on ${new Date().toLocaleString()}`;
     const footerWidth = helveticaFont.widthOfTextAtSize(footerText, 8);
     addText(footerText, (width - footerWidth) / 2, 30, 8);
-    
+
     // Generate PDF bytes
     console.log("Generating PDF bytes...");
     const pdfBytes = await pdfDoc.save();
     console.log(`PDF generated, size: ${pdfBytes.length} bytes`);
-    
+
     if (pdfBytes.length === 0) {
       throw new Error("PDF buffer is empty");
     }
-    
+
     // Convert to base64
     const base64 = Buffer.from(pdfBytes).toString("base64");
     const dataURI = `data:application/pdf;base64,${base64}`;
     console.log(`Data URI created, length: ${dataURI.length}`);
-    
+
     // Upload to Cloudinary
-    console.log("Uploading PDF to Cloudinary...");
-    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
-      throw new Error("Cloudinary configuration is missing");
+    console.log("[Cloudinary] Uploading PDF to Cloudinary...");
+
+    if (
+      !process.env.CLOUDINARY_CLOUD_NAME ||
+      !process.env.CLOUDINARY_API_KEY ||
+      !process.env.CLOUDINARY_API_SECRET
+    ) {
+      const missing = [];
+      if (!process.env.CLOUDINARY_CLOUD_NAME)
+        missing.push("CLOUDINARY_CLOUD_NAME");
+      if (!process.env.CLOUDINARY_API_KEY) missing.push("CLOUDINARY_API_KEY");
+      if (!process.env.CLOUDINARY_API_SECRET)
+        missing.push("CLOUDINARY_API_SECRET");
+      throw new Error(
+        `Cloudinary configuration is missing: ${missing.join(", ")}`
+      );
     }
-    
+
+    console.log(`[Cloudinary] Uploading to folder: golden-hive/invoices`);
+    console.log(`[Cloudinary] Public ID: invoice-${order.invoiceNumber}`);
+
     const result = await cloudinary.uploader.upload(dataURI, {
-      folder: "golden-hive/invoices",
+      folder: `golden-hive/invoices/${order.id}`,
       resource_type: "raw",
       format: "pdf",
       public_id: `invoice-${order.invoiceNumber}`,
+      overwrite: true, // Allow overwriting if invoice number is reused
+      // Keep files private for security - we'll use Admin API to download
     });
-    
-    console.log("PDF uploaded successfully:", result.secure_url);
-    return result.secure_url;
+
+    console.log(
+      "[Cloudinary] ✅ PDF uploaded successfully:",
+      result.secure_url
+    );
+    console.log("[Cloudinary] Public ID:", result.public_id);
+    console.log("[Cloudinary] Resource type:", result.resource_type);
+    return {
+      secureUrl: result.secure_url,
+      publicId: result.public_id,
+    };
   } catch (error) {
     console.error("Error generating PDF:", error);
-    console.error("Error stack:", error instanceof Error ? error.stack : "No stack");
+    console.error(
+      "Error stack:",
+      error instanceof Error ? error.stack : "No stack"
+    );
     throw error;
   }
 }
@@ -284,9 +379,13 @@ async function generateInvoicePdf(
 /**
  * Generate and store invoice for an order
  */
-export async function generateInvoiceForOrder(
-  orderId: string
-): Promise<{ success: boolean; invoiceNumber?: string; invoicePdfUrl?: string; error?: string }> {
+export async function generateInvoiceForOrder(orderId: string): Promise<{
+  success: boolean;
+  invoiceNumber?: string;
+  invoicePdfUrl?: string;
+  invoicePublicId?: string;
+  error?: string;
+}> {
   try {
     // Get order with all necessary data
     const orderData = await db
@@ -371,8 +470,9 @@ export async function generateInvoiceForOrder(
     // Generate PDF and upload to Cloudinary
     console.log("Generating PDF for invoice:", invoiceNumber);
     let invoicePdfUrl: string;
+    let invoicePublicId: string;
     try {
-      invoicePdfUrl = await generateInvoicePdf(
+      const pdfResult = await generateInvoicePdf(
         {
           ...order,
           invoiceNumber,
@@ -380,7 +480,10 @@ export async function generateInvoiceForOrder(
         items,
         storeData[0]
       );
+      invoicePdfUrl = pdfResult.secureUrl;
+      invoicePublicId = pdfResult.publicId;
       console.log("PDF generated and uploaded to Cloudinary:", invoicePdfUrl);
+      console.log("PDF public_id:", invoicePublicId);
     } catch (pdfError) {
       console.error("Error generating PDF:", pdfError);
       throw new Error(
@@ -393,9 +496,10 @@ export async function generateInvoiceForOrder(
       orderId,
       invoiceNumber,
       invoicePdfUrl,
+      invoicePublicId,
       invoiceIssuedAt: invoiceIssuedAt.toISOString(),
     });
-    
+
     try {
       const updateResult = await db
         .update(orders)
@@ -404,28 +508,31 @@ export async function generateInvoiceForOrder(
           invoiceIssuedAt,
           invoiceLockedAt: invoiceIssuedAt, // Lock financials at invoice generation
           invoicePdfUrl,
+          invoicePublicId,
           updatedAt: new Date(),
         })
         .where(eq(orders.id, orderId))
-        .returning({
-          id: orders.id,
-          invoiceNumber: orders.invoiceNumber,
-          invoicePdfUrl: orders.invoicePdfUrl,
-        });
-      
-      console.log("Order update result:", JSON.stringify(updateResult, null, 2));
-      
+        .returning();
+
+      console.log(
+        "Order update result:",
+        JSON.stringify(updateResult, null, 2)
+      );
+
       if (updateResult.length === 0) {
         throw new Error("Order update failed - no rows affected");
       }
-      
+
       if (!updateResult[0].invoiceNumber || !updateResult[0].invoicePdfUrl) {
-        throw new Error(`Order update incomplete - invoiceNumber: ${updateResult[0].invoiceNumber}, invoicePdfUrl: ${updateResult[0].invoicePdfUrl}`);
+        throw new Error(
+          `Order update incomplete - invoiceNumber: ${updateResult[0].invoiceNumber}, invoicePdfUrl: ${updateResult[0].invoicePdfUrl}`
+        );
       }
-      
+
       console.log("Order updated with invoice data successfully:", {
         invoiceNumber: updateResult[0].invoiceNumber,
         invoicePdfUrl: updateResult[0].invoicePdfUrl,
+        invoicePublicId: updateResult[0].invoicePublicId,
       });
     } catch (dbError) {
       console.error("Database update error:", dbError);
@@ -440,14 +547,18 @@ export async function generateInvoiceForOrder(
       success: true,
       invoiceNumber,
       invoicePdfUrl,
+      invoicePublicId,
     };
   } catch (error) {
     console.error("Error generating invoice:", error);
-    console.error("Error stack:", error instanceof Error ? error.stack : "No stack trace");
+    console.error(
+      "Error stack:",
+      error instanceof Error ? error.stack : "No stack trace"
+    );
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to generate invoice",
+      error:
+        error instanceof Error ? error.message : "Failed to generate invoice",
     };
   }
 }
-

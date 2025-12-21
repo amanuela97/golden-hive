@@ -37,6 +37,7 @@ interface DraftOrderActionsProps {
   onSave?: () => void;
   onCancel?: () => void;
   formLoading?: boolean;
+  actionLoading?: boolean; // For send invoice/mark as paid actions
 }
 
 export default function DraftOrderActions({
@@ -48,6 +49,7 @@ export default function DraftOrderActions({
   onSave,
   onCancel,
   formLoading = false,
+  actionLoading = false,
 }: DraftOrderActionsProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -108,13 +110,13 @@ export default function DraftOrderActions({
               <Button
                 variant="outline"
                 onClick={onCancel}
-                disabled={loading || formLoading}
+                disabled={loading || formLoading || actionLoading}
               >
                 Cancel
               </Button>
               <Button
                 onClick={onSave}
-                disabled={loading || formLoading}
+                disabled={loading || formLoading || actionLoading}
               >
                 {formLoading ? "Saving..." : "Save"}
               </Button>

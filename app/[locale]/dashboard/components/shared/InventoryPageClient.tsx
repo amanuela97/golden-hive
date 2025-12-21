@@ -71,7 +71,8 @@ export default function InventoryPageClient({
     staleTime: 5000, // Consider data stale after 5 seconds
     refetchInterval: (query) => {
       // Only poll if page is visible and user is on inventory page
-      if (document.hidden) return false;
+      // Check if we're in a browser environment
+      if (typeof document !== "undefined" && document.hidden) return false;
       return 10000; // Poll every 10 seconds instead of 3
     },
   });

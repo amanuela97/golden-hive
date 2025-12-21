@@ -2,8 +2,8 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { redirect } from "@/i18n/navigation";
 import { db } from "@/db";
-import { userRoles, roles } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { userRoles, roles, orderEvents } from "@/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
 import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
 import { getDraftOrder } from "@/app/[locale]/actions/draft-orders";
@@ -66,19 +66,62 @@ export default async function DraftOrderPage({ params }: DraftOrderPageProps) {
 
   const draftData = draftResult.data;
 
+  // Get order events if draft was converted to an order
+  let eventsList: Array<{
+    id: string;
+    type: string;
+    visibility: string;
+    message: string;
+    metadata: Record<string, unknown> | null;
+    createdBy: string | null;
+    createdAt: Date;
+  }> = [];
+
+  if (draftData.completed && draftData.convertedToOrderId) {
+    try {
+      const events = await db
+        .select({
+          id: orderEvents.id,
+          type: orderEvents.type,
+          visibility: orderEvents.visibility,
+          message: orderEvents.message,
+          metadata: orderEvents.metadata,
+          createdBy: orderEvents.createdBy,
+          createdAt: orderEvents.createdAt,
+        })
+        .from(orderEvents)
+        .where(eq(orderEvents.orderId, draftData.convertedToOrderId))
+        .orderBy(desc(orderEvents.createdAt));
+
+      eventsList = events.map((event) => ({
+        id: event.id,
+        type: event.type,
+        visibility: event.visibility,
+        message: event.message,
+        metadata: event.metadata as Record<string, unknown> | null,
+        createdBy: event.createdBy,
+        createdAt: event.createdAt,
+      }));
+    } catch (error) {
+      console.error("Error fetching order events:", error);
+      // Keep eventsList as empty array on error
+    }
+  }
+
   // Transform draft order data to CreateOrderForm initialData format
   const initialData = {
     customerId: draftData.customerId,
     customerEmail: draftData.customerEmail || "",
     customerFirstName: draftData.customerFirstName,
     customerLastName: draftData.customerLastName,
-    customerPhone: draftData.customerPhone,
+    customerPhone: draftData.billingPhone || draftData.shippingPhone,
     lineItems: draftData.items.map((item) => {
       // Parse title to extract listing name and variant title
       const titleParts = item.title.split(" - ");
       const listingName = titleParts[0] || item.title;
-      const variantTitle = titleParts.length > 1 ? titleParts.slice(1).join(" - ") : item.title;
-      
+      const variantTitle =
+        titleParts.length > 1 ? titleParts.slice(1).join(" - ") : item.title;
+
       return {
         id: item.id,
         listingId: item.listingId || "",
@@ -89,8 +132,8 @@ export default async function DraftOrderPage({ params }: DraftOrderPageProps) {
         sku: item.sku,
         listingName,
         variantTitle,
-        imageUrl: item.imageUrl,
-        variantImageUrl: item.imageUrl,
+        imageUrl: item.listingImageUrl || null,
+        variantImageUrl: item.variantImageUrl || null,
         currency: draftData.currency,
         originalCurrency: draftData.currency,
         originalUnitPrice: item.unitPrice,
@@ -126,8 +169,17 @@ export default async function DraftOrderPage({ params }: DraftOrderPageProps) {
         customerEmail={draftData.customerEmail}
         userRole={roleName}
         initialData={initialData}
+        isCompleted={draftData.completed}
+        completedAt={draftData.completedAt}
+        convertedToOrderId={draftData.convertedToOrderId}
+        subtotalAmount={draftData.subtotalAmount}
+        discountAmount={draftData.discountAmount}
+        shippingAmount={draftData.shippingAmount}
+        taxAmount={draftData.taxAmount}
+        totalAmount={draftData.totalAmount}
+        currency={draftData.currency}
+        orderEvents={eventsList}
       />
     </DashboardWrapper>
   );
 }
-

@@ -1,338 +1,226 @@
-Great question — **“Send invoice” looks simple but it touches a lot of core systems**.
-I’ll give you a **Shopify-grade, step-by-step flow** you can directly implement.
+This is a **core commerce action**, and getting it right will save you from inventory, accounting, and support nightmares.
 
-I’ll assume:
-
-- Order already exists
-- This is a **payment request invoice** (not just a PDF receipt)
-- Could be unpaid or partially paid
-
-If any assumption is wrong, tell me and I’ll adapt.
+I’ll give you a **Shopify-accurate, step-by-step flow** that fits **your draft → paid order model**.
 
 ---
 
-## High-level intent of **Send Invoice**
+# What **Refund** means (definition)
 
-> “Ask the customer to pay this order under these terms.”
+> **Refund = returning money to the customer**
+> It does **not** automatically mean:
 
-This is **not**:
+- canceling the order
+- returning items
+- restocking inventory
 
-- capturing payment
-- fulfilling
-- archiving
-
-It’s a **payment request + legal document**.
-
----
-
-# ✅ Canonical Steps (in correct order)
+Those are **separate but optional** actions.
 
 ---
 
-## 1️⃣ Validate order state (gatekeeping)
+# Preconditions (very important)
 
-Before doing anything:
+Refund can be clicked **only if**:
 
-### Must be true
+- `paymentStatus = paid` or `partially_refunded`
+- Order is **not draft**
+- Refund amount ≤ paid amount − refunded amount
 
-- Order exists
-- Order is **not canceled**
-- Order is **not fully paid**
-- Order has **customer email**
-- Order has at least one line item
-
-### If any fail
-
-→ Show clear error and stop.
+If not → block the action.
 
 ---
 
-## 2️⃣ Lock financial snapshot (CRITICAL)
-
-At invoice send time, you must **freeze money-related data**. (based on user choice)
-
-What YOU should implement
-✅ Make it optional, but:
-
-Default it to ON
-
-Make OFF an explicit merchant choice
-
-This prevents accidental accounting mistakes.
-
-Suggested UI copy (clear + safe)
-
-Lock prices (recommended)
-Prevent product prices, discounts, taxes, and shipping from changing after this invoice is sent.
-
-Small tooltip:
-
-Required for accounting and tax compliance.
-
-Implementation details (important)
-When lock = ON
-
-Set:
-
-order.financialsLockedAt = now()
-order.financialsLockedReason = "invoice_sent"
-
-Enforce:
-
-Block edits to:
-
-line items
-
-prices
-
-discounts
-
-shipping
-
-tax
-
-Allow only:
-
-refunds
-
-cancellation
-
-fulfillment
-
-When lock = OFF
-
-Allow edits
-
-Resending invoice:
-
-same invoice number OR
-
-new invoice number (depending on your accounting rules)
-
-Accounting-safe rule (this saves you later)
-
-The first time money can be paid, prices must be lockable.
-
-If payment link is live:
-
-You should strongly encourage lock = ON
-
-Or auto-lock once payment starts
+# Step-by-step: What should happen when **Refund** is clicked
 
 ---
 
-## 3️⃣ Generate invoice number (NOT order number)
+## 1️⃣ Open refund modal (merchant decision)
 
-Shopify-style separation:
+The modal should let the merchant choose:
 
-- `orderNumber` → internal / UI
-- `invoiceNumber` → legal / accounting
+### a) Refund type
 
-Example:
+- Full refund
+- Partial refund (by amount or by line item)
 
-```text
-INV-2025-000431
-```
+### b) Restock inventory? (checkbox)
 
-### Rules
+- ⬜ Restock items
+- Default:
+  - **ON** if unfulfilled
+  - **OFF** if fulfilled
 
-- Sequential
-- Unique
-- Never reused
-- Never changed
+### c) Reason (optional but recommended)
 
-Store it on:
-
-```ts
-order.invoiceNumber;
-order.invoiceIssuedAt;
-```
+- Customer request
+- Damaged
+- Returned
+- Fraud
+- Other
 
 ---
 
-## 4️⃣ Generate invoice document (PDF / HTML)
+## 2️⃣ Validate refund request
 
-This is the **official invoice**.
+Before processing:
 
-Must include:
-
-- Seller legal info
-- Buyer snapshot info
-- Invoice number
-- Invoice date
-- Order number (reference)
-- Line items
-- Taxes (clearly broken down)
-- Total
-- Currency
-- Payment terms
-
-### Store it
-
-- Generate PDF
-- Store in cloudinary invoices/id/
-- refrence it in db invoice_pdf_url
-- Never regenerate silently
+- Ensure refund amount is valid
+- Ensure items exist
+- Ensure quantities don’t exceed sold quantities
 
 ---
 
-## 5️⃣ Create payment session / link
+## 3️⃣ Process payment refund
 
-This is what the customer actually uses to pay.
+### If payment was via stripe gateway
 
-### Generate:
+- const refund = await stripe.refunds.create(
+  {
+  payment_intent: paymentIntentId,
+  amount, // omit for full refund
+  refund_application_fee: false,
+  reverse_transfer: true, // pulls money back from seller
+  },
+  {
+  stripeAccount: sellerStripeAccountId,
+  }
+  );
 
-- Secure, expiring payment link
-- Tied to:
-  - orderId
-  - invoiceNumber
-  - amount
-  - currency
+### If payment was manual
 
-### Rules
-
-- Single source of truth
-- Idempotent (resending invoice reuses link)
-- Optional expiration (e.g. 7–30 days)
+- Mark refund as manual
+- No external API call
 
 Store:
 
 ```ts
-order.paymentLink;
-order.paymentLinkExpiresAt;
+refunds {
+  id
+  orderId
+  amount
+  currency
+  paymentMethod
+  reason
+  createdAt
+}
 ```
 
 ---
 
-## 6️⃣ Send invoice email (atomic step)
+## 4️⃣ Update payment status
 
-Email should include:
+### Logic:
 
-- Invoice PDF (downloadable link)
-- Total amount
-- Due date
-- Pay Now button (payment link)
-- Invoice number (NOT order number)
+```ts
+if (totalRefunded === totalPaid) {
+  paymentStatus = "refunded";
+} else {
+  paymentStatus = "partially_refunded";
+}
+```
 
-### Important
+Also update:
 
-Sending email should be:
-
-- transactional
-- logged
-- retry-safe
-
-Log event:
-
-```txt
-Invoice INV-2025-000431 sent to customer@example.com
+```ts
+order.refundedAmount += refund.amount;
 ```
 
 ---
 
-## 7️⃣ Update order state
+## 5️⃣ Inventory adjustment (ONLY if chosen)
 
-After successful send:
+### If “Restock items” is checked:
 
-### Order
+- Increase inventory for selected items
+- Create inventory adjustment record
 
-```txt
-paymentStatus → pending
-invoiceStatus → sent
-invoiceSentAt → now()
-```
+### If not checked:
 
-### Do NOT:
+- Inventory unchanged
 
-- mark as paid
-- reserve inventory again
-- fulfill anything
+🚨 **Refund alone never changes inventory**
 
 ---
 
-## 8️⃣ Timeline / audit log entry
+## 6️⃣ Order status update (optional, conditional)
 
-This matters more than you think.
+- If fully refunded AND not fulfilled:
+  - You _may_ auto-cancel the order
+
+- If fulfilled:
+  - Keep order open or completed
+  - Cancellation is optional
+
+Shopify does **not force cancellation** on refund.
+
+---
+
+## 7️⃣ Generate refund document (important)
+
+Generate:
+
+- **Refund receipt** or **credit note**
+- Includes:
+  - Refund amount
+  - Refunded items
+  - Original order reference
+  - Date
+
+PDF optional but recommended (EU).
+
+---
+
+## 8️⃣ Send refund confirmation email
+
+Email includes:
+
+- Refunded amount
+- Items refunded
+- When customer will receive money
+- Refund receipt (PDF or link)
+
+---
+
+## 9️⃣ Timeline / audit log
 
 Log:
 
-```txt
-Invoice INV-2025-000431 was sent to customer@example.com
+```text
+Refund of €25.00 processed (manual). Inventory restocked.
 ```
 
-This protects you legally and operationally.
+This is crucial for support & accounting.
 
 ---
 
-# 🔁 What happens AFTER invoice is sent
+# Summary table (copy-safe logic)
 
-### When customer pays:
-
-1. Payment webhook received
-2. Verify invoice + amount
-3. Mark:
-   - `paymentStatus = paid`
-   - `paidAt`
-
-4. Send receipt (NOT invoice)
-5. Inventory stays reserved (already done at order creation)
+| Step                 | Happens on refund |
+| -------------------- | ----------------- |
+| Money returned       | ✅                |
+| Order deleted        | ❌                |
+| Order canceled       | ❌ (optional)     |
+| Inventory restocked  | ⬜ optional       |
+| Refund doc generated | ✅                |
+| Email sent           | ✅                |
 
 ---
 
-### If invoice expires:
+# What refund should NOT do
 
-- Order remains unpaid
-- Invoice can be resent (same number)
-- Optional: generate new payment link
+❌ Do NOT:
 
----
-
-### If order changes after invoice
-
-🚫 Do NOT edit the invoice
-Instead:
-
-- Cancel invoice
-- Issue credit note
-- Generate a new invoice
+- edit original invoice
+- regenerate invoice
+- unlock prices
+- auto-restock fulfilled items
+- auto-delete order
 
 ---
 
-# ❌ What Send Invoice should NOT do
+# How this fits your draft → paid model
 
-- ❌ Capture payment
-- ❌ Fulfill items
-- ❌ Change inventory
-- ❌ Change totals
-- ❌ Generate new order
+- Draft orders ❌ cannot be refunded
+- Only **paid orders** can be refunded
+- Refund is a **post-payment financial event**
 
 ---
-
-# 🧠 Shopify mental model (important)
-
-| Concept | Immutable?   |
-| ------- | ------------ |
-| Order   | Mostly       |
-| Invoice | Yes          |
-| Payment | Event-based  |
-| Receipt | Regenerated  |
-| Refund  | Separate doc |
-
----
-
-# 📌 Minimal checklist (implementation-ready)
-
-1. Validate order
-2. Lock financials
-3. Generate invoice number
-4. Generate invoice PDF
-5. Create payment link
-6. Send email
-7. Update order state
-8. Write timeline entry
-
----
-
-## Final one-liner
-
-**“Send invoice” = freeze money, create a legal document, request payment, and log everything — nothing else.**

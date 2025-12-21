@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { userRoles, roles, store, storeMembers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
-import { getCustomer, getVendorsForFilter } from "@/app/[locale]/actions/customers";
+import { getCustomer, getStoresForFilter } from "@/app/[locale]/actions/customers";
 import { DashboardWrapper } from "@/app/[locale]/dashboard/components/shared/DashboardWrapper";
 import { CustomerForm } from "@/app/[locale]/dashboard/components/shared/CustomerForm";
 import { notFound } from "next/navigation";
@@ -17,9 +17,14 @@ interface EditCustomerPageProps {
 export default async function EditCustomerPage({
   params,
 }: EditCustomerPageProps) {
-  const locale = await getLocale();
+  // Parallelize independent operations
+  const [locale, headersList] = await Promise.all([
+    getLocale(),
+    headers(),
+  ]);
+
   const session = await auth.api.getSession({
-    headers: await headers(),
+    headers: headersList,
   });
 
   if (!session) {
@@ -66,9 +71,12 @@ export default async function EditCustomerPage({
   }
 
   const { id } = await params;
-  const customerResult = await getCustomer(id);
-  const vendorsResult = await getVendorsForFilter();
-  const isAdmin = vendorsResult.success;
+  // Parallelize independent data fetching
+  const [customerResult, storesResult] = await Promise.all([
+    getCustomer(id),
+    getStoresForFilter(),
+  ]);
+  const isAdmin = storesResult.success;
 
   if (!customerResult.success || !customerResult.data) {
     notFound();
