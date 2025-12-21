@@ -19,6 +19,8 @@ import {
   shippingBillingInfo,
   orderEvents,
   orderPayments,
+  orderRefunds,
+  orderRefundItems,
   type Order,
   type OrderItem,
   type OrderEvent,
@@ -57,13 +59,10 @@ export type OrderRow = {
     | "refunded"
     | "failed"
     | "void";
-  fulfillmentStatus:
-    | "unfulfilled"
-    | "partial"
-    | "fulfilled"
-    | "canceled"
-    | "on_hold";
-  status: "open" | "draft" | "archived" | "canceled";
+  fulfillmentStatus: "unfulfilled" | "partial" | "fulfilled" | "canceled";
+  workflowStatus?: "normal" | "in_progress" | "on_hold";
+  holdReason?: string | null;
+  status: "open" | "draft" | "archived" | "canceled" | "completed";
   placedAt: Date | null;
   createdAt: Date;
   itemsCount: number;
@@ -115,12 +114,7 @@ export type CreateOrderInput = {
     | "refunded"
     | "failed"
     | "void";
-  fulfillmentStatus?:
-    | "unfulfilled"
-    | "partial"
-    | "fulfilled"
-    | "canceled"
-    | "on_hold";
+  fulfillmentStatus?: "unfulfilled" | "partial" | "fulfilled" | "canceled";
   status?: "open" | "draft" | "archived" | "canceled";
   shippingName?: string | null;
   shippingPhone?: string | null;
@@ -447,11 +441,10 @@ function canTransitionPaymentStatus(from: string, to: string): boolean {
  */
 function canTransitionFulfillmentStatus(from: string, to: string): boolean {
   const allowedTransitions: Record<string, string[]> = {
-    unfulfilled: ["partial", "fulfilled", "canceled", "on_hold"],
-    partial: ["fulfilled", "canceled", "on_hold"],
+    unfulfilled: ["partial", "fulfilled", "canceled"],
+    partial: ["fulfilled", "canceled"],
     fulfilled: ["canceled"], // Can cancel even after fulfillment
     canceled: [], // Terminal state
-    on_hold: ["unfulfilled", "partial", "fulfilled", "canceled"],
   };
 
   return allowedTransitions[from]?.includes(to) ?? false;
@@ -509,7 +502,7 @@ async function canChangeStatus(
   return { allowed: false, error: "Unknown status type" };
 }
 
-async function getStoreIdForUser(): Promise<{
+export async function getStoreIdForUser(): Promise<{
   storeId: string | null;
   isAdmin: boolean;
   error?: string;
@@ -561,7 +554,7 @@ async function getStoreIdForUser(): Promise<{
 /**
  * Find default inventory location for a store
  */
-async function getDefaultInventoryLocation(
+export async function getDefaultInventoryLocation(
   storeId: string
 ): Promise<string | null> {
   const location = await db
@@ -846,7 +839,8 @@ export async function adjustInventoryForOrder(
             })
             .where(eq(inventoryLevels.id, level.id));
         } else if (direction === "fulfill") {
-          // committed -= qty, shipped += qty (no change to available)
+          // Per inst.md: committed -= qty, onHand -= qty, available NO CHANGE
+          // Items are no longer "reserved", they are now consumed/shipped
           // Insert ledger entry FIRST
           await tx.insert(inventoryAdjustments).values({
             inventoryItemId: invItemId,
@@ -864,8 +858,8 @@ export async function adjustInventoryForOrder(
             .update(inventoryLevels)
             .set({
               committed: sql`${inventoryLevels.committed} - ${quantity}`,
-              shipped: sql`${inventoryLevels.shipped} + ${quantity}`,
-              onHand: sql`${inventoryLevels.available} + ${inventoryLevels.committed} - ${quantity}`, // Calculate on_hand
+              onHand: sql`${inventoryLevels.onHand} - ${quantity}`, // Physical stock leaves warehouse
+              // available stays the same (was already reduced when order was created)
               updatedAt: new Date(),
             })
             .where(eq(inventoryLevels.id, level.id));
@@ -989,7 +983,6 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
             | "partial"
             | "fulfilled"
             | "canceled"
-            | "on_hold"
         )
       );
     }
@@ -1090,6 +1083,8 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
         currency: orders.currency,
         paymentStatus: orders.paymentStatus,
         fulfillmentStatus: orders.fulfillmentStatus,
+        workflowStatus: orders.workflowStatus,
+        holdReason: orders.holdReason,
         status: orders.status,
         placedAt: orders.placedAt,
         createdAt: orders.createdAt,
@@ -1120,6 +1115,8 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
         orders.currency,
         orders.paymentStatus,
         orders.fulfillmentStatus,
+        orders.workflowStatus,
+        orders.holdReason,
         orders.status,
         orders.placedAt,
         orders.createdAt,
@@ -1635,12 +1632,44 @@ export async function updatePaymentStatus(
           }
         }
 
+        // Get fulfillment status to determine if order should be completed
+        const orderFulfillment = await tx
+          .select({ fulfillmentStatus: orders.fulfillmentStatus })
+          .from(orders)
+          .where(eq(orders.id, orderId))
+          .limit(1);
+
+        const fulfillmentStatus = orderFulfillment[0]?.fulfillmentStatus;
+        const isFulfilled =
+          fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
+
+        // Determine order status:
+        // - If paid and fulfilled → "completed"
+        // - Otherwise keep current status
+        const currentOrderData = await tx
+          .select({ status: orders.status })
+          .from(orders)
+          .where(eq(orders.id, orderId))
+          .limit(1);
+
+        const currentStatus =
+          currentOrderData.length > 0 ? currentOrderData[0].status : "open";
+        let newOrderStatus = currentStatus;
+
+        if (isFulfilled && newStatus === "paid") {
+          newOrderStatus = "completed";
+          console.log(
+            `[Payment] Order ${orderId} is paid and fulfilled, setting status to completed`
+          );
+        }
+
         // Update order
         await tx
           .update(orders)
           .set({
             paymentStatus: newStatus,
             paidAt: new Date(),
+            status: newOrderStatus,
             updatedAt: new Date(),
           })
           .where(eq(orders.id, orderId));
@@ -1722,7 +1751,7 @@ export async function updatePaymentStatus(
  */
 export async function updateFulfillmentStatus(
   orderId: string,
-  newStatus: "unfulfilled" | "partial" | "fulfilled" | "canceled" | "on_hold"
+  newStatus: "unfulfilled" | "partial" | "fulfilled" | "canceled"
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Check permissions
@@ -1915,17 +1944,8 @@ export async function updateFulfillmentStatus(
             updatedAt: new Date(),
           })
           .where(eq(orders.id, orderId));
-      } else if (newStatus === "on_hold") {
-        // any → on_hold: No inventory change, just flag
-        await tx
-          .update(orders)
-          .set({
-            fulfillmentStatus: newStatus,
-            updatedAt: new Date(),
-          })
-          .where(eq(orders.id, orderId));
       } else {
-        // Other transitions (on_hold → others)
+        // Other transitions
         await tx
           .update(orders)
           .set({
@@ -2340,12 +2360,14 @@ type OrderWithItems = Order & {
       | "title"
       | "sku"
       | "quantity"
+      | "fulfilledQuantity"
       | "unitPrice"
       | "lineSubtotal"
       | "lineTotal"
       | "currency"
     > & {
       imageUrl: string | null;
+      refundableQuantity: number; // Remaining quantity that can be refunded
     }
   >;
   events: Array<
@@ -2360,6 +2382,7 @@ type OrderWithItems = Order & {
       | "createdAt"
     >
   >;
+  paymentProvider: string | null; // 'stripe' | 'manual' | null
 };
 
 export async function getOrderWithItems(orderId: string): Promise<{
@@ -2421,6 +2444,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
         title: orderItems.title,
         sku: orderItems.sku,
         quantity: orderItems.quantity,
+        fulfilledQuantity: orderItems.fulfilledQuantity,
         unitPrice: orderItems.unitPrice,
         lineSubtotal: orderItems.lineSubtotal,
         lineTotal: orderItems.lineTotal,
@@ -2448,21 +2472,70 @@ export async function getOrderWithItems(orderId: string): Promise<{
       .where(eq(orderEvents.orderId, orderId))
       .orderBy(desc(orderEvents.createdAt));
 
+    // Get all succeeded refund records for this order to calculate remaining refundable quantities
+    const refundItems = await db
+      .select({
+        orderItemId: orderRefundItems.orderItemId,
+        quantity: orderRefundItems.quantity,
+      })
+      .from(orderRefundItems)
+      .innerJoin(orderRefunds, eq(orderRefundItems.refundId, orderRefunds.id))
+      .where(
+        and(
+          eq(orderRefunds.orderId, orderId),
+          eq(orderRefunds.status, "succeeded")
+        )
+      );
+
+    // Calculate refunded quantities per item
+    const refundedQuantities = new Map<string, number>();
+    for (const refundItem of refundItems) {
+      const current = refundedQuantities.get(refundItem.orderItemId) || 0;
+      refundedQuantities.set(
+        refundItem.orderItemId,
+        current + refundItem.quantity
+      );
+    }
+
+    // Get payment provider from the first completed payment
+    const paymentData = await db
+      .select({
+        provider: orderPayments.provider,
+      })
+      .from(orderPayments)
+      .where(
+        and(
+          eq(orderPayments.orderId, orderId),
+          eq(orderPayments.status, "completed")
+        )
+      )
+      .orderBy(asc(orderPayments.createdAt))
+      .limit(1);
+
+    const paymentProvider =
+      paymentData.length > 0 ? paymentData[0].provider : null;
+
     return {
       success: true,
       data: {
         ...order,
-        items: items.map((item) => ({
-          id: item.id,
-          title: item.title,
-          sku: item.sku,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          lineSubtotal: item.lineSubtotal,
-          lineTotal: item.lineTotal,
-          currency: item.currency,
-          imageUrl: item.variantImageUrl || item.listingImageUrl || null,
-        })),
+        items: items.map((item) => {
+          const refundedQty = refundedQuantities.get(item.id) || 0;
+          const refundableQty = Math.max(0, item.quantity - refundedQty);
+          return {
+            id: item.id,
+            title: item.title,
+            sku: item.sku,
+            quantity: item.quantity,
+            fulfilledQuantity: item.fulfilledQuantity || 0,
+            unitPrice: item.unitPrice,
+            lineSubtotal: item.lineSubtotal,
+            lineTotal: item.lineTotal,
+            currency: item.currency,
+            imageUrl: item.variantImageUrl || item.listingImageUrl || null,
+            refundableQuantity: refundableQty,
+          };
+        }),
         events: events.map((event) => ({
           id: event.id,
           type: event.type,
@@ -2472,6 +2545,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
           createdBy: event.createdBy,
           createdAt: event.createdAt,
         })),
+        paymentProvider,
       },
     };
   } catch (error) {
@@ -4065,7 +4139,138 @@ export async function getCustomerShippingBillingInfo(
 }
 
 /**
- * Process refund for an order (all 9 steps from inst.md)
+ * Recalculate order payment status from payments and refunds (derived values)
+ * This ensures orders.refundedAmount and orders.paymentStatus are always accurate
+ */
+export async function recalculateOrderPaymentStatus(
+  orderId: string,
+  tx?: Parameters<Parameters<typeof db.transaction>[0]>[0]
+): Promise<void> {
+  const dbInstance = tx || db;
+
+  // Get all payments for this order (completed, partially_refunded, or refunded)
+  // We need to include partially_refunded and refunded payments because they were originally completed
+  const payments = await dbInstance
+    .select({
+      amount: orderPayments.amount,
+      refundedAmount: orderPayments.refundedAmount,
+    })
+    .from(orderPayments)
+    .where(
+      and(
+        eq(orderPayments.orderId, orderId),
+        or(
+          eq(orderPayments.status, "completed"),
+          eq(orderPayments.status, "partially_refunded"),
+          eq(orderPayments.status, "refunded")
+        )
+      )
+    );
+
+  // Calculate totals
+  const totalPaid = payments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
+  const totalRefunded = payments.reduce(
+    (sum, p) => sum + parseFloat(p.refundedAmount || "0"),
+    0
+  );
+
+  console.log(`[Refund] Recalculating payment status:`, {
+    orderId,
+    totalPaid,
+    totalRefunded,
+    payments: payments.map((p) => ({
+      amount: p.amount,
+      refundedAmount: p.refundedAmount,
+    })),
+  });
+
+  // Determine payment status
+  let paymentStatus: "paid" | "partially_refunded" | "refunded";
+  if (totalRefunded >= totalPaid - 0.01) {
+    // Allow small floating point differences
+    paymentStatus = "refunded";
+  } else if (totalRefunded > 0) {
+    paymentStatus = "partially_refunded";
+  } else {
+    paymentStatus = "paid";
+  }
+
+  console.log(`[Refund] Calculated payment status:`, {
+    orderId,
+    paymentStatus,
+    totalPaid,
+    totalRefunded,
+  });
+
+  // Update order (only if we have a transaction context)
+  if (tx) {
+    // Get order fulfillment status to determine if we should cancel
+    const orderData = await tx
+      .select({
+        fulfillmentStatus: orders.fulfillmentStatus,
+        status: orders.status,
+      })
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1);
+
+    if (orderData.length > 0) {
+      const fulfillmentStatus = orderData[0].fulfillmentStatus;
+      const currentStatus = orderData[0].status;
+
+      // Determine order status based on refund and fulfillment rules:
+      // - Unfulfilled + Fully Refunded → canceled
+      // - Unfulfilled + Partially Refunded → open (keep as is)
+      // - Fulfilled orders: Keep status as "open" (or current status), NEVER change to canceled
+      //   (Fulfillment is historical fact - refunding doesn't un-fulfill)
+      let newOrderStatus = currentStatus;
+
+      const isFulfilled =
+        fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
+
+      if (isFulfilled) {
+        // Fulfilled orders: Set to "completed" (per inst.md)
+        // Refunding a fulfilled order doesn't un-fulfill it
+        // Per inst.md: fulfilled + refunded = completed (not canceled, not open)
+        newOrderStatus = "completed";
+        console.log(
+          `[Refund] Order ${orderId} is fulfilled (${fulfillmentStatus}), setting status to completed (refund does not un-fulfill)`
+        );
+      } else if (
+        (fulfillmentStatus === "unfulfilled" || fulfillmentStatus === null) &&
+        paymentStatus === "refunded"
+      ) {
+        // Unfulfilled + fully refunded = canceled
+        newOrderStatus = "canceled";
+        console.log(
+          `[Refund] Order ${orderId} is unfulfilled and fully refunded, setting status to canceled`
+        );
+      } else if (
+        (fulfillmentStatus === "unfulfilled" || fulfillmentStatus === null) &&
+        paymentStatus === "partially_refunded"
+      ) {
+        // Unfulfilled + partially refunded = open (keep as is)
+        newOrderStatus = "open";
+        console.log(
+          `[Refund] Order ${orderId} is unfulfilled and partially refunded, keeping status as open`
+        );
+      }
+
+      await tx
+        .update(orders)
+        .set({
+          refundedAmount: totalRefunded.toString(),
+          paymentStatus,
+          status: newOrderStatus,
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, orderId));
+    }
+  }
+}
+
+/**
+ * Process refund for an order (improved architecture per inst.md)
  */
 export async function processRefund(input: {
   orderId: string;
@@ -4073,6 +4278,7 @@ export async function processRefund(input: {
   amount?: string; // Required for partial refunds
   restockItems: boolean;
   reason?: string;
+  refundedItems?: Array<{ orderItemId: string; quantity: number }>; // Item-level refund quantities
 }): Promise<{ success: boolean; error?: string }> {
   try {
     const session = await auth.api.getSession({
@@ -4127,20 +4333,19 @@ export async function processRefund(input: {
       return { success: false, error: "Draft orders cannot be refunded" };
     }
 
+    // Note: Fulfilled orders CAN be refunded
+    // Refunding does NOT un-fulfill the order (fulfillment is historical fact)
+    // The fulfillment status will remain unchanged
+
     const totalPaid = parseFloat(order.totalAmount);
     const alreadyRefunded = parseFloat(order.refundedAmount || "0");
     const maxRefundable = totalPaid - alreadyRefunded;
 
+    // Always use the provided amount if available (from selected items)
+    // Only use maxRefundable if no amount is provided and it's a full refund
     let refundAmount: number;
-    if (input.refundType === "full") {
-      refundAmount = maxRefundable;
-    } else {
-      if (!input.amount) {
-        return {
-          success: false,
-          error: "Refund amount is required for partial refunds",
-        };
-      }
+    if (input.amount) {
+      // Use the calculated amount from selected items
       refundAmount = parseFloat(input.amount);
       if (isNaN(refundAmount) || refundAmount <= 0) {
         return { success: false, error: "Invalid refund amount" };
@@ -4151,6 +4356,14 @@ export async function processRefund(input: {
           error: `Refund amount cannot exceed ${maxRefundable.toFixed(2)} ${order.currency}`,
         };
       }
+    } else if (input.refundType === "full") {
+      // Only use maxRefundable if no amount provided and it's explicitly a full refund
+      refundAmount = maxRefundable;
+    } else {
+      return {
+        success: false,
+        error: "Refund amount is required for partial refunds",
+      };
     }
 
     // Get order items for inventory adjustment
@@ -4169,7 +4382,8 @@ export async function processRefund(input: {
       return { success: false, error: "Order has no items" };
     }
 
-    // Get payment information for Stripe refunds
+    // Get payment information - include completed, partially_refunded, and refunded payments
+    // (refunded payments are included to check if they still have refundable amount)
     const paymentData = await db
       .select({
         id: orderPayments.id,
@@ -4178,6 +4392,7 @@ export async function processRefund(input: {
         provider: orderPayments.provider,
         providerPaymentId: orderPayments.providerPaymentId,
         amount: orderPayments.amount,
+        refundedAmount: orderPayments.refundedAmount,
         status: orderPayments.status,
         platformFeeAmount: orderPayments.platformFeeAmount,
         netAmountToStore: orderPayments.netAmountToStore,
@@ -4186,9 +4401,42 @@ export async function processRefund(input: {
       .where(
         and(
           eq(orderPayments.orderId, input.orderId),
-          eq(orderPayments.type, "payment")
+          or(
+            eq(orderPayments.status, "completed"),
+            eq(orderPayments.status, "partially_refunded"),
+            eq(orderPayments.status, "refunded")
+          )
         )
       );
+
+    // Calculate refundable payments (amount - refundedAmount)
+    const refundablePayments = paymentData
+      .map((p) => ({
+        ...p,
+        refundable: parseFloat(p.amount) - parseFloat(p.refundedAmount || "0"),
+      }))
+      .filter((p) => p.refundable > 0);
+
+    if (refundablePayments.length === 0) {
+      return {
+        success: false,
+        error: "No refundable payments found for this order",
+      };
+    }
+
+    // Calculate total refundable amount
+    const totalRefundable = refundablePayments.reduce(
+      (sum, p) => sum + p.refundable,
+      0
+    );
+
+    // Validate refund amount against refundable payments
+    if (refundAmount > totalRefundable) {
+      return {
+        success: false,
+        error: `Refund amount cannot exceed ${totalRefundable.toFixed(2)} ${order.currency} (total refundable from payments)`,
+      };
+    }
 
     // Get store Stripe account ID if needed
     let storeStripeAccountId: string | null = null;
@@ -4206,139 +4454,249 @@ export async function processRefund(input: {
       }
     }
 
-    // Step 3: Process payment refund (before transaction for Stripe API call)
-    let stripeRefundId: string | null = null;
-    let refundProvider: string = "manual";
-
-    // Find the payment to refund (use the first completed Stripe payment)
-    const paymentToRefund = paymentData.find(
-      (p) =>
-        p.status === "completed" &&
-        p.provider === "stripe" &&
-        p.stripePaymentIntentId
-    );
-
-    if (
-      paymentToRefund &&
-      paymentToRefund.stripePaymentIntentId &&
-      storeStripeAccountId
-    ) {
-      // Process Stripe refund
-      try {
-        const { stripe } = await import("@/lib/stripe");
-        const refundAmountCents = Math.round(refundAmount * 100);
-
-        console.log(`[Refund] Creating Stripe refund:`, {
-          paymentIntentId: paymentToRefund.stripePaymentIntentId,
-          amount: refundAmountCents,
-          refundType: input.refundType,
-          stripeAccount: storeStripeAccountId,
-        });
-
-        // For Stripe Connect with destination charges, payment intents are on the platform account
-        // Refunds must be created on the platform account (not connected account)
-        // First, retrieve the payment intent to get the charge ID
-        const paymentIntent = await stripe.paymentIntents.retrieve(
-          paymentToRefund.stripePaymentIntentId
-        );
-
-        console.log(`[Refund] Payment intent retrieved:`, {
-          id: paymentIntent.id,
-          status: paymentIntent.status,
-          latest_charge: paymentIntent.latest_charge,
-        });
-
-        // Get the charge ID from the payment intent
-        const chargeId = paymentIntent.latest_charge;
-
-        if (!chargeId) {
-          throw new Error("No charge found on payment intent");
-        }
-
-        // Create refund on the platform account using the charge ID
-        // Stripe will automatically reverse the transfer when reverse_transfer: true
-        const refund = await stripe.refunds.create({
-          charge: typeof chargeId === "string" ? chargeId : chargeId.id,
-          amount:
-            input.refundType === "partial" ? refundAmountCents : undefined, // Omit for full refund
-          refund_application_fee: false,
-          reverse_transfer: true, // Automatically reverses transfer to connected account
-        });
-
-        stripeRefundId = refund.id;
-        refundProvider = "stripe";
-        console.log(
-          `[Refund] ✅ Stripe refund created successfully: ${refund.id}`,
-          {
-            status: refund.status,
-            amount: refund.amount,
-            currency: refund.currency,
-          }
-        );
-      } catch (stripeError) {
-        console.error("[Refund] ❌ Stripe refund failed:", stripeError);
-        if (stripeError instanceof Error) {
-          console.error("[Refund] Error message:", stripeError.message);
-          console.error("[Refund] Error stack:", stripeError.stack);
-        }
-        // If Stripe refund fails, we should still proceed but mark as manual
-        // This allows the refund to be processed manually if Stripe API fails
-        refundProvider = "manual";
-        // Note: stripeRefundId remains null, which is correct for manual refunds
-      }
-    } else {
-      // No Stripe payment found or missing required data
-      if (paymentData.length === 0) {
-        console.log(
-          "[Refund] No payment records found, processing as manual refund"
-        );
-      } else if (!paymentToRefund) {
-        console.log(
-          "[Refund] No Stripe payment found, processing as manual refund"
-        );
-      } else if (!storeStripeAccountId) {
-        console.log(
-          "[Refund] Store Stripe account ID not found, processing as manual refund"
-        );
-      }
-    }
-
-    // Process refund in transaction
+    // Step 3: Split refund across payments (Stripe-first)
+    // Process refund in transaction - create refund records BEFORE Stripe calls
     await db.transaction(async (tx) => {
-      // Create refund record in orderPayments
-      await tx.insert(orderPayments).values({
+      let remaining = refundAmount;
+      console.log(`[Refund] Starting refund process:`, {
         orderId: input.orderId,
-        amount: refundAmount.toString(),
-        currency: order.currency,
-        provider: refundProvider,
-        providerPaymentId: stripeRefundId || null, // Set to refund ID for Stripe, null for manual
-        stripePaymentIntentId: paymentToRefund?.stripePaymentIntentId || null,
-        stripeCheckoutSessionId:
-          paymentToRefund?.stripeCheckoutSessionId || null,
-        stripeRefundId: stripeRefundId,
-        type: "refund",
-        reason: input.reason || null,
-        status: "completed",
-        // For refunds, we typically don't set platformFeeAmount or netAmountToStore
-        // as those are calculated from the original payment
+        refundAmount,
+        refundType: input.refundType,
+        refundedItems: input.refundedItems,
+      });
+      const createdRefunds: Array<{
+        refundId: string;
+        paymentId: string;
+        amount: number;
+        provider: string;
+        stripeRefundId: string | null;
+      }> = [];
+
+      // Process refunds per payment (prioritize Stripe payments)
+      // Sort: Stripe payments first, then manual
+      const sortedPayments = [...refundablePayments].sort((a, b) => {
+        if (a.provider === "stripe" && b.provider !== "stripe") return -1;
+        if (a.provider !== "stripe" && b.provider === "stripe") return 1;
+        return 0;
       });
 
-      // Step 4: Update payment status
-      const newRefundedAmount = alreadyRefunded + refundAmount;
-      const newPaymentStatus =
-        newRefundedAmount >= totalPaid ? "refunded" : "partially_refunded";
+      for (const payment of sortedPayments) {
+        if (remaining <= 0) break;
 
-      await tx
-        .update(orders)
-        .set({
-          paymentStatus: newPaymentStatus,
-          refundedAmount: newRefundedAmount.toString(),
-          updatedAt: new Date(),
-        })
-        .where(eq(orders.id, input.orderId));
+        // Re-fetch payment data inside transaction to get current refundedAmount
+        const currentPaymentData = await tx
+          .select({
+            amount: orderPayments.amount,
+            refundedAmount: orderPayments.refundedAmount,
+          })
+          .from(orderPayments)
+          .where(eq(orderPayments.id, payment.id))
+          .limit(1);
+
+        if (currentPaymentData.length === 0) {
+          console.error(
+            `[Refund] Payment ${payment.id} not found in transaction`
+          );
+          continue;
+        }
+
+        const currentRefunded = parseFloat(
+          currentPaymentData[0].refundedAmount || "0"
+        );
+        const paymentAmount = parseFloat(currentPaymentData[0].amount);
+        const currentRefundable = paymentAmount - currentRefunded;
+
+        const refundThisPayment = Math.min(currentRefundable, remaining);
+        console.log(`[Refund] Processing refund for payment:`, {
+          paymentId: payment.id,
+          paymentAmount,
+          currentRefunded,
+          currentRefundable,
+          refundThisPayment,
+          remaining,
+        });
+
+        // Create refund record FIRST (before Stripe API call)
+        const refundRecord = await tx
+          .insert(orderRefunds)
+          .values({
+            orderId: input.orderId,
+            orderPaymentId: payment.id,
+            provider: payment.provider || "manual",
+            amount: refundThisPayment.toString(),
+            reason: input.reason || null,
+            status: payment.provider === "stripe" ? "pending" : "succeeded",
+            metadata: input.refundedItems
+              ? {
+                  refundedItems: input.refundedItems,
+                }
+              : null,
+            createdBy: userId,
+          })
+          .returning();
+
+        const refundId = refundRecord[0]?.id;
+        if (!refundId) {
+          throw new Error("Failed to create refund record");
+        }
+
+        // Create refund items if provided
+        if (input.refundedItems && input.refundedItems.length > 0) {
+          const refundItems = input.refundedItems.map((item) => ({
+            refundId,
+            orderItemId: item.orderItemId,
+            quantity: item.quantity,
+          }));
+          await tx.insert(orderRefundItems).values(refundItems);
+        }
+
+        // Stripe refund is async - call API after creating record
+        let stripeRefundId: string | null = null;
+        if (
+          payment.provider === "stripe" &&
+          payment.stripePaymentIntentId &&
+          storeStripeAccountId
+        ) {
+          try {
+            const { stripe } = await import("@/lib/stripe");
+            const refundAmountCents = Math.round(refundThisPayment * 100);
+
+            console.log(`[Refund] Creating Stripe refund:`, {
+              paymentIntentId: payment.stripePaymentIntentId,
+              amount: refundAmountCents,
+              refundId,
+            });
+
+            // Retrieve payment intent to get charge ID
+            const paymentIntent = await stripe.paymentIntents.retrieve(
+              payment.stripePaymentIntentId
+            );
+
+            const chargeId = paymentIntent.latest_charge;
+            if (!chargeId) {
+              throw new Error("No charge found on payment intent");
+            }
+
+            // Create refund on platform account (not connected account)
+            const refund = await stripe.refunds.create({
+              charge: typeof chargeId === "string" ? chargeId : chargeId.id,
+              amount: refundAmountCents,
+              refund_application_fee: false,
+              reverse_transfer: true, // Automatically reverses transfer to connected account
+            });
+
+            stripeRefundId = refund.id;
+
+            // Update refund record with Stripe refund ID
+            await tx
+              .update(orderRefunds)
+              .set({
+                stripeRefundId,
+                updatedAt: new Date(),
+              })
+              .where(eq(orderRefunds.id, refundId));
+
+            console.log(
+              `[Refund] ✅ Stripe refund created: ${refund.id} for refund record ${refundId}`
+            );
+          } catch (stripeError) {
+            console.error(
+              `[Refund] ❌ Stripe refund failed for refund ${refundId}:`,
+              stripeError
+            );
+            // Mark refund as failed - webhook will update it if Stripe succeeds later
+            await tx
+              .update(orderRefunds)
+              .set({
+                status: "failed",
+                updatedAt: new Date(),
+              })
+              .where(eq(orderRefunds.id, refundId));
+            // Continue with next payment - don't throw
+          }
+        }
+
+        createdRefunds.push({
+          refundId,
+          paymentId: payment.id,
+          amount: refundThisPayment,
+          provider: payment.provider || "manual",
+          stripeRefundId,
+        });
+
+        // For manual refunds, update orderPayments.refundedAmount immediately
+        // (Stripe refunds will be updated by webhooks when refund.updated is received)
+        if (payment.provider !== "stripe") {
+          // Use the already-fetched currentPaymentData from above
+          const newRefundedAmount = currentRefunded + refundThisPayment;
+
+          console.log(`[Refund] Updating payment refundedAmount:`, {
+            paymentId: payment.id,
+            currentRefunded,
+            refundThisPayment,
+            newRefundedAmount,
+            paymentAmount,
+            willBeStatus:
+              newRefundedAmount >= paymentAmount - 0.01
+                ? "refunded"
+                : "partially_refunded",
+          });
+
+          await tx
+            .update(orderPayments)
+            .set({
+              refundedAmount: newRefundedAmount.toString(),
+              status:
+                newRefundedAmount >= paymentAmount - 0.01
+                  ? "refunded"
+                  : "partially_refunded",
+              updatedAt: new Date(),
+            })
+            .where(eq(orderPayments.id, payment.id));
+        }
+
+        remaining -= refundThisPayment;
+      }
+
+      // Recalculate order payment status (for manual refunds, this updates immediately)
+      // For Stripe refunds, webhooks will call this when refund.updated is received
+      console.log(`[Refund] Recalculating order payment status...`);
+      await recalculateOrderPaymentStatus(input.orderId, tx);
 
       // Step 5: Inventory adjustment (ONLY if chosen)
-      if (input.restockItems && order.storeId) {
+      // Only restock the quantities that were actually refunded
+      if (input.restockItems && order.storeId && input.refundedItems) {
+        // Group refunded items by variantId and sum quantities
+        const variantQuantities = new Map<string, number>();
+
+        for (const refundedItem of input.refundedItems) {
+          const orderItem = orderItemsData.find(
+            (item) => item.id === refundedItem.orderItemId
+          );
+          if (orderItem?.variantId) {
+            const current = variantQuantities.get(orderItem.variantId) || 0;
+            variantQuantities.set(
+              orderItem.variantId,
+              current + refundedItem.quantity
+            );
+          }
+        }
+
+        // Restock each variant with the refunded quantity
+        for (const [variantId, quantity] of variantQuantities.entries()) {
+          if (quantity > 0) {
+            await adjustInventoryForOrder(
+              [{ variantId, quantity }],
+              order.storeId,
+              "restock",
+              "refund",
+              input.orderId,
+              true // skipAuth for transaction context
+            );
+          }
+        }
+      } else if (input.restockItems && order.storeId && !input.refundedItems) {
+        // Fallback: if no item-level data, restock all items (for backward compatibility)
         for (const item of orderItemsData) {
           if (item.variantId) {
             await adjustInventoryForOrder(
@@ -4353,20 +4711,12 @@ export async function processRefund(input: {
         }
       }
 
-      // Step 6: Order status update (optional)
-      // Shopify does not force cancellation on refund
-      // We'll keep the order status as is unless fully refunded and unfulfilled
-      if (
-        newPaymentStatus === "refunded" &&
-        order.fulfillmentStatus === "unfulfilled"
-      ) {
-        // Optionally auto-cancel, but we'll leave it open per Shopify behavior
-        // await tx.update(orders).set({ status: "canceled" }).where(eq(orders.id, input.orderId));
-      }
-
       // Step 9: Timeline / audit log
       const restockMessage = input.restockItems ? " Inventory restocked." : "";
-      const refundMethod = refundProvider === "stripe" ? "Stripe" : "manual";
+      const hasStripeRefunds = createdRefunds.some(
+        (r) => r.provider === "stripe"
+      );
+      const refundMethod = hasStripeRefunds ? "Stripe" : "manual";
       await tx.insert(orderEvents).values({
         orderId: input.orderId,
         type: "refund_processed",
@@ -4377,7 +4727,7 @@ export async function processRefund(input: {
           refundType: input.refundType,
           reason: input.reason,
           restockItems: input.restockItems,
-          stripeRefundId: stripeRefundId,
+          refundIds: createdRefunds.map((r) => r.refundId),
         },
         createdBy: userId,
         createdAt: new Date(),
@@ -4407,6 +4757,24 @@ export async function processRefund(input: {
     // Step 8: Send refund confirmation email
     if (order.customerEmail) {
       try {
+        // Check if any refunds were created with Stripe
+        const stripeRefunds = await db
+          .select({ id: orderRefunds.id })
+          .from(orderRefunds)
+          .where(
+            and(
+              eq(orderRefunds.orderId, input.orderId),
+              eq(orderRefunds.provider, "stripe"),
+              or(
+                eq(orderRefunds.status, "succeeded"),
+                eq(orderRefunds.status, "pending")
+              )
+            )
+          )
+          .limit(1);
+
+        const hasStripeRefunds = stripeRefunds.length > 0;
+
         const resend = (await import("@/lib/resend")).default;
         const RefundConfirmationEmail = (
           await import("@/app/[locale]/components/refund-confirmation-email")
@@ -4438,10 +4806,9 @@ export async function processRefund(input: {
               title: item.title,
               quantity: item.quantity,
             })),
-            refundMethod:
-              refundProvider === "stripe"
-                ? "original payment method"
-                : "manual",
+            refundMethod: hasStripeRefunds
+              ? "original payment method"
+              : "manual",
           }),
         });
 

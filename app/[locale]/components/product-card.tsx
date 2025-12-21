@@ -2,11 +2,8 @@
 
 import Image from "next/image";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { PublicProduct } from "../actions/public-products";
-import { MapPin, Globe, ShoppingCart } from "lucide-react";
-import { useCart } from "@/lib/cart-context";
-import { useState } from "react";
+import { MapPin, Globe } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 
@@ -15,33 +12,11 @@ interface ProductCardProps {
 }
 
 export function ProductCard({ product }: ProductCardProps) {
-  const { addItem } = useCart();
-  const [isHovered, setIsHovered] = useState(false);
   const t = useTranslations("products");
-
-  const handleAddToCart = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    addItem(
-      {
-        id: product.id,
-        name: product.name,
-        price: parseFloat(product.price),
-        image: product.imageUrl,
-        category: product.categoryName,
-        currency: product.currency || "NPR",
-      },
-      1
-    );
-  };
 
   return (
     <Link href={`/products/${product.id}`}>
-      <Card
-        className="group overflow-hidden border-border hover:shadow-lg transition-shadow duration-300 relative"
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-      >
+      <Card className="group overflow-hidden border-border hover:shadow-lg transition-shadow duration-300 relative">
         <CardContent className="p-0">
           <div className="aspect-square relative overflow-hidden bg-muted">
             <Image
@@ -50,19 +25,6 @@ export function ProductCard({ product }: ProductCardProps) {
               fill
               className="object-cover group-hover:scale-105 transition-transform duration-300"
             />
-            {/* Add to Cart Button on Hover */}
-            {isHovered && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 transition-opacity duration-300">
-                <Button
-                  onClick={handleAddToCart}
-                  size="sm"
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                >
-                  <ShoppingCart className="w-4 h-4 mr-2" />
-                  {t("addToCart")}
-                </Button>
-              </div>
-            )}
           </div>
           <div className="p-6">
             <div className="flex gap-2 mb-2 flex-wrap">
@@ -93,9 +55,38 @@ export function ProductCard({ product }: ProductCardProps) {
             <h3 className="font-medium text-lg mb-2 text-foreground group-hover:text-primary transition-colors">
               {product.name}
             </h3>
-            <p className="text-xl font-semibold text-foreground">
-              {product.currency} {parseFloat(product.price).toFixed(2)}
-            </p>
+            <div className="flex items-baseline gap-3 flex-wrap">
+              <p className="text-xl font-semibold text-foreground">
+                {product.currency} {parseFloat(product.price || "0").toFixed(2)}
+              </p>
+              {(() => {
+                const comparePrice = product.compareAtPrice
+                  ? parseFloat(product.compareAtPrice)
+                  : null;
+                const currentPrice = parseFloat(product.price || "0");
+
+                if (
+                  comparePrice !== null &&
+                  !isNaN(comparePrice) &&
+                  !isNaN(currentPrice) &&
+                  comparePrice > currentPrice
+                ) {
+                  const savings = comparePrice - currentPrice;
+                  return (
+                    <div className="flex flex-col">
+                      <span className="bg-yellow-400 text-yellow-900 px-2 py-1 text-sm font-semibold rounded">
+                        SAVE {product.currency} {savings.toFixed(2)}
+                      </span>
+                      <span className="text-xs text-muted-foreground mt-1">
+                        Regular price {product.currency}{" "}
+                        {comparePrice.toFixed(2)}
+                      </span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -69,7 +69,6 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
       { value: "partial", label: "Partial" },
       { value: "fulfilled", label: "Fulfilled" },
       { value: "canceled", label: "Canceled" },
-      { value: "on_hold", label: "On Hold" },
     ],
     []
   );
@@ -104,9 +103,17 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
       partial: "bg-orange-100 text-orange-800",
       fulfilled: "bg-green-100 text-green-800",
       canceled: "bg-red-100 text-red-800",
-      on_hold: "bg-gray-100 text-gray-800",
     };
     return colors[status] || colors.unfulfilled;
+  };
+
+  const getWorkflowStatusColor = (status?: string) => {
+    const colors: Record<string, string> = {
+      in_progress: "bg-blue-100 text-blue-800",
+      on_hold: "bg-red-100 text-red-800",
+      normal: "bg-gray-100 text-gray-800",
+    };
+    return colors[status || "normal"] || "";
   };
 
   const getOrderStatusColor = (status: string) => {
@@ -288,15 +295,31 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
         ),
         cell: ({ row }) => {
           const status = row.original.fulfillmentStatus;
+          const workflowStatus = row.original.workflowStatus;
           return (
-            <span
-              className={`px-2 py-1 text-xs rounded-full ${getFulfillmentStatusColor(
-                status
-              )}`}
-            >
-              {fulfillmentStatusOptions.find((opt) => opt.value === status)
-                ?.label || status}
-            </span>
+            <div className="flex flex-col gap-1">
+              <span
+                className={`px-2 py-1 text-xs rounded-full ${getFulfillmentStatusColor(
+                  status
+                )}`}
+              >
+                {fulfillmentStatusOptions.find((opt) => opt.value === status)
+                  ?.label || status}
+              </span>
+              {workflowStatus && workflowStatus !== "normal" && (
+                <span
+                  className={`px-2 py-1 text-xs rounded-full ${getWorkflowStatusColor(
+                    workflowStatus
+                  )}`}
+                >
+                  {workflowStatus === "in_progress"
+                    ? "In Progress"
+                    : workflowStatus === "on_hold"
+                      ? `On Hold${row.original.holdReason ? `: ${row.original.holdReason}` : ""}`
+                      : workflowStatus}
+                </span>
+              )}
+            </div>
           );
         },
       },

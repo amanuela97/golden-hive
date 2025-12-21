@@ -74,14 +74,21 @@ export default function CartPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <Link
-                            href={`/products/${item.id}`}
+                            href={`/products/${item.listingId}`}
                             className="font-medium text-foreground hover:text-primary line-clamp-2"
                           >
                             {item.name}
                           </Link>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {item.category}
-                          </p>
+                          {item.variantTitle && (
+                            <p className="text-sm text-primary font-medium mt-1">
+                              {item.variantTitle}
+                            </p>
+                          )}
+                          {item.category && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {item.category}
+                            </p>
+                          )}
                         </div>
                       </div>
 

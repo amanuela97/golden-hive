@@ -1,226 +1,135 @@
-This is a **core commerce action**, and getting it right will save you from inventory, accounting, and support nightmares.
+The product image section is a two-column image gallery:
 
-I’ll give you a **Shopify-accurate, step-by-step flow** that fits **your draft → paid order model**.
+Left column (thumbnail rail)
 
----
+Center column (main image viewer)
 
-# What **Refund** means (definition)
+The gallery is desktop-first, clean, minimal, and content-focused.
 
-> **Refund = returning money to the customer**
-> It does **not** automatically mean:
+Layout description (very important for accuracy)
 
-- canceling the order
-- returning items
-- restocking inventory
+1. Thumbnail column (left side)
 
-Those are **separate but optional** actions.
+A vertical list of small square thumbnails
 
----
+Positioned on the far left
 
-# Preconditions (very important)
+Each thumbnail:
 
-Refund can be clicked **only if**:
+Is 1:1 (square)
 
-- `paymentStatus = paid` or `partially_refunded`
-- Order is **not draft**
-- Refund amount ≤ paid amount − refunded amount
+Has small spacing (8–12px) between items
 
-If not → block the action.
+Shows a subtle border or outline when active
 
----
+Thumbnails are clickable
 
-# Step-by-step: What should happen when **Refund** is clicked
+If there are many images:
 
----
+The column becomes vertically scrollable
 
-## 1️⃣ Open refund modal (merchant decision)
+Scroll is subtle (no heavy scrollbar styling)
 
-The modal should let the merchant choose:
+Active thumbnail state
 
-### a) Refund type
+Slightly darker border or outline
 
-- Full refund
-- Partial refund (by amount or by line item)
+No heavy shadow
 
-### b) Restock inventory? (checkbox)
+Clean and minimal
 
-- ⬜ Restock items
-- Default:
-  - **ON** if unfulfilled
-  - **OFF** if fulfilled
+2. Main image viewer (center)
 
-### c) Reason (optional but recommended)
+Large square image container (1:1 aspect ratio)
 
-- Customer request
-- Damaged
-- Returned
-- Fraud
-- Other
+Takes most of the horizontal space
 
----
+Background is white or very light neutral
 
-## 2️⃣ Validate refund request
+Image is:
 
-Before processing:
+Centered
 
-- Ensure refund amount is valid
-- Ensure items exist
-- Ensure quantities don’t exceed sold quantities
+object-fit: contain or cover (Etsy uses contain-like behavior)
 
----
+Never stretched or distorted
 
-## 3️⃣ Process payment refund
+Navigation controls
+Arrow buttons
 
-### If payment was via stripe gateway
+Left and right arrows
 
-- const refund = await stripe.refunds.create(
-  {
-  payment_intent: paymentIntentId,
-  amount, // omit for full refund
-  refund_application_fee: false,
-  reverse_transfer: true, // pulls money back from seller
-  },
-  {
-  stripeAccount: sellerStripeAccountId,
-  }
-  );
+Positioned:
 
-### If payment was manual
+Vertically centered
 
-- Mark refund as manual
-- No external API call
+Slightly inside the left/right edges of the main image
 
-Store:
+Style:
 
-```ts
-refunds {
-  id
-  orderId
-  amount
-  currency
-  paymentMethod
-  reason
-  createdAt
-}
-```
+Circular or rounded button
 
----
+Light background (white)
 
-## 4️⃣ Update payment status
+Subtle shadow
 
-### Logic:
+Icon is simple (chevron)
 
-```ts
-if (totalRefunded === totalPaid) {
-  paymentStatus = "refunded";
-} else {
-  paymentStatus = "partially_refunded";
-}
-```
+Only used to move one image at a time
 
-Also update:
+Interaction behavior
+Clicking thumbnails
 
-```ts
-order.refundedAmount += refund.amount;
-```
+Instantly updates the main image
 
----
+No dramatic animation
 
-## 5️⃣ Inventory adjustment (ONLY if chosen)
+Very subtle fade or instant swap
 
-### If “Restock items” is checked:
+Hover behavior (desktop)
 
-- Increase inventory for selected items
-- Create inventory adjustment record
+No zoom by default
 
-### If not checked:
+Cursor remains normal
 
-- Inventory unchanged
+The focus is on clarity, not interaction overload
 
-🚨 **Refund alone never changes inventory**
+Keyboard / accessibility (important for Etsy-like feel)
 
----
+Arrow keys navigate images
 
-## 6️⃣ Order status update (optional, conditional)
+Thumbnails are focusable
 
-- If fully refunded AND not fulfilled:
-  - You _may_ auto-cancel the order
+Main image has aria-live updates
 
-- If fulfilled:
-  - Keep order open or completed
-  - Cancellation is optional
+Mobile behavior (optional but realistic)
 
-Shopify does **not force cancellation** on refund.
+Thumbnail column disappears
 
----
+Becomes a horizontal swipe carousel
 
-## 7️⃣ Generate refund document (important)
+Dots or pagination indicators appear below image
 
-Generate:
+Swipe gestures enabled
 
-- **Refund receipt** or **credit note**
-- Includes:
-  - Refund amount
-  - Refunded items
-  - Original order reference
-  - Date
+Visual tone
 
-PDF optional but recommended (EU).
+Use these keywords when prompting an AI:
 
----
+“Minimal”
 
-## 8️⃣ Send refund confirmation email
+“Marketplace-style”
 
-Email includes:
+“Content-first”
 
-- Refunded amount
-- Items refunded
-- When customer will receive money
-- Refund receipt (PDF or link)
+“No heavy shadows”
 
----
+“Neutral UI”
 
-## 9️⃣ Timeline / audit log
+“Image-focused”
 
-Log:
+“Subtle borders and spacing”
 
-```text
-Refund of €25.00 processed (manual). Inventory restocked.
-```
+Example AI prompt you can copy-paste
 
-This is crucial for support & accounting.
-
----
-
-# Summary table (copy-safe logic)
-
-| Step                 | Happens on refund |
-| -------------------- | ----------------- |
-| Money returned       | ✅                |
-| Order deleted        | ❌                |
-| Order canceled       | ❌ (optional)     |
-| Inventory restocked  | ⬜ optional       |
-| Refund doc generated | ✅                |
-| Email sent           | ✅                |
-
----
-
-# What refund should NOT do
-
-❌ Do NOT:
-
-- edit original invoice
-- regenerate invoice
-- unlock prices
-- auto-restock fulfilled items
-- auto-delete order
-
----
-
-# How this fits your draft → paid model
-
-- Draft orders ❌ cannot be refunded
-- Only **paid orders** can be refunded
-- Refund is a **post-payment financial event**
-
----
+“Create a product image gallery similar to Etsy’s product page. The layout has a vertical column of small square thumbnails on the left and a large square main image on the right. Clicking a thumbnail updates the main image. The main image has left and right navigation arrows centered vertically inside the image container. Styling is minimal, clean, and neutral with subtle borders and spacing. No heavy animations, no zoom by default, and the design feels like a professional marketplace UI.”

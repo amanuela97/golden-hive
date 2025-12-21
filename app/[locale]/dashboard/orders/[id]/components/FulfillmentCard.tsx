@@ -27,12 +27,15 @@ import { Package, Truck, ChevronDown } from "lucide-react";
 import Image from "next/image";
 import toast from "react-hot-toast";
 import { updateFulfillmentStatus } from "@/app/[locale]/actions/orders";
+import { fulfillOrder } from "@/app/[locale]/actions/orders-fulfillment";
+import { updateWorkflowStatus } from "@/app/[locale]/actions/orders-workflow";
 
 interface OrderItem {
   id: string;
   title: string;
   sku: string | null;
   quantity: number;
+  fulfilledQuantity?: number; // How many have been fulfilled
   unitPrice: string;
   lineSubtotal: string;
   lineTotal: string;
@@ -96,6 +99,9 @@ export function FulfillmentCard({
 
   const isFulfilled = orderData.fulfillmentStatus === "fulfilled";
   const isPartiallyFulfilled = orderData.fulfillmentStatus === "partial";
+  const workflowStatus = orderData.workflowStatus || "normal";
+  const isOnHold = workflowStatus === "on_hold";
+  const isInProgress = workflowStatus === "in_progress";
 
   const getStatusBadge = () => {
     if (isFulfilled) {
@@ -111,11 +117,47 @@ export function FulfillmentCard({
     return <Badge className="bg-yellow-100 text-yellow-800">Unfulfilled</Badge>;
   };
 
+  const getWorkflowBadge = () => {
+    if (isOnHold) {
+      return (
+        <Badge className="bg-red-100 text-red-800">
+          On Hold{orderData.holdReason ? `: ${orderData.holdReason}` : ""}
+        </Badge>
+      );
+    }
+    if (isInProgress) {
+      return <Badge className="bg-blue-100 text-blue-800">In Progress</Badge>;
+    }
+    return null;
+  };
+
+  const handleResetWorkflowStatus = async () => {
+    try {
+      const result = await updateWorkflowStatus({
+        orderId: orderData.id,
+        workflowStatus: "normal",
+      });
+      if (result.success) {
+        toast.success("Workflow status reset to normal");
+        window.location.reload();
+      } else {
+        toast.error(result.error || "Failed to reset workflow status");
+      }
+    } catch (error) {
+      console.error("Error resetting workflow status:", error);
+      toast.error("Failed to reset workflow status");
+    }
+  };
+
   // Initialize selected items when dialog opens
+  // Pre-fill with remaining unfulfilled quantities
   const handleFulfillClick = () => {
     const initial: Record<string, number> = {};
     orderData.items.forEach((item) => {
-      initial[item.id] = item.quantity;
+      const fulfilledQty = item.fulfilledQuantity || 0;
+      const remainingQty = item.quantity - fulfilledQty;
+      // Pre-select remaining quantity (or 0 if already fully fulfilled)
+      initial[item.id] = remainingQty > 0 ? remainingQty : 0;
     });
     setSelectedItems(initial);
     setShowFulfillDialog(true);
@@ -123,7 +165,10 @@ export function FulfillmentCard({
 
   const handleInProgressClick = async () => {
     try {
-      const result = await updateFulfillmentStatus(orderData.id, "partial");
+      const result = await updateWorkflowStatus({
+        orderId: orderData.id,
+        workflowStatus: "in_progress",
+      });
       if (result.success) {
         toast.success("Order marked as in progress");
         window.location.reload();
@@ -154,10 +199,31 @@ export function FulfillmentCard({
       return;
     }
 
+    // Build fulfilledItems array from selected items
+    const fulfilledItems = Object.entries(selectedItems)
+      .filter(([_, quantity]) => quantity > 0)
+      .map(([orderItemId, quantity]) => ({
+        orderItemId,
+        quantity,
+      }));
+
+    if (fulfilledItems.length === 0) {
+      toast.error("Please select at least one item to fulfill");
+      return;
+    }
+
     try {
-      const result = await updateFulfillmentStatus(orderData.id, "fulfilled");
+      const result = await fulfillOrder({
+        orderId: orderData.id,
+        fulfilledItems,
+        carrier: shippingCarrier,
+        trackingNumber: trackingNumber.trim(),
+        trackingUrl: trackingNumber.trim() ? undefined : undefined, // Could add tracking URL field later
+        fulfilledBy: "seller", // Could make this configurable later
+      });
+
       if (result.success) {
-        toast.success("Order marked as fulfilled");
+        toast.success("Order fulfilled successfully");
         setShowFulfillDialog(false);
         setTrackingNumber("");
         setShippingCarrier("");
@@ -166,7 +232,8 @@ export function FulfillmentCard({
       } else {
         toast.error(result.error || "Failed to fulfill order");
       }
-    } catch {
+    } catch (error) {
+      console.error("Error fulfilling order:", error);
       toast.error("Failed to fulfill order");
     }
   };
@@ -182,19 +249,25 @@ export function FulfillmentCard({
     }
 
     try {
-      const result = await updateFulfillmentStatus(orderData.id, "on_hold");
+      const finalReason = holdReason === "other" ? holdNote.trim() : holdReason;
+      const result = await updateWorkflowStatus({
+        orderId: orderData.id,
+        workflowStatus: "on_hold",
+        holdReason: finalReason,
+      });
       if (result.success) {
-        toast.success("Order marked as on hold");
+        toast.success("Order placed on hold");
         setShowOnHoldDialog(false);
         setHoldReason("");
         setHoldNote("");
         setOnHoldItems({});
         window.location.reload();
       } else {
-        toast.error(result.error || "Failed to update status");
+        toast.error(result.error || "Failed to place order on hold");
       }
-    } catch {
-      toast.error("Failed to update status");
+    } catch (error) {
+      console.error("Error placing order on hold:", error);
+      toast.error("Failed to place order on hold");
     }
   };
 
@@ -207,7 +280,19 @@ export function FulfillmentCard({
               <Package className="h-5 w-5" />
               <CardTitle>Fulfillment</CardTitle>
             </div>
-            {getStatusBadge()}
+            <div className="flex items-center gap-2">
+              {getStatusBadge()}
+              {getWorkflowBadge()}
+              {(isOnHold || isInProgress) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleResetWorkflowStatus}
+                >
+                  Reset
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -253,7 +338,15 @@ export function FulfillmentCard({
                     )}
                   </div>
                   <div className="text-right">
-                    <p className="font-medium text-sm">Qty: {item.quantity}</p>
+                    <p className="font-medium text-sm">
+                      Qty: {item.quantity}
+                      {item.fulfilledQuantity !== undefined &&
+                        item.fulfilledQuantity > 0 && (
+                          <span className="text-muted-foreground ml-1">
+                            ({item.fulfilledQuantity} fulfilled)
+                          </span>
+                        )}
+                    </p>
                     <p className="text-xs text-muted-foreground">
                       {item.currency} {parseFloat(item.unitPrice).toFixed(2)}
                     </p>
@@ -263,7 +356,7 @@ export function FulfillmentCard({
             </div>
           </div>
 
-          {canFulfill && !isFulfilled && !isArchived && !isCanceled && (
+          {canFulfill && !isFulfilled && !isArchived && !isCanceled && !isOnHold && (
             <div className="flex gap-2">
               <Button onClick={handleFulfillClick} className="flex-1">
                 Mark as fulfilled
@@ -353,7 +446,7 @@ export function FulfillmentCard({
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            if (selectedItems[item.id] > 1) {
+                            if (selectedItems[item.id] > 0) {
                               setSelectedItems((prev) => ({
                                 ...prev,
                                 [item.id]: prev[item.id] - 1,
@@ -363,14 +456,22 @@ export function FulfillmentCard({
                         >
                           -
                         </Button>
-                        <span className="w-12 text-center text-sm">
+                        <span className="w-16 text-center text-sm">
                           {selectedItems[item.id]} / {item.quantity}
+                          {item.fulfilledQuantity !== undefined &&
+                            item.fulfilledQuantity > 0 && (
+                              <span className="block text-xs text-muted-foreground">
+                                ({item.fulfilledQuantity} already fulfilled)
+                              </span>
+                            )}
                         </span>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            if (selectedItems[item.id] < item.quantity) {
+                            const fulfilledQty = item.fulfilledQuantity || 0;
+                            const maxQty = item.quantity - fulfilledQty;
+                            if (selectedItems[item.id] < maxQty) {
                               setSelectedItems((prev) => ({
                                 ...prev,
                                 [item.id]: prev[item.id] + 1,

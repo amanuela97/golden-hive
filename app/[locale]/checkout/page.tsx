@@ -21,17 +21,15 @@ import { useState, useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
 import { getShippingBillingInfo } from "../actions/shipping-billing";
 import { Link, useRouter } from "@/i18n/navigation";
-import { useTranslations } from "next-intl";
 
 export default function CheckoutPage() {
   const { items, total, clearCart } = useCart();
   const router = useRouter();
   const { data: session } = useSession();
-  const t = useTranslations("checkout");
-  const cartT = useTranslations("cart");
   const [isProcessing, setIsProcessing] = useState(false);
   const [shipToDifferentAddress, setShipToDifferentAddress] = useState(false);
   const [loadingSavedInfo, setLoadingSavedInfo] = useState(true);
+  const [orderNotes, setOrderNotes] = useState("");
 
   // Form state
   const [billingData, setBillingData] = useState({
@@ -110,12 +108,126 @@ export default function CheckoutPage() {
     e.preventDefault();
     setIsProcessing(true);
 
-    // Simulate order processing
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      // Calculate totals
+      const subtotal = total;
+      const shipping = 0; // TODO: Calculate shipping
+      const tax = 0; // TODO: Calculate tax
+      const discount = 0;
+      const finalTotal = subtotal + shipping + tax - discount;
 
-    // Clear cart and redirect
-    clearCart();
-    router.push("/order-confirmation");
+      // Determine shipping data (use shipping if different, else billing)
+      const finalShippingData = shipToDifferentAddress
+        ? shippingData
+        : {
+            firstName: billingData.firstName,
+            lastName: billingData.lastName,
+            company: billingData.company,
+            country: billingData.country,
+            address: billingData.address,
+            address2: billingData.address2,
+            city: billingData.city,
+            state: billingData.state,
+            zip: billingData.zip,
+          };
+
+      // 1. Create order
+      const orderResponse = await fetch("/api/checkout/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerEmail: billingData.email,
+          customerFirstName: billingData.firstName,
+          customerLastName: billingData.lastName,
+          customerPhone: billingData.phone,
+          lineItems: items.map((item) => ({
+            listingId: item.listingId,
+            variantId: item.variantId || null,
+            quantity: item.quantity,
+            unitPrice: item.price.toString(),
+            title: item.name,
+            sku: item.sku || null,
+          })),
+          currency: "EUR", // Default to EUR, can be detected from items
+          subtotalAmount: subtotal.toFixed(2),
+          shippingAmount: shipping.toFixed(2),
+          taxAmount: tax.toFixed(2),
+          discountAmount: discount.toFixed(2),
+          totalAmount: finalTotal.toFixed(2),
+          shippingName: `${finalShippingData.firstName} ${finalShippingData.lastName}`,
+          shippingPhone: billingData.phone,
+          shippingAddressLine1: finalShippingData.address,
+          shippingAddressLine2: finalShippingData.address2 || null,
+          shippingCity: finalShippingData.city,
+          shippingRegion: finalShippingData.state,
+          shippingPostalCode: finalShippingData.zip,
+          shippingCountry: finalShippingData.country,
+          billingName: `${billingData.firstName} ${billingData.lastName}`,
+          billingPhone: billingData.phone,
+          billingAddressLine1: billingData.address,
+          billingAddressLine2: billingData.address2 || null,
+          billingCity: billingData.city,
+          billingRegion: billingData.state,
+          billingPostalCode: billingData.zip,
+          billingCountry: billingData.country,
+          notes: orderNotes || null,
+        }),
+      });
+
+      const orderResult = await orderResponse.json();
+
+      if (!orderResult.success) {
+        throw new Error(orderResult.error || "Failed to create order");
+      }
+
+      // Handle multiple orders (multi-store checkout)
+      const orders = orderResult.orders || [{ orderId: orderResult.orderId || orderResult.primaryOrderId }];
+      
+      if (orders.length === 0) {
+        throw new Error("No orders created");
+      }
+
+      // For now, if multiple stores, we'll create a combined checkout
+      // In the future, this could be enhanced to create separate checkout sessions
+      // and redirect through them sequentially
+      
+      // Create Stripe Checkout Session for all orders
+      // We'll pass all order IDs and let the API handle the payment split
+      const checkoutResponse = await fetch("/api/stripe/checkout/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderIds: orders.map((o: { orderId: string }) => o.orderId), // Pass all order IDs
+          currency: "EUR",
+          items: items.map((item) => ({
+            listingId: item.listingId,
+            variantId: item.variantId || null,
+            quantity: item.quantity,
+          })),
+          customerEmail: billingData.email,
+        }),
+      });
+
+      const checkoutResult = await checkoutResponse.json();
+
+      if (checkoutResult.error || !checkoutResult.url) {
+        throw new Error(
+          checkoutResult.error || "Failed to create checkout session"
+        );
+      }
+
+      // Redirect to Stripe Checkout
+      window.location.href = checkoutResult.url;
+    } catch (error) {
+      console.error("Checkout error:", error);
+      // Show error toast
+      alert(
+        error instanceof Error
+          ? error.message
+          : "An error occurred during checkout. Please try again."
+      );
+      setIsProcessing(false);
+    }
   };
 
   if (items.length === 0) {
@@ -124,13 +236,13 @@ export default function CheckoutPage() {
         <div className="container mx-auto px-4 py-16">
           <div className="text-center py-16">
             <h1 className="text-3xl font-bold mb-4 text-foreground">
-              {t("emptyCart")}
+              Your cart is empty
             </h1>
             <p className="text-muted-foreground mb-8">
-              {t("emptyCartDescription")}
+              Looks like you haven't added any items to your cart yet.
             </p>
             <Button asChild size="lg">
-              <Link href="/products">{t("browseProducts")}</Link>
+              <Link href="/products">Browse Products</Link>
             </Button>
           </div>
         </div>
@@ -142,7 +254,7 @@ export default function CheckoutPage() {
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-16">
         <h1 className="text-4xl font-bold mb-8 text-foreground">
-          {t("title")}
+          Checkout
         </h1>
 
         <form onSubmit={handleSubmit}>
@@ -152,13 +264,13 @@ export default function CheckoutPage() {
               {/* Billing Information */}
               <div className="bg-card rounded-lg border border-border p-6">
                 <h2 className="text-2xl font-bold mb-6 text-foreground">
-                  {t("billingDetails")}
+                  Billing Details
                 </h2>
 
                 {loadingSavedInfo && session?.user ? (
                   <div className="text-center py-8">
                     <p className="text-muted-foreground">
-                      {t("loadingSavedInfo")}
+                      Loading saved information...
                     </p>
                   </div>
                 ) : (
@@ -166,20 +278,20 @@ export default function CheckoutPage() {
                     {!session?.user && (
                       <div className="mb-4 p-4 bg-muted rounded-lg">
                         <p className="text-sm text-muted-foreground mb-2">
-                          {t("signInPrompt")}{" "}
+                          Have an account?{" "}
                           <Link
                             href="/login"
                             className="text-primary hover:underline"
                           >
-                            {t("signIn")}
+                            Sign in
                           </Link>{" "}
-                          {t("signInInfo")}
+                          to save your information for faster checkout.
                         </p>
                       </div>
                     )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="firstName">{t("firstName")}</Label>
+                        <Label htmlFor="firstName">First Name</Label>
                         <Input
                           id="firstName"
                           value={billingData.firstName}
@@ -193,7 +305,7 @@ export default function CheckoutPage() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="lastName">{t("lastName")}</Label>
+                        <Label htmlFor="lastName">Last Name</Label>
                         <Input
                           id="lastName"
                           value={billingData.lastName}
@@ -209,7 +321,7 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="company">{t("companyName")}</Label>
+                      <Label htmlFor="company">Company Name</Label>
                       <Input
                         id="company"
                         value={billingData.company}
@@ -223,7 +335,7 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="country">{t("country")}</Label>
+                      <Label htmlFor="country">Country</Label>
                       <Select
                         value={billingData.country}
                         onValueChange={(value) =>
@@ -232,7 +344,7 @@ export default function CheckoutPage() {
                         required
                       >
                         <SelectTrigger id="country" className="w-full">
-                          <SelectValue placeholder={t("selectCountry")} />
+                          <SelectValue placeholder="Select Country" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="us">United States</SelectItem>
@@ -246,10 +358,10 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="address">{t("streetAddress")}</Label>
+                      <Label htmlFor="address">Street Address</Label>
                       <Input
                         id="address"
-                        placeholder={t("houseNumber")}
+                        placeholder="House number and street name"
                         value={billingData.address}
                         onChange={(e) =>
                           setBillingData({
@@ -262,7 +374,7 @@ export default function CheckoutPage() {
                       />
                       <Input
                         id="address2"
-                        placeholder={t("apartment")}
+                        placeholder="Apartment, suite, unit, etc. (optional)"
                         value={billingData.address2}
                         onChange={(e) =>
                           setBillingData({
@@ -274,7 +386,7 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="city">{t("city")}</Label>
+                      <Label htmlFor="city">City</Label>
                       <Input
                         id="city"
                         value={billingData.city}
@@ -290,7 +402,7 @@ export default function CheckoutPage() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="state">{t("state")}</Label>
+                        <Label htmlFor="state">State / Province</Label>
                         <Input
                           id="state"
                           value={billingData.state}
@@ -304,7 +416,7 @@ export default function CheckoutPage() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="zip">{t("zipCode")}</Label>
+                        <Label htmlFor="zip">ZIP / Postal Code</Label>
                         <Input
                           id="zip"
                           value={billingData.zip}
@@ -320,7 +432,7 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="phone">{t("phone")}</Label>
+                      <Label htmlFor="phone">Phone</Label>
                       <Input
                         id="phone"
                         type="tel"
@@ -336,7 +448,7 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="email">{t("email")}</Label>
+                      <Label htmlFor="email">Email</Label>
                       <Input
                         id="email"
                         type="email"
@@ -368,7 +480,7 @@ export default function CheckoutPage() {
                     htmlFor="shipDifferent"
                     className="cursor-pointer font-medium"
                   >
-                    {t("shipToDifferentAddress")}
+                    Ship to a different address
                   </Label>
                 </div>
 
@@ -376,7 +488,7 @@ export default function CheckoutPage() {
                   <div className="space-y-4 mt-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="shipFirstName">{t("firstName")}</Label>
+                        <Label htmlFor="shipFirstName">First Name</Label>
                         <Input
                           id="shipFirstName"
                           value={shippingData.firstName}
@@ -390,7 +502,7 @@ export default function CheckoutPage() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="shipLastName">{t("lastName")}</Label>
+                        <Label htmlFor="shipLastName">Last Name</Label>
                         <Input
                           id="shipLastName"
                           value={shippingData.lastName}
@@ -406,7 +518,7 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="shipCompany">{t("companyName")}</Label>
+                      <Label htmlFor="shipCompany">Company Name</Label>
                       <Input
                         id="shipCompany"
                         value={shippingData.company}
@@ -420,7 +532,7 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="shipCountry">{t("country")}</Label>
+                      <Label htmlFor="shipCountry">Country</Label>
                       <Select
                         value={shippingData.country}
                         onValueChange={(value) =>
@@ -429,7 +541,7 @@ export default function CheckoutPage() {
                         required
                       >
                         <SelectTrigger id="shipCountry" className="w-full">
-                          <SelectValue placeholder={t("selectCountry")} />
+                          <SelectValue placeholder="Select Country" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="us">United States</SelectItem>
@@ -443,10 +555,10 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="shipAddress">{t("streetAddress")}</Label>
+                      <Label htmlFor="shipAddress">Street Address</Label>
                       <Input
                         id="shipAddress"
-                        placeholder={t("houseNumber")}
+                        placeholder="House number and street name"
                         value={shippingData.address}
                         onChange={(e) =>
                           setShippingData({
@@ -459,7 +571,7 @@ export default function CheckoutPage() {
                       />
                       <Input
                         id="shipAddress2"
-                        placeholder={t("apartment")}
+                        placeholder="Apartment, suite, unit, etc. (optional)"
                         value={shippingData.address2}
                         onChange={(e) =>
                           setShippingData({
@@ -471,7 +583,7 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="shipCity">{t("city")}</Label>
+                      <Label htmlFor="shipCity">City</Label>
                       <Input
                         id="shipCity"
                         value={shippingData.city}
@@ -487,7 +599,7 @@ export default function CheckoutPage() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="shipState">{t("state")}</Label>
+                        <Label htmlFor="shipState">State / Province</Label>
                         <Input
                           id="shipState"
                           value={shippingData.state}
@@ -501,7 +613,7 @@ export default function CheckoutPage() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="shipZip">{t("zipCode")}</Label>
+                        <Label htmlFor="shipZip">ZIP / Postal Code</Label>
                         <Input
                           id="shipZip"
                           value={shippingData.zip}
@@ -522,16 +634,18 @@ export default function CheckoutPage() {
               {/* Order Notes */}
               <div className="bg-card rounded-lg border border-border p-6">
                 <h3 className="text-lg font-semibold mb-4 text-foreground">
-                  {t("additionalInfo")}
+                  Additional Information
                 </h3>
                 <div className="space-y-2">
                   <Label htmlFor="orderNotes">
-                    {t("orderNotes")} (optional)
+                    Order Notes (optional)
                   </Label>
                   <Textarea
                     id="orderNotes"
-                    placeholder={t("orderNotesPlaceholder")}
+                    placeholder="Notes about your order, e.g. special delivery instructions"
                     rows={4}
+                    value={orderNotes}
+                    onChange={(e) => setOrderNotes(e.target.value)}
                   />
                 </div>
               </div>
@@ -541,14 +655,14 @@ export default function CheckoutPage() {
             <div className="lg:col-span-1">
               <div className="bg-card rounded-lg border border-border p-6 sticky top-4">
                 <h2 className="text-2xl font-bold mb-6 text-foreground">
-                  {t("yourOrder")}
+                  Your Order
                 </h2>
 
                 {/* Order Items */}
                 <div className="space-y-4 mb-6">
                   <div className="flex justify-between font-medium text-sm pb-3 border-b border-border">
-                    <span>{cartT("product")}</span>
-                    <span>{cartT("subtotal")}</span>
+                    <span>Product</span>
+                    <span>Subtotal</span>
                   </div>
 
                   {items.map((item: CartItem) => (
@@ -565,8 +679,13 @@ export default function CheckoutPage() {
                         <p className="text-sm font-medium text-foreground line-clamp-2">
                           {item.name}
                         </p>
+                        {item.variantTitle && (
+                          <p className="text-xs text-primary font-medium mt-1">
+                            {item.variantTitle}
+                          </p>
+                        )}
                         <p className="text-xs text-muted-foreground mt-1">
-                          {t("qty")}: {item.quantity}
+                          Qty: {item.quantity}
                         </p>
                       </div>
                       <div className="text-sm font-medium text-foreground shrink-0">
@@ -583,7 +702,7 @@ export default function CheckoutPage() {
                 <div className="space-y-3">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">
-                      {cartT("subtotal")}
+                      Subtotal
                     </span>
                     <span className="font-medium text-foreground">
                       €{total.toFixed(2)}
@@ -592,10 +711,10 @@ export default function CheckoutPage() {
 
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">
-                      {t("shipping")}
+                      Shipping
                     </span>
                     <span className="font-medium text-foreground">
-                      {t("freeShipping")}
+                      Free
                     </span>
                   </div>
 
@@ -603,7 +722,7 @@ export default function CheckoutPage() {
 
                   <div className="flex justify-between text-lg">
                     <span className="font-bold text-foreground">
-                      {cartT("total")}
+                      Total
                     </span>
                     <span className="font-bold text-foreground">
                       €{total.toFixed(2)}
@@ -616,7 +735,7 @@ export default function CheckoutPage() {
                 {/* Payment Method */}
                 <div className="space-y-4 mb-6">
                   <h3 className="font-semibold text-foreground">
-                    {t("paymentMethod")}
+                    Payment Method
                   </h3>
                   <div className="space-y-3">
                     <div className="flex items-start space-x-2">
@@ -633,10 +752,10 @@ export default function CheckoutPage() {
                           htmlFor="cod"
                           className="cursor-pointer font-medium"
                         >
-                          {t("cashOnDelivery")}
+                          Credit Card / Debit Card
                         </Label>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {t("cashOnDeliveryDesc")}
+                          Secure payment via Stripe
                         </p>
                       </div>
                     </div>
@@ -644,7 +763,7 @@ export default function CheckoutPage() {
                 </div>
 
                 <p className="text-xs text-muted-foreground mb-6 leading-relaxed">
-                  {t("privacyNote")}
+                  Your personal data will be used to process your order, support your experience throughout this website, and for other purposes described in our privacy policy.
                 </p>
 
                 <Button
@@ -653,7 +772,7 @@ export default function CheckoutPage() {
                   size="lg"
                   disabled={isProcessing}
                 >
-                  {isProcessing ? t("processing") : t("placeOrder")}
+                  {isProcessing ? "Processing..." : "Place Order"}
                 </Button>
               </div>
             </div>

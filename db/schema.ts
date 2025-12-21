@@ -58,6 +58,12 @@ export const orderFulfillmentStatusEnum = pgEnum("order_fulfillment_status", [
   "partial",
   "fulfilled",
   "canceled",
+]);
+
+// Workflow status (operational flags, per inst.md)
+export const orderWorkflowStatusEnum = pgEnum("order_workflow_status", [
+  "normal",
+  "in_progress",
   "on_hold",
 ]);
 
@@ -66,6 +72,7 @@ export const orderStatusEnum = pgEnum("order_status", [
   "draft",
   "archived",
   "canceled",
+  "completed",
 ]);
 
 export const storeMemberRoleEnum = pgEnum("store_member_role", [
@@ -597,6 +604,12 @@ export const orders = pgTable("orders", {
     .default("unfulfilled")
     .notNull(),
 
+  // Workflow status (operational flags, per inst.md)
+  workflowStatus: orderWorkflowStatusEnum("workflow_status")
+    .default("normal")
+    .notNull(),
+  holdReason: text("hold_reason"), // Reason for on_hold status
+
   // Shipping & billing snapshots (flat fields for now)
   shippingName: text("shipping_name"),
   shippingPhone: text("shipping_phone"),
@@ -805,6 +818,9 @@ export const orderItems = pgTable("order_items", {
   }).default("0"),
   taxAmount: numeric("tax_amount", { precision: 10, scale: 2 }).default("0"),
 
+  // Fulfillment tracking (per inst.md)
+  fulfilledQuantity: integer("fulfilled_quantity").default(0).notNull(), // How many of this item have been fulfilled
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -831,15 +847,57 @@ export const orderPayments = pgTable("order_payments", {
   netAmountToStore: numeric("net_amount_to_store", { precision: 10, scale: 2 }), // Amount store receives
   stripePaymentIntentId: text("stripe_payment_intent_id"), // Stripe PaymentIntent ID
   stripeCheckoutSessionId: text("stripe_checkout_session_id"), // Stripe Checkout Session ID
-  status: text("status").default("pending"),
-  type: text("type").default("payment"), // 'payment' or 'refund'
-  reason: text("reason"), // Refund reason (customer request, damaged, returned, fraud, other)
-  stripeRefundId: text("stripe_refund_id"), // Stripe Refund ID for refunds
+  status: text("status").default("pending"), // completed | partially_refunded | refunded
+  refundedAmount: numeric("refunded_amount", { precision: 10, scale: 2 })
+    .default("0")
+    .notNull(), // Amount refunded from this payment
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
     .$onUpdate(() => new Date())
     .notNull(),
+});
+
+// ===================================
+// ORDER REFUNDS
+// ===================================
+export const orderRefunds = pgTable("order_refunds", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  orderPaymentId: uuid("order_payment_id")
+    .notNull()
+    .references(() => orderPayments.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(), // 'stripe' | 'manual'
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  reason: text("reason"), // Refund reason (customer request, damaged, returned, fraud, other)
+  stripeRefundId: text("stripe_refund_id"), // Stripe Refund ID (nullable for manual refunds)
+  status: text("status").default("pending").notNull(), // pending | succeeded | failed
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(), // Additional refund metadata
+  createdBy: text("created_by").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// ORDER REFUND ITEMS
+// ===================================
+export const orderRefundItems = pgTable("order_refund_items", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  refundId: uuid("refund_id")
+    .notNull()
+    .references(() => orderRefunds.id, { onDelete: "cascade" }),
+  orderItemId: uuid("order_item_id")
+    .notNull()
+    .references(() => orderItems.id, { onDelete: "cascade" }),
+  quantity: integer("quantity").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // ===================================
@@ -859,6 +917,10 @@ export const fulfillments = pgTable("fulfillments", {
   status: text("status").default("pending"),
   trackingNumber: text("tracking_number"),
   trackingUrl: text("tracking_url"),
+  // Fulfillment metadata (per inst.md)
+  carrier: text("carrier"), // UPS, Posti, DHL, etc.
+  fulfilledBy: text("fulfilled_by"), // seller / warehouse / automation
+  fulfilledAt: timestamp("fulfilled_at"), // When fulfillment occurred
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -1269,6 +1331,8 @@ export type Customer = InferSelectModel<typeof customers>;
 export type Order = InferSelectModel<typeof orders>;
 export type OrderItem = InferSelectModel<typeof orderItems>;
 export type OrderPayment = InferSelectModel<typeof orderPayments>;
+export type OrderRefund = InferSelectModel<typeof orderRefunds>;
+export type OrderRefundItem = InferSelectModel<typeof orderRefundItems>;
 export type OrderEvent = InferSelectModel<typeof orderEvents>;
 export type DraftOrder = InferSelectModel<typeof draftOrders>;
 export type DraftOrderItem = InferSelectModel<typeof draftOrderItems>;

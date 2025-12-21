@@ -8,11 +8,10 @@ import {
   listing,
   listingVariants,
   storeMembers,
-  user,
   roles,
   userRoles,
 } from "@/db/schema";
-import { eq, inArray, and } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
@@ -65,61 +64,521 @@ async function getStoreIdForUser(): Promise<{
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await auth.api.getSession({
-      headers: await headers(),
-    });
-
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const body = await req.json();
-    const { storeId: providedStoreId, currency, items, customerEmail } = body;
+    const {
+      orderId, // Optional existing order ID (single order, backward compatibility)
+      orderIds, // Optional array of order IDs (multi-store checkout)
+      storeId: providedStoreId,
+      currency,
+      items,
+      customerEmail,
+    } = body;
 
-    if (!currency || !items || !Array.isArray(items) || items.length === 0) {
-      return NextResponse.json(
-        { error: "currency and items are required" },
-        { status: 400 }
-      );
+    // If orderId or orderIds is provided, allow guest access (order already created)
+    // If neither is provided, require authentication (admin/seller use case)
+    if (!orderId && !orderIds) {
+      const session = await auth.api.getSession({
+        headers: await headers(),
+      });
+
+      if (!session?.user?.id) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
     }
 
-    // Get store ID (from user or provided for admin)
-    const { storeId: userStoreId, isAdmin, error: storeError } =
-      await getStoreIdForUser();
+    // Normalize to array of order IDs
+    const orderIdsArray = orderIds || (orderId ? [orderId] : []);
 
-    if (storeError) {
-      return NextResponse.json({ error: storeError }, { status: 403 });
+    // Handle multiple orders (multi-store checkout)
+    if (orderIdsArray.length > 1) {
+      // Multi-store checkout: Create ONE checkout session that collects payment to platform
+      // Then transfer funds to each store after payment succeeds (via webhook)
+
+      // Group orders by store and calculate totals
+      const storeBreakdown = new Map<
+        string,
+        {
+          storeId: string;
+          stripeAccountId: string;
+          orderIds: string[];
+          amount: number; // in cents
+          currency: string;
+        }
+      >();
+
+      const allLineItems: Array<{
+        quantity: number;
+        price_data: {
+          currency: string;
+          unit_amount: number;
+          product_data: {
+            name: string;
+            description?: string;
+          };
+        };
+      }> = [];
+
+      let totalAmount = 0;
+      let currency = "eur";
+
+      for (const currentOrderId of orderIdsArray) {
+        // Fetch order from database
+        const existingOrder = await db
+          .select()
+          .from(orders)
+          .where(eq(orders.id, currentOrderId))
+          .limit(1);
+
+        if (existingOrder.length === 0) continue;
+
+        const order = existingOrder[0];
+        const storeId = order.storeId;
+        if (!storeId) continue;
+
+        currency = order.currency.toLowerCase();
+
+        // Get store with Stripe account
+        const storeData = await db
+          .select()
+          .from(store)
+          .where(eq(store.id, storeId))
+          .limit(1);
+
+        if (storeData.length === 0 || !storeData[0].stripeAccountId) continue;
+
+        const storeInfo = storeData[0];
+
+        // Fetch order items
+        const orderItemsData = await db
+          .select({
+            listingId: orderItems.listingId,
+            variantId: orderItems.variantId,
+            quantity: orderItems.quantity,
+            unitPrice: orderItems.unitPrice,
+            title: orderItems.title,
+          })
+          .from(orderItems)
+          .where(eq(orderItems.orderId, currentOrderId));
+
+        // Get listings and variants
+        const listingIds = [
+          ...new Set(
+            orderItemsData
+              .map((item) => item.listingId)
+              .filter((id): id is string => id !== null)
+          ),
+        ];
+        const listings = await db
+          .select()
+          .from(listing)
+          .where(inArray(listing.id, listingIds));
+
+        const variantIds = orderItemsData
+          .map((item) => item.variantId)
+          .filter((id): id is string => id !== null);
+        let variants: (typeof listingVariants.$inferSelect)[] = [];
+        if (variantIds.length > 0) {
+          variants = await db
+            .select()
+            .from(listingVariants)
+            .where(inArray(listingVariants.id, variantIds));
+        }
+
+        // Build line items and calculate order total
+        let orderTotalCents = 0;
+
+        for (const item of orderItemsData) {
+          const listingItem = listings.find((l) => l.id === item.listingId);
+          if (!listingItem) continue;
+
+          const variant = item.variantId
+            ? variants.find((v) => v.id === item.variantId) || null
+            : null;
+
+          const unitPrice = parseFloat(item.unitPrice);
+          const unitPriceCents = Math.round(unitPrice * 100);
+          orderTotalCents += unitPriceCents * item.quantity;
+
+          allLineItems.push({
+            quantity: item.quantity,
+            price_data: {
+              currency: currency,
+              unit_amount: unitPriceCents,
+              product_data: {
+                name: item.title,
+                description: variant ? `${item.title} - ${variant.title}` : undefined,
+              },
+            },
+          });
+        }
+
+        // Add shipping, tax, discount from order totals
+        const orderSubtotal = parseFloat(order.subtotalAmount || "0");
+        const orderShipping = parseFloat(order.shippingAmount || "0");
+        const orderTax = parseFloat(order.taxAmount || "0");
+        const orderDiscount = parseFloat(order.discountAmount || "0");
+        const orderTotal = orderSubtotal + orderShipping + orderTax - orderDiscount;
+        const orderTotalCentsFromDB = Math.round(orderTotal * 100);
+
+        // Use the order total from DB (includes shipping/tax/discount)
+        orderTotalCents = orderTotalCentsFromDB;
+        totalAmount += orderTotalCents;
+
+        // Update store breakdown
+        if (!storeBreakdown.has(storeId)) {
+          storeBreakdown.set(storeId, {
+            storeId,
+            stripeAccountId: storeInfo.stripeAccountId,
+            orderIds: [],
+            amount: 0,
+            currency,
+          });
+        }
+
+        const storeInfo_ = storeBreakdown.get(storeId)!;
+        storeInfo_.orderIds.push(currentOrderId);
+        storeInfo_.amount += orderTotalCents;
+      }
+
+      if (storeBreakdown.size === 0) {
+        return NextResponse.json(
+          { error: "Failed to process orders" },
+          { status: 400 }
+        );
+      }
+
+      // Create store breakdown metadata
+      const storeBreakdownMetadata: Record<string, { stripeAccountId: string; amount: number; orderIds: string[] }> = {};
+      for (const [storeId, info] of storeBreakdown.entries()) {
+        storeBreakdownMetadata[storeId] = {
+          stripeAccountId: info.stripeAccountId,
+          amount: info.amount,
+          orderIds: info.orderIds,
+        };
+      }
+
+      // Create ONE checkout session that collects payment to platform account
+      // (No destination charges - we'll transfer manually after payment)
+      const checkoutSession = await stripe.checkout.sessions.create({
+        mode: "payment",
+        customer_email: customerEmail || undefined,
+        line_items: allLineItems,
+        // No payment_intent_data with transfer_data - payment goes to platform
+        payment_intent_data: {
+          metadata: {
+            orderIds: JSON.stringify(orderIdsArray),
+            storeBreakdown: JSON.stringify(storeBreakdownMetadata),
+            multiStore: "true",
+          },
+        },
+        success_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/cancel?orderIds=${encodeURIComponent(JSON.stringify(orderIdsArray))}`,
+        metadata: {
+          orderIds: JSON.stringify(orderIdsArray),
+          storeBreakdown: JSON.stringify(storeBreakdownMetadata),
+          multiStore: "true",
+        },
+      });
+
+      return NextResponse.json({
+        url: checkoutSession.url,
+        orderId: orderIdsArray[0], // Primary order ID for backward compatibility
+        orderNumber: 0, // Will be set from first order
+        allOrders: orderIdsArray.map((id) => ({ orderId: id })),
+      });
     }
 
-    // Determine final store ID
-    let finalStoreId: string | null = null;
+    // Single order flow (existing logic)
+    let finalOrderId: string;
+    let finalStoreId: string;
+    let orderRow: { id: string; orderNumber: number };
+    const lineItemsData: Array<{
+      listing: typeof listing.$inferSelect;
+      variant: typeof listingVariants.$inferSelect | null;
+      quantity: number;
+      unitPrice: number;
+    }> = [];
+    let total = 0;
+    let finalCurrency: string;
 
-    if (isAdmin) {
-      if (!providedStoreId) {
-        // For admin, try to get storeId from line items
-        const listingIds = [...new Set(items.map((item: any) => item.listingId))];
-        if (listingIds.length > 0) {
-          const listings = await db
-            .select({ storeId: listing.storeId })
-            .from(listing)
-            .where(inArray(listing.id, listingIds))
-            .limit(1);
+    const singleOrderId = orderIdsArray[0];
+    if (singleOrderId) {
+      // Use existing order
+      finalOrderId = singleOrderId;
 
-          if (listings.length > 0) {
-            finalStoreId = listings[0].storeId;
+      // Fetch order from database
+      const existingOrder = await db
+        .select()
+        .from(orders)
+        .where(eq(orders.id, singleOrderId))
+        .limit(1);
+
+      if (existingOrder.length === 0) {
+        return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      }
+
+      orderRow = {
+        id: existingOrder[0].id,
+        orderNumber: existingOrder[0].orderNumber,
+      };
+      finalStoreId = existingOrder[0].storeId!;
+
+      // Fetch order items
+      const orderItemsData = await db
+        .select({
+          listingId: orderItems.listingId,
+          variantId: orderItems.variantId,
+          quantity: orderItems.quantity,
+          unitPrice: orderItems.unitPrice,
+          title: orderItems.title,
+        })
+        .from(orderItems)
+        .where(eq(orderItems.orderId, singleOrderId));
+
+      // Get listings and variants for line items
+      const listingIds = [
+        ...new Set(
+          orderItemsData
+            .map((item) => item.listingId)
+            .filter((id): id is string => id !== null)
+        ),
+      ];
+      const listings = await db
+        .select()
+        .from(listing)
+        .where(inArray(listing.id, listingIds));
+
+      const variantIds = orderItemsData
+        .map((item) => item.variantId)
+        .filter((id): id is string => id !== null);
+      let variants: (typeof listingVariants.$inferSelect)[] = [];
+      if (variantIds.length > 0) {
+        variants = await db
+          .select()
+          .from(listingVariants)
+          .where(inArray(listingVariants.id, variantIds));
+      }
+
+      // Build line items data
+      for (const item of orderItemsData) {
+        const listingItem = listings.find((l) => l.id === item.listingId);
+        if (!listingItem) continue;
+
+        const variant = item.variantId
+          ? variants.find((v) => v.id === item.variantId) || null
+          : null;
+
+        const unitPrice = parseFloat(item.unitPrice);
+        total += unitPrice * item.quantity;
+
+        lineItemsData.push({
+          listing: listingItem,
+          variant,
+          quantity: item.quantity,
+          unitPrice,
+        });
+      }
+
+      finalCurrency = existingOrder[0].currency;
+    } else {
+      // Create new order (current behavior for admin/seller)
+      if (!currency || !items || !Array.isArray(items) || items.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "currency and items are required when orderId is not provided",
+          },
+          { status: 400 }
+        );
+      }
+
+      // Get store ID (from user or provided for admin)
+      const {
+        storeId: userStoreId,
+        isAdmin,
+        error: storeError,
+      } = await getStoreIdForUser();
+
+      if (storeError) {
+        return NextResponse.json({ error: storeError }, { status: 403 });
+      }
+
+      // Determine final store ID
+      let determinedStoreId: string | null = null;
+
+      if (isAdmin) {
+        if (!providedStoreId) {
+          // For admin, try to get storeId from line items
+          const listingIds = [
+            ...new Set(
+              items.map(
+                (item: { listingId: string; variantId?: string | null }) =>
+                  item.listingId
+              )
+            ),
+          ];
+          if (listingIds.length > 0) {
+            const listings = await db
+              .select({ storeId: listing.storeId })
+              .from(listing)
+              .where(inArray(listing.id, listingIds))
+              .limit(1);
+
+            if (listings.length > 0) {
+              determinedStoreId = listings[0].storeId;
+            }
           }
+        } else {
+          determinedStoreId = providedStoreId;
         }
       } else {
-        finalStoreId = providedStoreId;
+        determinedStoreId = userStoreId;
       }
-    } else {
-      finalStoreId = userStoreId;
-    }
 
-    if (!finalStoreId) {
-      return NextResponse.json(
-        { error: "Store not found or not specified" },
-        { status: 400 }
+      if (!determinedStoreId) {
+        return NextResponse.json(
+          { error: "Store not found or not specified" },
+          { status: 400 }
+        );
+      }
+
+      finalStoreId = determinedStoreId;
+
+      // Get store with Stripe account
+      const storeData = await db
+        .select()
+        .from(store)
+        .where(eq(store.id, finalStoreId))
+        .limit(1);
+
+      if (storeData.length === 0) {
+        return NextResponse.json({ error: "Store not found" }, { status: 404 });
+      }
+
+      const storeInfo = storeData[0];
+
+      if (!storeInfo.stripeAccountId) {
+        return NextResponse.json(
+          { error: "Store has not connected Stripe account" },
+          { status: 400 }
+        );
+      }
+
+      // Get listings and variants
+      const listingIds = items
+        .map(
+          (item: { listingId: string; variantId?: string | null }) =>
+            item.listingId
+        )
+        .filter((id): id is string => id !== null);
+      const listings = await db
+        .select()
+        .from(listing)
+        .where(inArray(listing.id, listingIds));
+
+      if (listings.length !== listingIds.length) {
+        return NextResponse.json(
+          { error: "One or more listings not found" },
+          { status: 400 }
+        );
+      }
+
+      // Get variants if needed
+      const variantIds = items
+        .map(
+          (item: { listingId: string; variantId?: string | null }) =>
+            item.variantId
+        )
+        .filter((id): id is string => id !== null);
+      let variants: (typeof listingVariants.$inferSelect)[] = [];
+      if (variantIds.length > 0) {
+        variants = await db
+          .select()
+          .from(listingVariants)
+          .where(inArray(listingVariants.id, variantIds));
+      }
+
+      // Compute totals
+      let subtotal = 0;
+
+      for (const item of items as Array<{
+        listingId: string;
+        variantId?: string | null;
+        quantity: number;
+      }>) {
+        const listingItem = listings.find((l) => l.id === item.listingId);
+        if (!listingItem) {
+          return NextResponse.json(
+            { error: `Listing not found: ${item.listingId}` },
+            { status: 400 }
+          );
+        }
+
+        let unitPrice = parseFloat(listingItem.price);
+        let variant: typeof listingVariants.$inferSelect | null = null;
+
+        if (item.variantId) {
+          variant = variants.find((v) => v.id === item.variantId) || null;
+          if (!variant) {
+            return NextResponse.json(
+              { error: `Variant not found: ${item.variantId}` },
+              { status: 400 }
+            );
+          }
+          unitPrice = parseFloat(variant.price || listingItem.price);
+        }
+
+        const lineTotal = unitPrice * item.quantity;
+        subtotal += lineTotal;
+
+        lineItemsData.push({
+          listing: listingItem,
+          variant,
+          quantity: item.quantity,
+          unitPrice,
+        });
+      }
+
+      total = subtotal; // Add shipping/tax later if needed
+      finalCurrency = currency;
+
+      // Create order in DB
+      const [newOrderRow] = await db
+        .insert(orders)
+        .values({
+          storeId: finalStoreId,
+          currency,
+          subtotalAmount: subtotal.toFixed(2),
+          totalAmount: total.toFixed(2),
+          paymentStatus: "pending",
+          fulfillmentStatus: "unfulfilled",
+          status: "open",
+          customerEmail: customerEmail || null,
+        })
+        .returning();
+
+      orderRow = {
+        id: newOrderRow.id,
+        orderNumber: newOrderRow.orderNumber,
+      };
+      finalOrderId = newOrderRow.id;
+
+      // Create order items in DB
+      await db.insert(orderItems).values(
+        lineItemsData.map((item) => ({
+          orderId: newOrderRow.id,
+          listingId: item.listing.id,
+          variantId: item.variant?.id || null,
+          title: item.listing.name,
+          sku: item.variant?.sku || null,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice.toFixed(2),
+          currency,
+          lineSubtotal: (item.unitPrice * item.quantity).toFixed(2),
+          lineTotal: (item.unitPrice * item.quantity).toFixed(2),
+          discountAmount: "0",
+          taxAmount: "0",
+        }))
       );
     }
 
@@ -143,130 +602,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Get listings and variants
-    const listingIds = items.map((item: any) => item.listingId);
-    const listings = await db
-      .select()
-      .from(listing)
-      .where(inArray(listing.id, listingIds));
-
-    if (listings.length !== listingIds.length) {
-      return NextResponse.json(
-        { error: "One or more listings not found" },
-        { status: 400 }
-      );
-    }
-
-    // Get variants if needed
-    const variantIds = items
-      .map((item: any) => item.variantId)
-      .filter((id: string | null) => id !== null);
-    let variants: any[] = [];
-    if (variantIds.length > 0) {
-      variants = await db
-        .select()
-        .from(listingVariants)
-        .where(inArray(listingVariants.id, variantIds));
-    }
-
-    // Compute totals
-    let subtotal = 0;
-    const lineItemsData: Array<{
-      listing: any;
-      variant: any | null;
-      quantity: number;
-      unitPrice: number;
-    }> = [];
-
-    for (const item of items) {
-      const listingItem = listings.find((l) => l.id === item.listingId);
-      if (!listingItem) {
-        return NextResponse.json(
-          { error: `Listing not found: ${item.listingId}` },
-          { status: 400 }
-        );
-      }
-
-      let unitPrice = parseFloat(listingItem.price);
-      let variant = null;
-
-      if (item.variantId) {
-        variant = variants.find((v) => v.id === item.variantId);
-        if (!variant) {
-          return NextResponse.json(
-            { error: `Variant not found: ${item.variantId}` },
-            { status: 400 }
-          );
-        }
-        unitPrice = parseFloat(variant.price || listingItem.price);
-      }
-
-      const lineTotal = unitPrice * item.quantity;
-      subtotal += lineTotal;
-
-      lineItemsData.push({
-        listing: listingItem,
-        variant,
-        quantity: item.quantity,
-        unitPrice,
-      });
-    }
-
-    const total = subtotal; // Add shipping/tax later if needed
     const platformFeeCents = Math.round(total * 0.05 * 100); // 5% platform fee in cents
-    const totalCents = Math.round(total * 100);
 
-    // 1) Create order in DB
-    const [orderRow] = await db
-      .insert(orders)
-      .values({
-        storeId: finalStoreId,
-        currency,
-        subtotalAmount: subtotal.toFixed(2),
-        totalAmount: total.toFixed(2),
-        paymentStatus: "pending",
-        fulfillmentStatus: "unfulfilled",
-        status: "open",
-        customerEmail: customerEmail || null,
-      })
-      .returning({ id: orders.id, orderNumber: orders.orderNumber });
-
-    // 2) Create order items in DB
-    await db.insert(orderItems).values(
-      lineItemsData.map((item) => ({
-        orderId: orderRow.id,
-        listingId: item.listing.id,
-        variantId: item.variant?.id || null,
-        title: item.listing.name,
-        sku: item.variant?.sku || item.listing.sku || null,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice.toFixed(2),
-        currency,
-        lineSubtotal: (item.unitPrice * item.quantity).toFixed(2),
-        lineTotal: (item.unitPrice * item.quantity).toFixed(2),
-        discountAmount: "0",
-        taxAmount: "0",
-      }))
-    );
-
-    // 3) Adjust inventory (reserve items)
-    // Note: Inventory adjustment should be handled via a separate action or service
-    // For now, we'll skip it here as it requires importing from server actions
-    // The inventory can be adjusted when the order is fulfilled or via a separate endpoint
-
-    // 4) Create Stripe Checkout Session with Connect (Destination Charges)
+    // Create Stripe Checkout Session with Connect (Destination Charges)
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: customerEmail || undefined,
       line_items: lineItemsData.map((item) => ({
         quantity: item.quantity,
         price_data: {
-          currency: currency.toLowerCase(),
+          currency: finalCurrency.toLowerCase(),
           unit_amount: Math.round(item.unitPrice * 100),
           product_data: {
             name: item.listing.name,
             description: item.variant
-              ? `${item.listing.name} - ${item.variant.name}`
+              ? `${item.listing.name} - ${item.variant.title}`
               : undefined,
           },
         },
@@ -278,31 +628,33 @@ export async function POST(req: NextRequest) {
           destination: storeInfo.stripeAccountId,
         },
         metadata: {
-          orderId: orderRow.id,
+          orderId: finalOrderId,
           storeId: finalStoreId,
         },
       },
       success_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/cancel?orderId=${orderRow.id}`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/cancel?orderId=${finalOrderId}`,
       metadata: {
-        orderId: orderRow.id,
+        orderId: finalOrderId,
         storeId: finalStoreId,
       },
     });
 
     return NextResponse.json({
       url: checkoutSession.url,
-      orderId: orderRow.id,
+      orderId: finalOrderId,
       orderNumber: Number(orderRow.orderNumber),
     });
   } catch (error) {
     console.error("Error creating checkout session:", error);
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Failed to create checkout session",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to create checkout session",
       },
       { status: 500 }
     );
   }
 }
-

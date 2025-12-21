@@ -1081,7 +1081,9 @@ async function completeDraftOrderInternal(
         }
 
         // Step 4: Create payment record if marked as paid (manual payment)
-        if (markAsPaid) {
+        // NOTE: Don't create manual payment if this is from a webhook (skipAuth = true)
+        // The webhook will create the Stripe payment record instead
+        if (markAsPaid && !skipAuth) {
           await tx.insert(orderPayments).values({
             orderId: orderId,
             amount: draft.totalAmount,

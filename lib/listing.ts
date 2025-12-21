@@ -15,7 +15,7 @@ import {
 // Re-export the Listing type for use in components
 export type { Listing };
 import { uploadFile, uploadFiles, deleteFile, deleteFiles } from "./cloudinary";
-import { eq, and, sql, or } from "drizzle-orm";
+import { eq, and, sql, or, inArray, isNotNull } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { translateText } from "./translate";
 import { findCategoryById } from "./taxonomy";

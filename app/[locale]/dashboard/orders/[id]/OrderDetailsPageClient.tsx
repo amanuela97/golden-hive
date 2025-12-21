@@ -34,7 +34,6 @@ import { OrderSidebar } from "./components/OrderSidebar";
 import { CancelOrderDialog } from "./components/CancelOrderDialog";
 import { SendInvoiceDialog } from "./components/SendInvoiceDialog";
 import { SendInvoicePdfDialog } from "./components/SendInvoicePdfDialog";
-import { RefundDialog } from "./components/RefundDialog";
 import {
   archiveOrders,
   unarchiveOrders,
@@ -48,6 +47,7 @@ interface OrderItem {
   title: string;
   sku: string | null;
   quantity: number;
+  fulfilledQuantity?: number; // How many have been fulfilled
   unitPrice: string;
   lineSubtotal: string;
   lineTotal: string;
@@ -80,6 +80,8 @@ interface OrderData {
   status: string;
   paymentStatus: string;
   fulfillmentStatus: string;
+  workflowStatus?: "normal" | "in_progress" | "on_hold";
+  holdReason?: string | null;
   placedAt: Date | null;
   createdAt: Date;
   archivedAt: Date | null;
@@ -179,7 +181,6 @@ export default function OrderDetailsPageClient({
   const [showSendInvoiceDialog, setShowSendInvoiceDialog] = useState(false);
   const [showSendInvoicePdfDialog, setShowSendInvoicePdfDialog] =
     useState(false);
-  const [showRefundDialog, setShowRefundDialog] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [storeOwnerEmail, setStoreOwnerEmail] = useState<string | null>(null);
 
@@ -331,7 +332,9 @@ export default function OrderDetailsPageClient({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setShowRefundDialog(true)}
+              onClick={() =>
+                router.push(`/dashboard/orders/${orderData.id}/refund`)
+              }
             >
               <CreditCard className="mr-2 h-4 w-4" />
               Refund
@@ -495,19 +498,6 @@ export default function OrderDetailsPageClient({
         invoiceNumber={orderData.invoiceNumber}
         customerEmail={orderData.customerEmail}
         storeOwnerEmail={storeOwnerEmail}
-        onSuccess={handleRefresh}
-      />
-
-      {/* Refund Dialog */}
-      <RefundDialog
-        open={showRefundDialog}
-        onOpenChange={setShowRefundDialog}
-        orderId={orderData.id}
-        orderNumber={orderData.orderNumber}
-        totalAmount={orderData.totalAmount}
-        refundedAmount={orderData.refundedAmount || "0"}
-        currency={orderData.currency}
-        fulfillmentStatus={orderData.fulfillmentStatus}
         onSuccess={handleRefresh}
       />
     </div>

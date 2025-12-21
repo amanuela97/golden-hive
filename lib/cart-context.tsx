@@ -9,13 +9,17 @@ import React, {
 } from "react";
 
 export interface CartItem {
-  id: string;
+  id: string; // Unique cart item ID (variantId || listingId)
+  listingId: string; // Required for order creation
+  variantId?: string | null; // Optional variant ID
+  variantTitle?: string | null; // Variant title (e.g., "Size: Large, Color: Red")
   name: string;
   price: number;
   quantity: number;
   image?: string | null;
   category?: string | null;
   currency?: string;
+  sku?: string | null; // Optional SKU
 }
 
 interface CartContextType {

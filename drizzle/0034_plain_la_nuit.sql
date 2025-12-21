@@ -1,0 +1,1 @@
+ALTER TABLE "order_refunds" ALTER COLUMN "created_by" SET DATA TYPE text;

@@ -7,6 +7,7 @@ import {
   getPublicProductById,
   getRelatedProducts,
   getFeaturedProducts,
+  getPublicProductVariants,
 } from "../actions/public-products";
 
 // Query Keys
@@ -20,6 +21,7 @@ export const productQueryKeys = {
   ) => ["products", "related", productId, categoryId, locale] as const,
   featuredProducts: (limit: number | undefined, locale: string) =>
     ["products", "featured", limit, locale] as const,
+  productVariants: (listingId: string) => ["products", "variants", listingId] as const,
 };
 
 // Product Queries
@@ -61,6 +63,15 @@ export function useFeaturedProducts(limit: number = 8) {
   return useQuery({
     queryKey: productQueryKeys.featuredProducts(limit, locale),
     queryFn: () => getFeaturedProducts(locale, limit),
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+}
+
+export function useProductVariants(listingId: string) {
+  return useQuery({
+    queryKey: productQueryKeys.productVariants(listingId),
+    queryFn: () => getPublicProductVariants(listingId),
+    enabled: !!listingId,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
 }
