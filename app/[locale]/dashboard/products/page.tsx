@@ -49,7 +49,10 @@ export default async function ProductsPage() {
   // Get products based on role
   const products = isAdmin
     ? await getAllListingsWithUsers({ page: 1, pageSize: 50 })
-    : await getListingsByProducer(session?.user?.id ?? "", { page: 1, pageSize: 50 });
+    : await getListingsByProducer(session?.user?.id ?? "", {
+        page: 1,
+        pageSize: 50,
+      });
 
   return (
     <DashboardWrapper userRole={roleName}>

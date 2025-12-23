@@ -1,135 +1,264 @@
-The product image section is a two-column image gallery:
+This is a **really important marketplace question**, and you’re right to pause here.
+Eligibility is where **policy, trust, and data boundaries** meet — not just discounts.
 
-Left column (thumbnail rail)
+I’ll break this down into:
 
-Center column (main image viewer)
+1. **Core principle**
+2. **Eligibility rules matrix (admin vs seller)**
+3. **What sellers should and should NOT be allowed to do**
+4. **What admins can do**
+5. **UI wording & behavior**
+6. **Backend enforcement rules**
+7. **Edge cases you must handle**
 
-The gallery is desktop-first, clean, minimal, and content-focused.
+No fluff — this is the stuff that prevents serious bugs later.
 
-Layout description (very important for accuracy)
+---
 
-1. Thumbnail column (left side)
+## 1. Core Principle (Anchor This)
 
-A vertical list of small square thumbnails
+> **Eligibility can never expand a discount beyond the discount owner’s authority.**
 
-Positioned on the far left
+Meaning:
 
-Each thumbnail:
+- Sellers can **restrict**, never **expand**
+- Admins can **restrict or expand**
 
-Is 1:1 (square)
+Eligibility is a **filter**, not a scope expander.
 
-Has small spacing (8–12px) between items
+---
 
-Shows a subtle border or outline when active
+## 2. Eligibility Rules Matrix (Very Clear)
 
-Thumbnails are clickable
+| Discount owner | Eligibility option | Allowed?     | Notes                               |
+| -------------- | ------------------ | ------------ | ----------------------------------- |
+| Seller         | All customers      | ✅           | Default                             |
+| Seller         | Specific customers | ⚠️ Limited   | Only customers who bought from them |
+| Seller         | Customer segments  | ❌           | Not yet (and often never)           |
+| Admin          | All customers      | ✅           | Marketplace-wide                    |
+| Admin          | Specific customers | ✅           | Any customer                        |
+| Admin          | Segments           | 🚫 (for now) | Later                               |
 
-If there are many images:
+---
 
-The column becomes vertically scrollable
+## 3. Seller Eligibility: What You Must Restrict
 
-Scroll is subtle (no heavy scrollbar styling)
+### ❌ Sellers must NOT be allowed to:
 
-Active thumbnail state
+- Target customers who never interacted with them
+- Upload arbitrary customer IDs
+- Target “VIP customers” across the marketplace
+- Use eligibility to spy on customer lists
 
-Slightly darker border or outline
+### ✅ Sellers MAY:
 
-No heavy shadow
+- Apply discounts to:
+  - All customers
+  - Customers who **have purchased from them before**
+  - Customers explicitly assigned to them (if you support this)
 
-Clean and minimal
+This is critical for:
 
-2. Main image viewer (center)
+- Privacy
+- GDPR
+- Fair marketplace rules
 
-Large square image container (1:1 aspect ratio)
+---
 
-Takes most of the horizontal space
+## 4. Seller Eligibility – Correct Data Model
 
-Background is white or very light neutral
+To enforce this cleanly, your system needs a concept of:
 
-Image is:
+```
+seller_customer_relationship
+```
 
-Centered
+This does **not** need to be a table yet — it can be derived.
 
-object-fit: contain or cover (Etsy uses contain-like behavior)
+### Minimum viable rule (recommended)
 
-Never stretched or distorted
+> A seller can only target customers who have **at least one completed order** with that seller.
 
-Navigation controls
-Arrow buttons
+That’s it. Simple. Safe.
 
-Left and right arrows
+---
 
-Positioned:
+## 5. Admin Eligibility: Full Authority
 
-Vertically centered
+Admins represent the platform, so they can:
 
-Slightly inside the left/right edges of the main image
+- Target:
+  - All customers
+  - Any specific customers
 
-Style:
+- Override seller constraints (but not silently)
 
-Circular or rounded button
+Admins should also be able to:
 
-Light background (white)
+- Edit seller discounts **without widening eligibility**
+- Convert a seller discount into an admin discount explicitly
 
-Subtle shadow
+---
 
-Icon is simple (chevron)
+## 6. UI Behavior (This Prevents Confusion)
 
-Only used to move one image at a time
+### Seller Creating Discount
 
-Interaction behavior
-Clicking thumbnails
+**Eligibility section**
 
-Instantly updates the main image
+```
+Eligibility
 
-No dramatic animation
+○ All customers
+○ Specific customers (customers who purchased from you)
+```
 
-Very subtle fade or instant swap
+Customer picker:
 
-Hover behavior (desktop)
+- Shows **only their customers**
+- Copy explicitly says “your customers”
 
-No zoom by default
+---
 
-Cursor remains normal
+### Admin Creating Discount
 
-The focus is on clarity, not interaction overload
+**Eligibility section**
 
-Keyboard / accessibility (important for Etsy-like feel)
+```
+Eligibility
 
-Arrow keys navigate images
+○ All customers
+○ Specific customers
+```
 
-Thumbnails are focusable
+Customer picker:
 
-Main image has aria-live updates
+- Shows **all marketplace customers**
 
-Mobile behavior (optional but realistic)
+---
 
-Thumbnail column disappears
+### Admin Editing Seller Discount
 
-Becomes a horizontal swipe carousel
+UI copy must change:
 
-Dots or pagination indicators appear below image
+```
+Eligibility
+Specific customers (from Seller XYZ’s customers)
+```
 
-Swipe gestures enabled
+Even if admin opens it.
 
-Visual tone
+This avoids accidental misuse.
 
-Use these keywords when prompting an AI:
+---
 
-“Minimal”
+## 7. Backend Enforcement (Non-Negotiable)
 
-“Marketplace-style”
+Never trust the UI.
 
-“Content-first”
+### Eligibility check logic
 
-“No heavy shadows”
+```ts
+function isCustomerEligible(
+  discount: Discount,
+  customerId: string | null,
+  context: {
+    isAdmin: boolean;
+    sellerId?: string;
+  }
+): boolean {
+  if (discount.customerEligibilityType === "all") {
+    return true;
+  }
 
-“Neutral UI”
+  if (!customerId) return false;
 
-“Image-focused”
+  // Admin-owned discount
+  if (discount.ownerType === "admin") {
+    return discount.eligibleCustomerIds?.includes(customerId) ?? false;
+  }
 
-“Subtle borders and spacing”
+  // Seller-owned discount
+  if (discount.ownerType === "seller") {
+    // Ensure customer belongs to seller
+    const isSellersCustomer = /* check order history */;
+    if (!isSellersCustomer) return false;
 
-Example AI prompt you can copy-paste
+    return discount.eligibleCustomerIds?.includes(customerId) ?? false;
+  }
 
-“Create a product image gallery similar to Etsy’s product page. The layout has a vertical column of small square thumbnails on the left and a large square main image on the right. Clicking a thumbnail updates the main image. The main image has left and right navigation arrows centered vertically inside the image container. Styling is minimal, clean, and neutral with subtle borders and spacing. No heavy animations, no zoom by default, and the design feels like a professional marketplace UI.”
+  return false;
+}
+```
+
+This ensures:
+
+- Seller discounts cannot leak
+- Admin discounts stay powerful
+- Admin edits don’t break scope
+
+---
+
+## 8. Very Important Edge Cases
+
+### 1. Guest checkout
+
+- Guest customers **cannot be eligible** for “specific customers”
+- UI should warn:
+
+  > “This discount requires a logged-in customer”
+
+---
+
+### 2. Customer deleted or anonymized
+
+- Keep discount eligibility IDs
+- If customer missing → ineligible silently
+
+---
+
+### 3. Multi-seller carts
+
+- Eligibility is checked **per discount**, not per cart
+- Seller discount can apply only to:
+  - Seller’s products
+  - Seller-eligible customer
+
+---
+
+### 4. Admin applying seller discount manually
+
+- Must still pass seller eligibility rules
+- Admin cannot force-apply seller discount to unrelated customer
+
+This preserves seller trust.
+
+---
+
+## 9. What You Should NOT Do (Common Mistakes)
+
+❌ Let sellers upload arbitrary customer IDs
+❌ Let eligibility override product ownership
+❌ Let admins silently widen seller discounts
+❌ Treat eligibility as just UI logic
+
+All eligibility rules must be enforced **server-side**.
+
+---
+
+## 10. Summary (Keep This Mental Model)
+
+- **Owner defines authority**
+- **Eligibility filters within that authority**
+- **Sellers restrict, admins control**
+- **UI explains scope, backend enforces it**
+- **Never expand scope implicitly**
+
+--
+
+## 11. Make sure to do the following as well if not done already
+
+- Update your **discount evaluator** with eligibility + ownership combined
+- Design the **customer picker query logic** safely
+- handle **guest checkout edge cases**
+- Add **eligibility audit logs** (very useful later)

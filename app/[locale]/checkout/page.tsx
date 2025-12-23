@@ -181,8 +181,10 @@ export default function CheckoutPage() {
       }
 
       // Handle multiple orders (multi-store checkout)
-      const orders = orderResult.orders || [{ orderId: orderResult.orderId || orderResult.primaryOrderId }];
-      
+      const orders = orderResult.orders || [
+        { orderId: orderResult.orderId || orderResult.primaryOrderId },
+      ];
+
       if (orders.length === 0) {
         throw new Error("No orders created");
       }
@@ -190,7 +192,7 @@ export default function CheckoutPage() {
       // For now, if multiple stores, we'll create a combined checkout
       // In the future, this could be enhanced to create separate checkout sessions
       // and redirect through them sequentially
-      
+
       // Create Stripe Checkout Session for all orders
       // We'll pass all order IDs and let the API handle the payment split
       const checkoutResponse = await fetch("/api/stripe/checkout/create", {
@@ -239,7 +241,7 @@ export default function CheckoutPage() {
               Your cart is empty
             </h1>
             <p className="text-muted-foreground mb-8">
-              Looks like you haven't added any items to your cart yet.
+              Looks like you haven&apos;t added any items to your cart yet.
             </p>
             <Button asChild size="lg">
               <Link href="/products">Browse Products</Link>
@@ -253,9 +255,7 @@ export default function CheckoutPage() {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-16">
-        <h1 className="text-4xl font-bold mb-8 text-foreground">
-          Checkout
-        </h1>
+        <h1 className="text-4xl font-bold mb-8 text-foreground">Checkout</h1>
 
         <form onSubmit={handleSubmit}>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -637,9 +637,7 @@ export default function CheckoutPage() {
                   Additional Information
                 </h3>
                 <div className="space-y-2">
-                  <Label htmlFor="orderNotes">
-                    Order Notes (optional)
-                  </Label>
+                  <Label htmlFor="orderNotes">Order Notes (optional)</Label>
                   <Textarea
                     id="orderNotes"
                     placeholder="Notes about your order, e.g. special delivery instructions"
@@ -701,29 +699,21 @@ export default function CheckoutPage() {
                 {/* Totals */}
                 <div className="space-y-3">
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">
-                      Subtotal
-                    </span>
+                    <span className="text-muted-foreground">Subtotal</span>
                     <span className="font-medium text-foreground">
                       €{total.toFixed(2)}
                     </span>
                   </div>
 
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">
-                      Shipping
-                    </span>
-                    <span className="font-medium text-foreground">
-                      Free
-                    </span>
+                    <span className="text-muted-foreground">Shipping</span>
+                    <span className="font-medium text-foreground">Free</span>
                   </div>
 
                   <Separator />
 
                   <div className="flex justify-between text-lg">
-                    <span className="font-bold text-foreground">
-                      Total
-                    </span>
+                    <span className="font-bold text-foreground">Total</span>
                     <span className="font-bold text-foreground">
                       €{total.toFixed(2)}
                     </span>
@@ -763,7 +753,9 @@ export default function CheckoutPage() {
                 </div>
 
                 <p className="text-xs text-muted-foreground mb-6 leading-relaxed">
-                  Your personal data will be used to process your order, support your experience throughout this website, and for other purposes described in our privacy policy.
+                  Your personal data will be used to process your order, support
+                  your experience throughout this website, and for other
+                  purposes described in our privacy policy.
                 </p>
 
                 <Button

@@ -36,6 +36,25 @@ export const inventoryEventTypeEnum = pgEnum("inventory_event_type", [
   "damage",
 ]);
 
+export const discountTypeEnum = pgEnum("discount_type", [
+  "amount_off_products",
+]);
+
+export const discountValueTypeEnum = pgEnum("discount_value_type", [
+  "fixed",
+  "percentage",
+]);
+
+export const discountTargetTypeEnum = pgEnum("discount_target_type", [
+  "all_products",
+  "product_ids",
+]);
+
+export const customerEligibilityTypeEnum = pgEnum("customer_eligibility_type", [
+  "all",
+  "specific",
+]);
+
 // Shopify-style status enum: active | draft | archived
 export const listingStatusEnum = pgEnum("listing_status", [
   "active",
@@ -582,6 +601,9 @@ export const orders = pgTable("orders", {
   discountAmount: numeric("discount_amount", { precision: 10, scale: 2 })
     .default("0")
     .notNull(),
+  discountTotal: numeric("discount_total", { precision: 10, scale: 2 })
+    .default("0")
+    .notNull(), // Sum of order_discounts.amount (source of truth)
   shippingAmount: numeric("shipping_amount", { precision: 10, scale: 2 })
     .default("0")
     .notNull(),
@@ -1219,6 +1241,121 @@ export const shippingBillingInfo = pgTable("shipping_billing_info", {
 export type ShippingBillingInfo = InferSelectModel<typeof shippingBillingInfo>;
 
 // ===================================
+// DISCOUNTS
+// ===================================
+export const discounts = pgTable("discounts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  type: discountTypeEnum("type").notNull(), // "amount_off_products" (extensible later)
+  name: varchar("name", { length: 255 }).notNull(), // Internal name
+  code: varchar("code", { length: 100 }), // Optional discount code
+  valueType: discountValueTypeEnum("value_type").notNull(), // "fixed" | "percentage"
+  value: numeric("value", { precision: 10, scale: 2 }).notNull(), // 10 or 15%
+  currency: varchar("currency", { length: 3 }), // Needed for fixed discounts
+
+  appliesOncePerOrder: boolean("applies_once_per_order").default(false), // Future-proof
+  usageLimit: integer("usage_limit"), // Nullable for unlimited
+  usageCount: integer("usage_count").default(0).notNull(),
+
+  // Minimum purchase requirements
+  minPurchaseAmount: numeric("min_purchase_amount", {
+    precision: 10,
+    scale: 2,
+  }), // Nullable - no minimum if NULL
+  minPurchaseQuantity: integer("min_purchase_quantity"), // Nullable - no minimum if NULL
+
+  // Customer eligibility
+  customerEligibilityType: customerEligibilityTypeEnum(
+    "customer_eligibility_type"
+  )
+    .default("all")
+    .notNull(), // "all" | "specific"
+
+  startsAt: timestamp("starts_at"),
+  endsAt: timestamp("ends_at"),
+  isActive: boolean("is_active").default(true).notNull(),
+
+  // Ownership (per inst.md)
+  ownerType: varchar("owner_type", { length: 20 }).notNull(), // "admin" | "seller"
+  ownerId: uuid("owner_id"), // sellerId when ownerType = "seller", null for admin
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// DISCOUNT TARGETS
+// ===================================
+export const discountTargets = pgTable("discount_targets", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  discountId: uuid("discount_id")
+    .notNull()
+    .references(() => discounts.id, { onDelete: "cascade" }),
+
+  targetType: discountTargetTypeEnum("target_type").notNull(), // "all_products" | "product_ids"
+  productIds: jsonb("product_ids").$type<string[]>(), // Array of product IDs (nullable for all_products)
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ===================================
+// DISCOUNT CUSTOMERS (Many-to-Many for Specific Customer Eligibility)
+// ===================================
+export const discountCustomers = pgTable("discount_customers", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  discountId: uuid("discount_id")
+    .notNull()
+    .references(() => discounts.id, { onDelete: "cascade" }),
+  customerId: uuid("customer_id")
+    .notNull()
+    .references(() => customers.id, { onDelete: "cascade" }),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ===================================
+// ORDER DISCOUNTS (Applied Discount - Order Level)
+// ===================================
+export const orderDiscounts = pgTable("order_discounts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  discountId: uuid("discount_id").references(() => discounts.id, {
+    onDelete: "restrict",
+  }), // Nullable for custom discounts
+
+  code: varchar("code", { length: 100 }), // Snapshot of discount code
+  type: varchar("type", { length: 50 }).notNull(), // Snapshot of discount type
+  valueType: varchar("value_type", { length: 20 }).notNull(), // Snapshot: "fixed" | "percentage"
+  value: numeric("value", { precision: 10, scale: 2 }).notNull(), // Snapshot of discount value
+
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(), // Total discount amount applied
+  currency: varchar("currency", { length: 3 }).notNull(),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ===================================
+// ORDER ITEM DISCOUNTS (Line-Item Allocation)
+// ===================================
+export const orderItemDiscounts = pgTable("order_item_discounts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderItemId: uuid("order_item_id")
+    .notNull()
+    .references(() => orderItems.id, { onDelete: "cascade" }),
+  orderDiscountId: uuid("order_discount_id")
+    .notNull()
+    .references(() => orderDiscounts.id, { onDelete: "cascade" }),
+
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(), // Discount amount allocated to this line item
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ===================================
 // ORDER EVENTS (Timeline)
 // ===================================
 export const orderEvents = pgTable("order_events", {
@@ -1337,3 +1474,8 @@ export type OrderEvent = InferSelectModel<typeof orderEvents>;
 export type DraftOrder = InferSelectModel<typeof draftOrders>;
 export type DraftOrderItem = InferSelectModel<typeof draftOrderItems>;
 export type Market = InferSelectModel<typeof markets>;
+export type Discount = InferSelectModel<typeof discounts>;
+export type DiscountTarget = InferSelectModel<typeof discountTargets>;
+export type DiscountCustomer = InferSelectModel<typeof discountCustomers>;
+export type OrderDiscount = InferSelectModel<typeof orderDiscounts>;
+export type OrderItemDiscount = InferSelectModel<typeof orderItemDiscounts>;

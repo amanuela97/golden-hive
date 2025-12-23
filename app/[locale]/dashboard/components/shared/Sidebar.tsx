@@ -15,6 +15,7 @@ import {
   ChevronDown,
   Users,
   Globe,
+  Percent,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -54,6 +55,12 @@ const allNavItems: NavItem[] = [
     href: "/dashboard/products",
     icon: Package,
     children: [{ label: "Inventory", href: "/dashboard/inventory" }],
+    roles: ["admin", "seller"], // S, A
+  },
+  {
+    label: "Discounts",
+    href: "/dashboard/discounts",
+    icon: Percent,
     roles: ["admin", "seller"], // S, A
   },
   {

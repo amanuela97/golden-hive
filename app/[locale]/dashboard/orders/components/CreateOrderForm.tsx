@@ -75,6 +75,7 @@ import Image from "next/image";
 import countriesData from "@/data/countries.json";
 import { SetupBannerWrapper } from "../../components/shared/SetupBannerWrapper";
 import { SendDraftInvoiceDialog } from "./SendDraftInvoiceDialog";
+import { AddDiscountModal } from "./AddDiscountModal";
 
 type Country = {
   value: string;
@@ -312,6 +313,33 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
       null
     );
     const [storeOwnerEmail, setStoreOwnerEmail] = useState<string | null>(null);
+
+    // Discounts
+    const [appliedDiscount, setAppliedDiscount] = useState<{
+      discountId: string | null;
+      customDiscount: {
+        valueType: "fixed" | "percentage";
+        value: number;
+        currency?: string | null;
+        targets:
+          | { type: "all_products" }
+          | { type: "listing_ids"; listingIds: string[] };
+      } | null;
+      result: {
+        discountName: string;
+        discountCode: string | null;
+        valueType: "fixed" | "percentage";
+        value: number;
+        currency: string | null;
+        totalAmount: number;
+        allocations: Array<{
+          cartItemId: string;
+          discountId: string;
+          amount: number;
+        }>;
+      };
+    } | null>(null);
+    const [showDiscountModal, setShowDiscountModal] = useState(false);
 
     // Addresses
     const [shippingName, setShippingName] = useState("");
@@ -844,9 +872,13 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
       }, 0);
     }, [lineItems]);
 
+    const discountTotal = useMemo(() => {
+      return appliedDiscount ? appliedDiscount.result.totalAmount : 0;
+    }, [appliedDiscount]);
+
     const total = useMemo(() => {
-      return subtotal;
-    }, [subtotal]);
+      return subtotal - discountTotal;
+    }, [subtotal, discountTotal]);
 
     // Search products function
     const performSearch = useCallback(
@@ -1320,7 +1352,7 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
             })),
             currency: marketCurrency,
             subtotalAmount: subtotal.toFixed(2),
-            discountAmount: "0",
+            discountAmount: discountTotal.toFixed(2),
             shippingAmount: "0",
             taxAmount: "0",
             totalAmount: total.toFixed(2),
@@ -1397,7 +1429,7 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
             })),
             currency: marketCurrency,
             subtotalAmount: subtotal.toFixed(2),
-            discountAmount: "0",
+            discountAmount: discountTotal.toFixed(2),
             shippingAmount: "0",
             taxAmount: "0",
             totalAmount: total.toFixed(2),
@@ -1702,7 +1734,9 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
                               variant="outline"
                               size="icon"
                               className="h-8 w-8"
-                              onClick={() => !readOnly && handleUpdateQuantity(item.id, -1)}
+                              onClick={() =>
+                                !readOnly && handleUpdateQuantity(item.id, -1)
+                              }
                               disabled={readOnly}
                             >
                               <Minus className="h-4 w-4" />
@@ -1712,7 +1746,8 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
                               min="1"
                               value={item.quantity}
                               onChange={(e) =>
-                                !readOnly && handleSetQuantity(item.id, e.target.value)
+                                !readOnly &&
+                                handleSetQuantity(item.id, e.target.value)
                               }
                               className="w-16 text-center"
                               disabled={readOnly}
@@ -1722,9 +1757,12 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
                               variant="outline"
                               size="icon"
                               className="h-8 w-8"
-                              onClick={() => !readOnly && handleUpdateQuantity(item.id, 1)}
-                              disabled={readOnly}
-                              disabled={item.quantity >= item.available}
+                              onClick={() =>
+                                !readOnly && handleUpdateQuantity(item.id, 1)
+                              }
+                              disabled={
+                                item.quantity >= item.available || readOnly
+                              }
                             >
                               <Plus className="h-4 w-4" />
                             </Button>
@@ -1740,7 +1778,9 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
                             type="button"
                             variant="ghost"
                             size="icon"
-                            onClick={() => !readOnly && handleRemoveLineItem(item.id)}
+                            onClick={() =>
+                              !readOnly && handleRemoveLineItem(item.id)
+                            }
                             disabled={readOnly}
                             className="flex-shrink-0"
                           >
@@ -1756,7 +1796,7 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
               {/* Payment Card - Only show when products have been added */}
               {lineItems.length > 0 && (
                 <Card className="p-6">
-                  <h2 className="text-lg font-semibold mb-4">Payment</h2>
+                  <h2 className="text-lg font-semibold mb-4">Order Summary</h2>
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <div className="flex justify-between text-sm">
@@ -1765,6 +1805,72 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
                           {marketCurrency} {subtotal.toFixed(2)}
                         </span>
                       </div>
+
+                      {/* Discounts Section */}
+                      <div className="space-y-2 pt-2 border-t">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-sm font-medium">
+                              Discounts
+                            </span>
+                            {!appliedDiscount && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowDiscountModal(true)}
+                                className="ml-2 h-auto p-0 text-xs"
+                                disabled={readOnly}
+                              >
+                                <Plus className="h-3 w-3 mr-1" />
+                                Add discount
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        {appliedDiscount ? (
+                          <div className="flex items-center justify-between text-sm">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium">
+                                {appliedDiscount.result.discountName}
+                                {appliedDiscount.result.discountCode && (
+                                  <span className="text-muted-foreground ml-1">
+                                    ({appliedDiscount.result.discountCode})
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {appliedDiscount.result.valueType ===
+                                "percentage"
+                                  ? `${appliedDiscount.result.value}% off`
+                                  : `${appliedDiscount.result.currency || marketCurrency} ${appliedDiscount.result.value} off`}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-destructive">
+                                -{marketCurrency}{" "}
+                                {appliedDiscount.result.totalAmount.toFixed(2)}
+                              </span>
+                              {!readOnly && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6"
+                                  onClick={() => setAppliedDiscount(null)}
+                                >
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-muted-foreground">
+                            No discounts applied
+                          </div>
+                        )}
+                      </div>
+
                       <div className="flex justify-between font-semibold pt-2 border-t">
                         <span>Total:</span>
                         <span>
@@ -1963,7 +2069,9 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
                           setPaymentStatus("paid");
                           setShowMarkAsPaidDialog(true);
                         }}
-                        disabled={loading || paymentStatus === "paid" || readOnly}
+                        disabled={
+                          loading || paymentStatus === "paid" || readOnly
+                        }
                       >
                         <CreditCard className="h-4 w-4 mr-2" />
                         Mark as Paid
@@ -1987,7 +2095,9 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
                       onValueChange={(value) => {
                         setSelectedMarketId(value);
                       }}
-                      disabled={loadingMarkets || markets.length === 0 || readOnly}
+                      disabled={
+                        loadingMarkets || markets.length === 0 || readOnly
+                      }
                     >
                       <SelectTrigger>
                         <SelectValue
@@ -2207,6 +2317,26 @@ const CreateOrderForm = forwardRef<CreateOrderFormRef, CreateOrderFormProps>(
             </div>
           )}
         </form>
+
+        {/* Add Discount Modal */}
+        <AddDiscountModal
+          open={showDiscountModal}
+          onOpenChange={setShowDiscountModal}
+          cartItems={lineItems.map((item) => ({
+            id: item.id,
+            listingId: item.listingId,
+            variantId: item.variantId,
+            name: item.title,
+            price: parseFloat(item.unitPrice),
+            quantity: item.quantity,
+          }))}
+          customerId={selectedCustomerId}
+          currency={marketCurrency}
+          onApply={(discount) => {
+            setAppliedDiscount(discount);
+            setShowDiscountModal(false);
+          }}
+        />
 
         {/* Send Invoice Dialog */}
         <SendDraftInvoiceDialog

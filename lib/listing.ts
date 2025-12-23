@@ -15,7 +15,7 @@ import {
 // Re-export the Listing type for use in components
 export type { Listing };
 import { uploadFile, uploadFiles, deleteFile, deleteFiles } from "./cloudinary";
-import { eq, and, sql, or, inArray, isNotNull } from "drizzle-orm";
+import { eq, and, sql, inArray, isNotNull } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { translateText } from "./translate";
 import { findCategoryById } from "./taxonomy";
@@ -268,8 +268,10 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
           );
         }
         if (variant.options) {
-          if (variant.options && typeof variant.options === 'object') {
-            Object.keys(variant.options).forEach((key) => allOptionKeys.add(key));
+          if (variant.options && typeof variant.options === "object") {
+            Object.keys(variant.options).forEach((key) =>
+              allOptionKeys.add(key)
+            );
           }
         }
       }
@@ -413,10 +415,10 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
     // Always create inventory, using provided location or default location
     if (createdVariants.length > 0) {
       let locationId = data.inventoryLocationId;
-      
+
       // If no location provided, get default location for the store
       if (!locationId) {
-        locationId = await getDefaultInventoryLocation(storeId);
+        locationId = (await getDefaultInventoryLocation(storeId)) || undefined;
       }
 
       // Only create inventory if we have a location
@@ -769,7 +771,10 @@ export async function getListings(): Promise<Listing[]> {
 /**
  * Get all listings with user information for admin management (uses English translations)
  */
-export async function getAllListingsWithUsers(): Promise<
+export async function getAllListingsWithUsers(p0: {
+  page: number;
+  pageSize: number;
+}): Promise<
   Array<
     Listing & {
       producerName: string;
@@ -834,7 +839,7 @@ export async function getAllListingsWithUsers(): Promise<
     const adminEmails = process.env.ADMIN_LIST?.split(",") || [];
 
     // Get inventory info for all listings in parallel
-    const listingIds = result.map(r => r.id);
+    const listingIds = result.map((r) => r.id);
     const inventoryData = await db
       .select({
         listingId: listingVariants.listingId,
@@ -842,8 +847,14 @@ export async function getAllListingsWithUsers(): Promise<
         totalStock: sql<number>`COALESCE(SUM(${inventoryLevels.available})::int, 0)`,
       })
       .from(listingVariants)
-      .leftJoin(inventoryItems, eq(inventoryItems.variantId, listingVariants.id))
-      .leftJoin(inventoryLevels, eq(inventoryLevels.inventoryItemId, inventoryItems.id))
+      .leftJoin(
+        inventoryItems,
+        eq(inventoryItems.variantId, listingVariants.id)
+      )
+      .leftJoin(
+        inventoryLevels,
+        eq(inventoryLevels.inventoryItemId, inventoryItems.id)
+      )
       .where(inArray(listingVariants.listingId, listingIds))
       .groupBy(listingVariants.listingId);
 
@@ -981,7 +992,8 @@ export async function getAllListingsWithUsers(): Promise<
  * Get listings by producer ID (seller dashboard - uses English translations)
  */
 export async function getListingsByProducer(
-  producerId: string
+  producerId: string,
+  p0: { page: number; pageSize: number }
 ): Promise<Listing[]> {
   try {
     // Fetch listings with English translations (seller dashboard uses English)
@@ -1031,7 +1043,7 @@ export async function getListingsByProducer(
       .orderBy(listing.createdAt);
 
     // Get inventory info for all listings in parallel
-    const listingIds = result.map(r => r.id);
+    const listingIds = result.map((r) => r.id);
     const inventoryData = await db
       .select({
         listingId: listingVariants.listingId,
@@ -1039,8 +1051,14 @@ export async function getListingsByProducer(
         totalStock: sql<number>`COALESCE(SUM(${inventoryLevels.available})::int, 0)`,
       })
       .from(listingVariants)
-      .leftJoin(inventoryItems, eq(inventoryItems.variantId, listingVariants.id))
-      .leftJoin(inventoryLevels, eq(inventoryLevels.inventoryItemId, inventoryItems.id))
+      .leftJoin(
+        inventoryItems,
+        eq(inventoryItems.variantId, listingVariants.id)
+      )
+      .leftJoin(
+        inventoryLevels,
+        eq(inventoryLevels.inventoryItemId, inventoryItems.id)
+      )
       .where(inArray(listingVariants.listingId, listingIds))
       .groupBy(listingVariants.listingId);
 
@@ -1469,10 +1487,12 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
           // Always create inventory item and level for new variants
           if (newVariant[0]) {
             let locationId = updateData.inventoryLocationId;
-            
+
             // If no location provided, get default location for the store
             if (!locationId) {
-              locationId = await getDefaultInventoryLocation(existingListing.storeId);
+              locationId =
+                (await getDefaultInventoryLocation(existingListing.storeId)) ||
+                undefined;
             }
 
             // Only create inventory if we have a location
@@ -1490,75 +1510,77 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
         // Always ensure inventory exists for existing variants
         if (variantData.id && existingVariantIds.has(variantData.id)) {
           let locationId = updateData.inventoryLocationId;
-          
+
           // If no location provided, get default location for the store
           if (!locationId) {
-            locationId = await getDefaultInventoryLocation(existingListing.storeId);
+            locationId =
+              (await getDefaultInventoryLocation(existingListing.storeId)) ||
+              undefined;
           }
 
           // Only create/update inventory if we have a location
           if (locationId) {
-          // Check if inventory item exists
-          const existingInventoryItem = await db
-            .select()
-            .from(inventoryItems)
-            .where(eq(inventoryItems.variantId, variantData.id))
-            .limit(1);
-
-          if (existingInventoryItem.length > 0) {
-            // Update cost per item
-            await db
-              .update(inventoryItems)
-              .set({
-                costPerItem: variantData.costPerItem
-                  ? variantData.costPerItem.toString()
-                  : "0",
-                updatedAt: new Date(),
-              })
-              .where(eq(inventoryItems.id, existingInventoryItem[0].id));
-
-            // Update inventory level
-            const existingLevel = await db
+            // Check if inventory item exists
+            const existingInventoryItem = await db
               .select()
-              .from(inventoryLevels)
-              .where(
-                and(
-                  eq(
-                    inventoryLevels.inventoryItemId,
-                    existingInventoryItem[0].id
-                  ),
-                  eq(inventoryLevels.locationId, locationId)
-                )
-              )
+              .from(inventoryItems)
+              .where(eq(inventoryItems.variantId, variantData.id))
               .limit(1);
 
-            if (existingLevel.length > 0) {
+            if (existingInventoryItem.length > 0) {
+              // Update cost per item
               await db
-                .update(inventoryLevels)
+                .update(inventoryItems)
                 .set({
-                  available: variantData.initialStock || 0,
+                  costPerItem: variantData.costPerItem
+                    ? variantData.costPerItem.toString()
+                    : "0",
                   updatedAt: new Date(),
                 })
-                .where(eq(inventoryLevels.id, existingLevel[0].id));
+                .where(eq(inventoryItems.id, existingInventoryItem[0].id));
+
+              // Update inventory level
+              const existingLevel = await db
+                .select()
+                .from(inventoryLevels)
+                .where(
+                  and(
+                    eq(
+                      inventoryLevels.inventoryItemId,
+                      existingInventoryItem[0].id
+                    ),
+                    eq(inventoryLevels.locationId, locationId)
+                  )
+                )
+                .limit(1);
+
+              if (existingLevel.length > 0) {
+                await db
+                  .update(inventoryLevels)
+                  .set({
+                    available: variantData.initialStock || 0,
+                    updatedAt: new Date(),
+                  })
+                  .where(eq(inventoryLevels.id, existingLevel[0].id));
+              } else {
+                // Create new inventory level
+                await db.insert(inventoryLevels).values({
+                  inventoryItemId: existingInventoryItem[0].id,
+                  locationId: locationId,
+                  available: variantData.initialStock || 0,
+                  committed: 0,
+                  incoming: 0,
+                });
+              }
             } else {
-              // Create new inventory level
-              await db.insert(inventoryLevels).values({
-                inventoryItemId: existingInventoryItem[0].id,
-                locationId: locationId,
-                available: variantData.initialStock || 0,
-                committed: 0,
-                incoming: 0,
-              });
+              // Create inventory item and level if they don't exist
+              await createInventoryForVariant(
+                variantData.id,
+                locationId,
+                variantData.initialStock || 0,
+                variantData.costPerItem
+              );
             }
-          } else {
-            // Create inventory item and level if they don't exist
-            await createInventoryForVariant(
-              variantData.id,
-              locationId,
-              variantData.initialStock || 0,
-              variantData.costPerItem
-            );
-          }
           }
         }
       }
