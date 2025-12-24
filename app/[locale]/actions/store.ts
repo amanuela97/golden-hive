@@ -2,17 +2,17 @@
 
 import { ActionResponse } from "@/lib/types";
 import { db } from "@/db";
-import { store, storeMembers, roles, userRoles } from "@/db/schema";
+import { store, storeMembers, storeSlugHistory } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { uploadFile } from "@/lib/cloudinary";
 import { revalidatePath } from "next/cache";
+import { slugify, generateUniqueSlug } from "@/lib/slug-utils";
 
 export interface StoreData {
   storeName: string;
   logoUrl?: string | null;
-  description?: string | null;
   storeCurrency: string;
   unitSystem: "Metric system" | "Imperial system";
 }
@@ -32,7 +32,6 @@ export async function getStoreByUserId(
         id: store.id,
         storeName: store.storeName,
         logoUrl: store.logoUrl,
-        description: store.description,
         storeCurrency: store.storeCurrency,
         unitSystem: store.unitSystem,
       })
@@ -54,7 +53,6 @@ export async function getStoreByUserId(
         id: result[0].id,
         storeName: result[0].storeName,
         logoUrl: result[0].logoUrl,
-        description: result[0].description,
         storeCurrency: result[0].storeCurrency,
         unitSystem: result[0].unitSystem as "Metric system" | "Imperial system",
       },
@@ -144,25 +142,6 @@ export async function upsertStore(
 
     const currentUser = session.user;
 
-    // Get user role
-    const userRole = await db
-      .select({
-        roleName: roles.name,
-      })
-      .from(userRoles)
-      .innerJoin(roles, eq(userRoles.roleId, roles.id))
-      .where(eq(userRoles.userId, currentUser.id))
-      .limit(1);
-
-    const isAdmin =
-      userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
-
-    // Upload logo if provided
-    let logoUrl: string | null = null;
-    if (logoFile) {
-      logoUrl = await uploadFile(logoFile, `store_logos/${currentUser.id}`);
-    }
-
     // Get user's store through storeMembers
     const userStore = await db
       .select({
@@ -173,28 +152,78 @@ export async function upsertStore(
       .where(eq(storeMembers.userId, currentUser.id))
       .limit(1);
 
-    const storeData = {
-      storeName: data.storeName.trim(),
-      logoUrl: logoUrl || data.logoUrl || null,
-      description: data.description?.trim() || null,
-      storeCurrency: data.storeCurrency,
-      unitSystem: data.unitSystem,
-      updatedAt: new Date(),
-    };
+    let storeId: string;
 
-    if (userStore.length > 0) {
-      // Update existing store
-      await db
-        .update(store)
-        .set(storeData)
-        .where(eq(store.id, userStore[0].storeId));
+    if (userStore.length === 0) {
+      // Create new store if it doesn't exist
+      const baseSlug = slugify(data.storeName.trim() || "store");
+      const uniqueSlug = await generateUniqueSlug(db, baseSlug);
+      const slugLower = uniqueSlug.toLowerCase();
+
+      // Upload logo if provided (we'll need to create store first to get storeId)
+      let logoUrl: string | null = null;
+
+      const newStore = await db
+        .insert(store)
+        .values({
+          storeName: data.storeName.trim(),
+          slug: uniqueSlug,
+          slugLower: slugLower,
+          storeCurrency: data.storeCurrency,
+          unitSystem: data.unitSystem,
+          logoUrl: null, // Will update after upload if needed
+        })
+        .returning();
+
+      storeId = newStore[0].id;
+
+      // Upload logo if provided
+      if (logoFile) {
+        logoUrl = await uploadFile(logoFile, `store/${storeId}/logo`);
+        // Update store with logo URL
+        await db.update(store).set({ logoUrl }).where(eq(store.id, storeId));
+      } else if (data.logoUrl) {
+        // Update with provided logo URL
+        await db
+          .update(store)
+          .set({ logoUrl: data.logoUrl })
+          .where(eq(store.id, storeId));
+      }
+
+      // Create store member relationship
+      await db.insert(storeMembers).values({
+        storeId,
+        userId: currentUser.id,
+        role: "seller", // Default role for new stores
+      });
+
+      // Create initial slug history entry
+      await db.insert(storeSlugHistory).values({
+        storeId,
+        slug: uniqueSlug,
+        slugLower: slugLower,
+        isActive: true,
+      });
     } else {
-      // This shouldn't happen if store setup flow works correctly
-      // But handle it gracefully
-      return {
-        success: false,
-        error: "Store not found. Please set up your store first.",
+      // Update existing store
+      storeId = userStore[0].storeId;
+
+      // Upload logo if provided
+      let logoUrl: string | null = null;
+      if (logoFile) {
+        logoUrl = await uploadFile(logoFile, `store/${storeId}/logo`);
+      }
+
+      const storeData = {
+        storeName: data.storeName.trim(),
+        logoUrl: logoUrl || data.logoUrl || null,
+        storeCurrency: data.storeCurrency,
+        unitSystem: data.unitSystem,
+        updatedAt: new Date(),
       };
+
+      // Update existing store
+      await db.update(store).set(storeData).where(eq(store.id, storeId));
     }
 
     revalidatePath("/dashboard/settings/store");

@@ -169,7 +169,7 @@ export function Footer() {
 
         {/* Copyright */}
         <div className="mt-12 border-t border-neutral-800 pt-8 text-center text-sm">
-          <p>© {new Date().getFullYear()} Golden Hive & Nandan</p>
+          <p>© {new Date().getFullYear()} Golden Market</p>
         </div>
       </div>
     </footer>

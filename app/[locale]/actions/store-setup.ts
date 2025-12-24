@@ -14,6 +14,8 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { autoAssignMarketToUser, getDefaultMarket } from "./markets";
 import { getStoreIdForUser } from "./store-members";
+import { slugify, generateUniqueSlug } from "@/lib/slug-utils";
+import { storeSlugHistory } from "@/db/schema";
 
 export interface CreateStoreInput {
   storeName: string;
@@ -99,10 +101,17 @@ export async function createStoreForUser(input: CreateStoreInput): Promise<{
           }
         } else {
           // Create new admin store
+          const baseSlug = slugify(input.storeName.trim() || "store");
+          const uniqueSlug = await generateUniqueSlug(tx, baseSlug);
+          const slugLower = uniqueSlug.toLowerCase();
+
           const newStore = await tx
             .insert(store)
             .values({
               storeName: input.storeName.trim(),
+              slug: uniqueSlug,
+              slugLower: slugLower,
+              visibility: "hidden",
               storeCurrency: input.storeCurrency,
               unitSystem: input.unitSystem,
             })
@@ -116,13 +125,28 @@ export async function createStoreForUser(input: CreateStoreInput): Promise<{
             userId,
             role: "admin",
           });
+
+          // Create initial slug history entry
+          await tx.insert(storeSlugHistory).values({
+            storeId,
+            slug: uniqueSlug,
+            slugLower: slugLower,
+            isActive: true,
+          });
         }
       } else {
         // For sellers: create their own store
+        const baseSlug = slugify(input.storeName.trim() || "store");
+        const uniqueSlug = await generateUniqueSlug(tx, baseSlug);
+        const slugLower = uniqueSlug.toLowerCase();
+
         const newStore = await tx
           .insert(store)
           .values({
             storeName: input.storeName.trim(),
+            slug: uniqueSlug,
+            slugLower: slugLower,
+            visibility: "hidden",
             storeCurrency: input.storeCurrency,
             unitSystem: input.unitSystem,
           })
@@ -135,6 +159,14 @@ export async function createStoreForUser(input: CreateStoreInput): Promise<{
           storeId,
           userId,
           role: "seller",
+        });
+
+        // Create initial slug history entry
+        await tx.insert(storeSlugHistory).values({
+          storeId,
+          slug: uniqueSlug,
+          slugLower: slugLower,
+          isActive: true,
         });
       }
 

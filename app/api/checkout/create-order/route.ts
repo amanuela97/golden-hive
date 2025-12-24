@@ -7,6 +7,8 @@ import {
   listingVariants,
   customers,
   store,
+  orderDiscounts,
+  discounts,
 } from "@/db/schema";
 import { eq, inArray, and } from "drizzle-orm";
 
@@ -22,12 +24,15 @@ interface CreateOrderRequest {
     unitPrice: string;
     title: string;
     sku?: string | null;
+    discountAmount?: string;
+    discountId?: string | null;
   }>;
   currency: string;
   subtotalAmount: string;
   shippingAmount?: string;
   taxAmount?: string;
   discountAmount?: string;
+  discountId?: string | null;
   totalAmount: string;
   shippingName?: string | null;
   shippingPhone?: string | null;
@@ -181,7 +186,31 @@ export async function POST(req: NextRequest) {
           (sum, item) => sum + parseFloat(item.unitPrice) * item.quantity,
           0
         );
-        // Pro-rate shipping, tax, and discount based on store's subtotal percentage
+        
+        // Calculate discount for this store's items based on item-level discounts
+        // If item-level discount information is provided, use it; otherwise pro-rate
+        let storeDiscount = 0;
+        if (body.lineItems.some((item) => item.discountAmount && parseFloat(item.discountAmount || "0") > 0)) {
+          // Calculate discount from item-level discount amounts
+          for (const item of storeLineItems) {
+            const originalItem = body.lineItems.find(
+              (li) => li.listingId === item.listingId && li.variantId === item.variantId
+            );
+            if (originalItem?.discountAmount) {
+              storeDiscount += parseFloat(originalItem.discountAmount);
+            }
+          }
+        } else {
+          // Fallback: Pro-rate discount based on store's subtotal percentage
+          const totalSubtotal = body.lineItems.reduce(
+            (sum, item) => sum + parseFloat(item.unitPrice) * item.quantity,
+            0
+          );
+          const storePercentage = totalSubtotal > 0 ? storeSubtotal / totalSubtotal : 1 / storeIds.length;
+          storeDiscount = parseFloat(body.discountAmount || "0") * storePercentage;
+        }
+        
+        // Pro-rate shipping and tax based on store's subtotal percentage
         const totalSubtotal = body.lineItems.reduce(
           (sum, item) => sum + parseFloat(item.unitPrice) * item.quantity,
           0
@@ -189,12 +218,12 @@ export async function POST(req: NextRequest) {
         const storePercentage = totalSubtotal > 0 ? storeSubtotal / totalSubtotal : 1 / storeIds.length;
         const storeShipping = (parseFloat(body.shippingAmount || "0") * storePercentage).toFixed(2);
         const storeTax = (parseFloat(body.taxAmount || "0") * storePercentage).toFixed(2);
-        const storeDiscount = (parseFloat(body.discountAmount || "0") * storePercentage).toFixed(2);
+        const storeDiscountStr = storeDiscount.toFixed(2);
         const storeTotal = (
           storeSubtotal +
           parseFloat(storeShipping) +
           parseFloat(storeTax) -
-          parseFloat(storeDiscount)
+          storeDiscount
         ).toFixed(2);
 
         // Get variant prices if needed
@@ -225,7 +254,7 @@ export async function POST(req: NextRequest) {
             customerLastName: body.customerLastName || null,
             currency: body.currency,
             subtotalAmount: storeSubtotal.toFixed(2),
-            discountAmount: storeDiscount,
+            discountAmount: storeDiscountStr,
             shippingAmount: storeShipping,
             taxAmount: storeTax,
             totalAmount: storeTotal,
@@ -256,20 +285,94 @@ export async function POST(req: NextRequest) {
         const orderId = newOrder[0].id;
         const orderNumber = newOrder[0].orderNumber;
 
+        // Create order discounts for this store's items
+        // Collect unique discount IDs used by items in this store
+        const storeDiscountIds = new Set<string>();
+        let storeTotalDiscountAmount = 0;
+        
+        for (const item of storeLineItems) {
+          const originalItem = body.lineItems.find(
+            (li) => li.listingId === item.listingId && li.variantId === item.variantId
+          );
+          if (originalItem?.discountId && originalItem?.discountAmount) {
+            const itemDiscountAmount = parseFloat(originalItem.discountAmount);
+            if (itemDiscountAmount > 0) {
+              storeDiscountIds.add(originalItem.discountId);
+              storeTotalDiscountAmount += itemDiscountAmount;
+            }
+          }
+        }
+        
+        // Create order discount records for each unique discount used
+        // If multiple discounts are used, we'll create multiple orderDiscount records
+        // But for now, we'll create one record with the total amount
+        if (storeDiscountIds.size > 0 && storeTotalDiscountAmount > 0) {
+          // Get the primary discount (first one, or we could use the one with highest amount)
+          const primaryDiscountId = Array.from(storeDiscountIds)[0];
+          const discountData = await tx
+            .select()
+            .from(discounts)
+            .where(eq(discounts.id, primaryDiscountId))
+            .limit(1);
+
+          if (discountData.length > 0) {
+            const discount = discountData[0];
+            await tx.insert(orderDiscounts).values({
+              orderId: orderId,
+              discountId: discount.id,
+              code: discount.code,
+              type: discount.type,
+              valueType: discount.valueType,
+              value: discount.value,
+              amount: storeTotalDiscountAmount.toFixed(2),
+              currency: body.currency,
+            });
+          }
+        } else if (body.discountId && parseFloat(storeDiscountStr) > 0) {
+          // Fallback: Use the provided discountId if no item-level discounts
+          const discountData = await tx
+            .select()
+            .from(discounts)
+            .where(eq(discounts.id, body.discountId))
+            .limit(1);
+
+          if (discountData.length > 0) {
+            const discount = discountData[0];
+            await tx.insert(orderDiscounts).values({
+              orderId: orderId,
+              discountId: discount.id,
+              code: discount.code,
+              type: discount.type,
+              valueType: discount.valueType,
+              value: discount.value,
+              amount: storeDiscountStr,
+              currency: body.currency,
+            });
+          }
+        }
+
         createdOrders.push({
           orderId,
           orderNumber: Number(orderNumber),
           storeId,
         });
 
-        // Create order items for this store
+        // Create order items for this store with item-level discounts
         for (const item of storeLineItems) {
           const variant = item.variantId
             ? variants.find((v) => v.id === item.variantId)
             : null;
           const unitPrice = variant?.price || item.unitPrice;
           const lineSubtotal = (parseFloat(unitPrice) * item.quantity).toFixed(2);
-          const lineTotal = lineSubtotal;
+          
+          // Get discount amount for this specific item
+          const originalItem = body.lineItems.find(
+            (li) => li.listingId === item.listingId && li.variantId === item.variantId
+          );
+          const itemDiscountAmount = originalItem?.discountAmount 
+            ? parseFloat(originalItem.discountAmount) 
+            : 0;
+          const lineTotal = (parseFloat(lineSubtotal) - itemDiscountAmount).toFixed(2);
 
           await tx.insert(orderItems).values({
             orderId: orderId,
@@ -282,7 +385,7 @@ export async function POST(req: NextRequest) {
             currency: body.currency,
             lineSubtotal: lineSubtotal,
             lineTotal: lineTotal,
-            discountAmount: "0",
+            discountAmount: itemDiscountAmount.toFixed(2),
             taxAmount: "0",
           });
         }

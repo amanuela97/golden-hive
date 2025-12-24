@@ -10,7 +10,6 @@ import {
   ShoppingCart,
   Package,
   FileText,
-  BarChart3,
   Settings,
   ChevronDown,
   Users,
@@ -68,12 +67,6 @@ const allNavItems: NavItem[] = [
     href: "/dashboard/documentation",
     icon: FileText,
     roles: ["admin", "seller"], // S, A
-  },
-  {
-    label: "Analytics",
-    href: "/dashboard/analytics",
-    icon: BarChart3,
-    roles: ["admin", "seller"], // A, S,
   },
   {
     label: "Markets",

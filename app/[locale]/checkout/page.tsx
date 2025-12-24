@@ -21,6 +21,14 @@ import { useState, useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
 import { getShippingBillingInfo } from "../actions/shipping-billing";
 import { Link, useRouter } from "@/i18n/navigation";
+import {
+  getDiscountByCodeForCheckout,
+  evaluateDiscountForCheckout,
+  getAutomaticDiscountsForCheckout,
+  findBestDiscountForCheckout,
+} from "../actions/order-discounts";
+import { X, AlertCircle, Info } from "lucide-react";
+import toast from "react-hot-toast";
 
 export default function CheckoutPage() {
   const { items, total, clearCart } = useCart();
@@ -30,6 +38,45 @@ export default function CheckoutPage() {
   const [shipToDifferentAddress, setShipToDifferentAddress] = useState(false);
   const [loadingSavedInfo, setLoadingSavedInfo] = useState(true);
   const [orderNotes, setOrderNotes] = useState("");
+  
+  // Discount state
+  const [discountCode, setDiscountCode] = useState("");
+  const [applyingDiscount, setApplyingDiscount] = useState(false);
+  const [appliedDiscount, setAppliedDiscount] = useState<{
+    discountId: string;
+    discountName: string;
+    discountCode: string | null;
+    valueType: "fixed" | "percentage";
+    value: number;
+    currency: string | null;
+    totalAmount: number;
+    allocations?: Array<{
+      cartItemId: string;
+      discountId: string;
+      amount: number;
+    }>;
+    appliedDiscountNames?: string[]; // All discount names that are applied
+    eligibilityInfo?: {
+      customerEligibilityType: "all" | "specific";
+      minPurchaseAmount: number | null;
+      minPurchaseQuantity: number | null;
+    };
+  } | null>(null);
+  const [discountError, setDiscountError] = useState<string | null>(null);
+  const [betterDiscountMessage, setBetterDiscountMessage] = useState<string | null>(null);
+  const [availableDiscounts, setAvailableDiscounts] = useState<Array<{
+    id: string;
+    name: string;
+    code: string | null;
+    evaluationResult?: {
+      canApply: boolean;
+      reason?: string;
+      missingAmount?: number;
+      missingQuantity?: number;
+    };
+  }>>([]);
+  const [checkingDiscounts, setCheckingDiscounts] = useState(false);
+  const [hasDiscountsWithCodes, setHasDiscountsWithCodes] = useState(false);
 
   // Form state
   const [billingData, setBillingData] = useState({
@@ -104,16 +151,284 @@ export default function CheckoutPage() {
     loadSavedInfo();
   }, [session]);
 
+  // Automatically find and apply best discount when items or email change
+  useEffect(() => {
+    async function checkAutomaticDiscounts() {
+      if (items.length === 0) {
+        setAppliedDiscount(null);
+        setAvailableDiscounts([]);
+        return;
+      }
+
+      setCheckingDiscounts(true);
+      try {
+        const cartItemsForEvaluation = items.map((item) => ({
+          id: item.id,
+          listingId: item.listingId,
+          variantId: item.variantId || null,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+        }));
+
+        // Find the best discount (only automatic ones without codes for auto-apply)
+        const bestDiscountResult = await findBestDiscountForCheckout(
+          cartItemsForEvaluation,
+          billingData.email || null,
+          undefined, // excludeDiscountId
+          true // excludeDiscountsWithCodes - only auto-apply discounts without codes
+        );
+
+        if (bestDiscountResult.success && bestDiscountResult.bestDiscount) {
+          const best = bestDiscountResult.bestDiscount;
+          
+          // Only auto-apply if it doesn't require a code
+          if (!best.discountCode) {
+            // Check if we already have this discount applied
+            if (!appliedDiscount || appliedDiscount.discountId !== best.discountId) {
+              setAppliedDiscount({
+                discountId: best.discountId,
+                discountName: best.discountName,
+                discountCode: best.discountCode,
+                valueType: best.valueType,
+                value: best.value,
+                currency: best.currency,
+                totalAmount: best.totalAmount,
+                allocations: best.allocations,
+                appliedDiscountNames: best.appliedDiscountNames,
+                eligibilityInfo: best.eligibilityInfo,
+              });
+              setBetterDiscountMessage(null);
+            }
+          }
+        }
+
+        // Get all automatic discounts to show requirements
+        const automaticDiscountsResult = await getAutomaticDiscountsForCheckout(
+          cartItemsForEvaluation,
+          billingData.email || null
+        );
+
+        if (automaticDiscountsResult.success && automaticDiscountsResult.discounts) {
+          // Check if there are any discounts with codes that could apply
+          const discountsWithCodes = automaticDiscountsResult.discounts.filter(
+            (d) => d.code && d.evaluationResult && d.evaluationResult.canApply
+          );
+          setHasDiscountsWithCodes(discountsWithCodes.length > 0);
+
+          // Only show discounts that apply to cart items but don't meet requirements
+          // Filter out discounts that don't apply to any items
+          setAvailableDiscounts(
+            automaticDiscountsResult.discounts
+              .filter((d) => {
+                // Only show if it applies to items but can't be applied (due to requirements)
+                // Don't show if it doesn't apply to any items at all
+                return d.evaluationResult && !d.evaluationResult.canApply && 
+                       d.evaluationResult.reason !== "Discount does not apply to any items in cart";
+              })
+              .map((d) => ({
+                id: d.id,
+                name: d.name,
+                code: d.code,
+                evaluationResult: d.evaluationResult,
+              }))
+          );
+        } else {
+          setHasDiscountsWithCodes(false);
+        }
+      } catch (error) {
+        console.error("Error checking automatic discounts:", error);
+      } finally {
+        setCheckingDiscounts(false);
+      }
+    }
+
+    // Debounce to avoid too many calls
+    const timeoutId = setTimeout(() => {
+      checkAutomaticDiscounts();
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.length, billingData.email, appliedDiscount?.discountId]);
+
+  const handleApplyDiscount = async () => {
+    if (!discountCode.trim()) {
+      setDiscountError("Please enter a discount code");
+      return;
+    }
+
+    setApplyingDiscount(true);
+    setDiscountError(null);
+
+    try {
+      // First, get discount by code
+      const discountResult = await getDiscountByCodeForCheckout(
+        discountCode.trim().toUpperCase()
+      );
+
+      if (!discountResult.success || !discountResult.discount) {
+        setDiscountError(
+          discountResult.error || "Discount code not found or expired"
+        );
+        return;
+      }
+
+      const discount = discountResult.discount;
+
+      // Check eligibility info
+      if (discount.customerEligibilityType === "specific") {
+        // For specific customers, we need to check if customer email matches
+        // We'll evaluate it and show appropriate message
+      }
+
+      // Evaluate discount against cart items
+      const cartItemsForEvaluation = items.map((item) => ({
+        id: item.id,
+        listingId: item.listingId,
+        variantId: item.variantId || null,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+      }));
+
+      // Check if there's already a better discount applied
+      const bestDiscountResult = await findBestDiscountForCheckout(
+        cartItemsForEvaluation,
+        billingData.email || null,
+        discount.id // Exclude the code discount we're trying to apply
+      );
+
+      const evaluationResult = await evaluateDiscountForCheckout(
+        discount.id,
+        cartItemsForEvaluation,
+        billingData.email || null
+      );
+
+      if (!evaluationResult.success || !evaluationResult.result) {
+        let errorMessage = evaluationResult.validationError || evaluationResult.error || "Failed to apply discount";
+        
+        // Add helpful context about requirements
+        if (evaluationResult.eligibilityInfo) {
+          const info = evaluationResult.eligibilityInfo;
+          if (info.customerEligibilityType === "specific") {
+            errorMessage = "This discount is only available to specific customers. Please sign in or contact support.";
+          } else if (info.minPurchaseAmount) {
+            errorMessage = `Minimum purchase of ${discount.currency || "€"}${info.minPurchaseAmount} required. Add €${(info.minPurchaseAmount - total).toFixed(2)} more to your cart.`;
+          } else if (info.minPurchaseQuantity) {
+            errorMessage = `Minimum quantity of ${info.minPurchaseQuantity} items required.`;
+          }
+        }
+        
+        setDiscountError(errorMessage);
+        return;
+      }
+
+      // Check if the new discount applies to different items than the currently applied discount
+      // If they apply to different items, we should combine them using evaluateBestDiscountsPerItem
+      const newDiscountItemIds = new Set(
+        evaluationResult.result.allocations?.map((a) => a.cartItemId) || []
+      );
+      const appliedDiscountItemIds = new Set(
+        appliedDiscount?.allocations?.map((a) => a.cartItemId) || []
+      );
+      
+      // Check if discounts apply to overlapping items
+      const hasOverlap = Array.from(newDiscountItemIds).some((id) =>
+        appliedDiscountItemIds.has(id)
+      );
+      
+      // If discounts apply to the same items (overlap), check which is better
+      if (appliedDiscount && hasOverlap) {
+        // They apply to some of the same items, check if the applied discount is better
+        if (appliedDiscount.totalAmount > evaluationResult.result.totalAmount) {
+          setBetterDiscountMessage(
+            `A better discount (${appliedDiscount.discountName}) is already applied to these items. Only one discount can be applied per item.`
+          );
+          setDiscountError(null);
+          return;
+        }
+        // If the new discount is better for overlapping items, we'll replace via findBestDiscountForCheckout below
+      }
+      
+      // If discounts apply to different items (no overlap), we should combine them
+      // Always use findBestDiscountForCheckout to evaluate all discounts and pick best per item
+      // This handles both cases: different items (combine) and same items (pick best)
+
+      // Successfully applied discount
+      // When a code is entered, re-evaluate all discounts to get the best per item
+      // This ensures we show all discount names if multiple discounts apply
+      const allBestDiscountResult = await findBestDiscountForCheckout(
+        cartItemsForEvaluation,
+        billingData.email || null,
+        undefined, // excludeDiscountId
+        false // include discounts with codes since user entered a code
+      );
+      
+      if (allBestDiscountResult.success && allBestDiscountResult.bestDiscount) {
+        const best = allBestDiscountResult.bestDiscount;
+        setAppliedDiscount({
+          discountId: best.discountId,
+          discountName: best.discountName,
+          discountCode: best.discountCode,
+          valueType: best.valueType,
+          value: best.value,
+          currency: best.currency,
+          totalAmount: best.totalAmount,
+          allocations: best.allocations,
+          appliedDiscountNames: best.appliedDiscountNames,
+          eligibilityInfo: best.eligibilityInfo,
+        });
+      } else {
+        // Fallback to the evaluation result if re-evaluation fails
+        setAppliedDiscount({
+          discountId: discount.id,
+          discountName: evaluationResult.result.discountName,
+          discountCode: evaluationResult.result.discountCode,
+          valueType: evaluationResult.result.valueType,
+          value: evaluationResult.result.value,
+          currency: evaluationResult.result.currency,
+          totalAmount: evaluationResult.result.totalAmount,
+          allocations: evaluationResult.result.allocations,
+          appliedDiscountNames: [evaluationResult.result.discountName],
+          eligibilityInfo: evaluationResult.eligibilityInfo,
+        });
+      }
+
+      setBetterDiscountMessage(null);
+      toast.success("Discount applied successfully!");
+    } catch (error) {
+      console.error("Error applying discount:", error);
+      setDiscountError(
+        error instanceof Error ? error.message : "Failed to apply discount"
+      );
+    } finally {
+      setApplyingDiscount(false);
+    }
+  };
+
+  const handleRemoveDiscount = () => {
+    setAppliedDiscount(null);
+    setDiscountCode("");
+    setDiscountError(null);
+    setBetterDiscountMessage(null);
+    toast.success("Discount removed");
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsProcessing(true);
 
     try {
       // Calculate totals
-      const subtotal = total;
+      // Subtotal should be the sum of all items before discounts
+      const subtotal = items.reduce(
+        (sum, item) => sum + item.price * item.quantity,
+        0
+      );
       const shipping = 0; // TODO: Calculate shipping
       const tax = 0; // TODO: Calculate tax
-      const discount = 0;
+      const discount = appliedDiscount?.totalAmount || 0;
       const finalTotal = subtotal + shipping + tax - discount;
 
       // Determine shipping data (use shipping if different, else billing)
@@ -140,19 +455,29 @@ export default function CheckoutPage() {
           customerFirstName: billingData.firstName,
           customerLastName: billingData.lastName,
           customerPhone: billingData.phone,
-          lineItems: items.map((item) => ({
-            listingId: item.listingId,
-            variantId: item.variantId || null,
-            quantity: item.quantity,
-            unitPrice: item.price.toString(),
-            title: item.name,
-            sku: item.sku || null,
-          })),
+          lineItems: items.map((item) => {
+            // Find discount allocation for this item
+            const allocation = appliedDiscount?.allocations?.find(
+              (a) => a.cartItemId === item.id
+            );
+            
+            return {
+              listingId: item.listingId,
+              variantId: item.variantId || null,
+              quantity: item.quantity,
+              unitPrice: item.price.toString(),
+              title: item.name,
+              sku: item.sku || null,
+              discountAmount: allocation ? allocation.amount.toFixed(2) : "0",
+              discountId: allocation ? allocation.discountId : null,
+            };
+          }),
           currency: "EUR", // Default to EUR, can be detected from items
           subtotalAmount: subtotal.toFixed(2),
           shippingAmount: shipping.toFixed(2),
           taxAmount: tax.toFixed(2),
           discountAmount: discount.toFixed(2),
+          discountId: appliedDiscount?.discountId || null,
           totalAmount: finalTotal.toFixed(2),
           shippingName: `${finalShippingData.firstName} ${finalShippingData.lastName}`,
           shippingPhone: billingData.phone,
@@ -663,35 +988,267 @@ export default function CheckoutPage() {
                     <span>Subtotal</span>
                   </div>
 
-                  {items.map((item: CartItem) => (
-                    <div key={item.id} className="flex gap-3">
-                      <div className="relative w-16 h-16 shrink-0 rounded-md overflow-hidden bg-muted">
-                        <Image
-                          src={item.image || "/placeholder.svg"}
-                          alt={item.name}
-                          fill
-                          className="object-cover"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-foreground line-clamp-2">
-                          {item.name}
-                        </p>
-                        {item.variantTitle && (
-                          <p className="text-xs text-primary font-medium mt-1">
-                            {item.variantTitle}
-                          </p>
+                  {items.map((item: CartItem) => {
+                    const itemSubtotal = item.price * item.quantity;
+                    const allocation = appliedDiscount?.allocations?.find(
+                      (a) => a.cartItemId === item.id
+                    );
+                    const itemDiscount = allocation ? allocation.amount : 0;
+                    const itemTotal = itemSubtotal - itemDiscount;
+                    
+                    return (
+                      <div key={item.id} className="space-y-2">
+                        <div className="flex gap-3">
+                          <div className="relative w-16 h-16 shrink-0 rounded-md overflow-hidden bg-muted">
+                            <Image
+                              src={item.image || "/placeholder.svg"}
+                              alt={item.name}
+                              fill
+                              className="object-cover"
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-foreground line-clamp-2">
+                              {item.name}
+                            </p>
+                            {item.variantTitle && (
+                              <p className="text-xs text-primary font-medium mt-1">
+                                {item.variantTitle}
+                              </p>
+                            )}
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Qty: {item.quantity}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="text-sm font-medium text-foreground">
+                              {item.currency || "€"}{" "}
+                              {itemTotal.toFixed(2)}
+                            </div>
+                            {itemDiscount > 0 && (
+                              <div className="text-xs text-muted-foreground line-through">
+                                {item.currency || "€"}{" "}
+                                {itemSubtotal.toFixed(2)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {itemDiscount > 0 && (
+                          <div className="flex justify-end text-xs text-destructive">
+                            <span>
+                              Discount: -{item.currency || "€"}{itemDiscount.toFixed(2)}
+                            </span>
+                          </div>
                         )}
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Qty: {item.quantity}
-                        </p>
                       </div>
-                      <div className="text-sm font-medium text-foreground shrink-0">
-                        {item.currency || "NPR"}{" "}
-                        {(item.price * item.quantity).toFixed(2)}
+                    );
+                  })}
+                </div>
+
+                <Separator className="my-4" />
+
+                {/* Discount Code */}
+                <div className="space-y-3 mb-4">
+                  <Label htmlFor="discountCode" className="text-sm font-medium">
+                    Discount Code
+                  </Label>
+                  {appliedDiscount && !hasDiscountsWithCodes ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between p-3 bg-muted rounded-md">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm">
+                            {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
+                              <div className="space-y-1">
+                                {appliedDiscount.appliedDiscountNames.map((name, idx) => (
+                                  <div key={idx} className="flex items-center gap-1">
+                                    <span>{name}</span>
+                                    {idx < appliedDiscount.appliedDiscountNames!.length - 1 && (
+                                      <span className="text-muted-foreground">+</span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <>
+                                {appliedDiscount.discountName}
+                                {appliedDiscount.discountCode && (
+                                  <span className="text-muted-foreground ml-1">
+                                    ({appliedDiscount.discountCode})
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
+                              <span>Multiple discounts applied</span>
+                            ) : (
+                              <>
+                                {appliedDiscount.valueType === "percentage"
+                                  ? `${appliedDiscount.value}% off`
+                                  : `${appliedDiscount.currency || "€"}${appliedDiscount.value} off`}
+                              </>
+                            )}
+                          </div>
+                          {appliedDiscount.eligibilityInfo && (
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {appliedDiscount.eligibilityInfo.customerEligibilityType === "specific" && (
+                                <span className="text-amber-600">
+                                  Available to specific customers only
+                                </span>
+                              )}
+                              {appliedDiscount.eligibilityInfo.minPurchaseAmount && (
+                                <div>
+                                  Min. purchase: {appliedDiscount.currency || "€"}
+                                  {appliedDiscount.eligibilityInfo.minPurchaseAmount}
+                                </div>
+                              )}
+                              {appliedDiscount.eligibilityInfo.minPurchaseQuantity && (
+                                <div>
+                                  Min. quantity: {appliedDiscount.eligibilityInfo.minPurchaseQuantity} items
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={handleRemoveDiscount}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="space-y-2">
+                      {appliedDiscount && (
+                        <div className="flex items-center justify-between p-3 bg-muted rounded-md">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm">
+                              {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
+                                <div className="space-y-1">
+                                  {appliedDiscount.appliedDiscountNames.map((name, idx) => (
+                                    <div key={idx} className="flex items-center gap-1">
+                                      <span>{name}</span>
+                                      {idx < appliedDiscount.appliedDiscountNames!.length - 1 && (
+                                        <span className="text-muted-foreground">+</span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <>
+                                  {appliedDiscount.discountName}
+                                  {appliedDiscount.discountCode && (
+                                    <span className="text-muted-foreground ml-1">
+                                      ({appliedDiscount.discountCode})
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
+                                <span>Multiple discounts applied</span>
+                              ) : (
+                                <>
+                                  {appliedDiscount.valueType === "percentage"
+                                    ? `${appliedDiscount.value}% off`
+                                    : `${appliedDiscount.currency || "€"}${appliedDiscount.value} off`}
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 shrink-0"
+                            onClick={handleRemoveDiscount}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
+                      {hasDiscountsWithCodes && (
+                        <div className="flex gap-2">
+                          <Input
+                            id="discountCode"
+                            placeholder="Enter discount code"
+                            value={discountCode}
+                            onChange={(e) => {
+                              setDiscountCode(e.target.value.toUpperCase());
+                              setDiscountError(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleApplyDiscount();
+                              }
+                            }}
+                            className="flex-1"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleApplyDiscount}
+                            disabled={applyingDiscount || !discountCode.trim()}
+                          >
+                            {applyingDiscount ? "Applying..." : "Apply"}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {betterDiscountMessage && (
+                    <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                      <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                      <p className="text-sm text-blue-800">{betterDiscountMessage}</p>
+                    </div>
+                  )}
+                  {discountError && (
+                    <div className="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                      <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                      <p className="text-sm text-destructive">{discountError}</p>
+                    </div>
+                  )}
+                  {/* Show available discounts with requirements */}
+                  {availableDiscounts.length > 0 && !appliedDiscount && (
+                    <div className="space-y-2 mt-3">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Available Discounts:
+                      </p>
+                      {availableDiscounts.map((discount) => {
+                        if (discount.evaluationResult?.canApply) return null;
+                        return (
+                          <div
+                            key={discount.id}
+                            className="p-2 bg-muted rounded-md text-xs"
+                          >
+                            <div className="font-medium">{discount.name}</div>
+                            {discount.evaluationResult?.reason && (
+                              <div className="text-muted-foreground mt-1">
+                                {discount.evaluationResult.reason}
+                                {discount.evaluationResult.missingAmount && (
+                                  <span className="ml-1">
+                                    Add €{discount.evaluationResult.missingAmount.toFixed(2)} more.
+                                  </span>
+                                )}
+                                {discount.evaluationResult.missingQuantity && (
+                                  <span className="ml-1">
+                                    Add {discount.evaluationResult.missingQuantity} more item(s).
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <Separator className="my-4" />
@@ -701,9 +1258,24 @@ export default function CheckoutPage() {
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Subtotal</span>
                     <span className="font-medium text-foreground">
-                      €{total.toFixed(2)}
+                      €{items.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)}
                     </span>
                   </div>
+
+                  {appliedDiscount && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
+                          <>Discount ({appliedDiscount.appliedDiscountNames.join(", ")})</>
+                        ) : (
+                          <>Discount ({appliedDiscount.discountName})</>
+                        )}
+                      </span>
+                      <span className="font-medium text-destructive">
+                        -€{appliedDiscount.totalAmount.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
 
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Shipping</span>
@@ -715,7 +1287,7 @@ export default function CheckoutPage() {
                   <div className="flex justify-between text-lg">
                     <span className="font-bold text-foreground">Total</span>
                     <span className="font-bold text-foreground">
-                      €{total.toFixed(2)}
+                      €{(total - (appliedDiscount?.totalAmount || 0)).toFixed(2)}
                     </span>
                   </div>
                 </div>

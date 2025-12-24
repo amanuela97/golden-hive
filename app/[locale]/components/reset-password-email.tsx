@@ -11,9 +11,11 @@ export default function ResetPasswordEmail({ url }: ResetPasswordEmailProps) {
       <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-8 py-6 text-center">
         <div className="flex items-center justify-center gap-3 mb-4">
           <BeeLogo />
-          <h1 className="text-3xl font-bold text-white">Golden Hive</h1>
+          <h1 className="text-3xl font-bold text-white">Golden Market</h1>
         </div>
-        <p className="text-amber-100 text-lg">Premium Honey Marketplace</p>
+        <p className="text-amber-100 text-lg">
+          Buy and Sell Products Marketplace
+        </p>
       </div>
 
       {/* Main Content */}
@@ -23,9 +25,9 @@ export default function ResetPasswordEmail({ url }: ResetPasswordEmailProps) {
         </h2>
 
         <p className="text-gray-700 mb-6 leading-relaxed">
-          Hello from Golden Hive! We received a request to reset your password.
-          If you didn&apos;t make this request, you can safely ignore this
-          email.
+          Hello from Golden Market! We received a request to reset your
+          password. If you didn&apos;t make this request, you can safely ignore
+          this email.
         </p>
 
         <p className="text-gray-700 mb-8 leading-relaxed">
@@ -63,7 +65,7 @@ export default function ResetPasswordEmail({ url }: ResetPasswordEmailProps) {
           <ul className="text-sm text-amber-700 space-y-1">
             <li>• This link expires in 24 hours</li>
             <li>• Never share this link with anyone</li>
-            <li>• Golden Hive will never ask for your password via email</li>
+            <li>• Golden Market will never ask for your password via email</li>
           </ul>
         </div>
 
@@ -80,7 +82,7 @@ export default function ResetPasswordEmail({ url }: ResetPasswordEmailProps) {
           </p>
           <p className="text-gray-500 text-xs">
             This email was sent to you because you requested a password reset
-            for your Golden Hive account.
+            for your Golden Market account.
           </p>
         </div>
       </div>
@@ -89,10 +91,10 @@ export default function ResetPasswordEmail({ url }: ResetPasswordEmailProps) {
       <div className="bg-gray-900 px-8 py-6 text-center">
         <div className="flex items-center justify-center gap-2 mb-2">
           <BeeLogo />
-          <span className="text-white font-semibold">Golden Hive</span>
+          <span className="text-white font-semibold">Golden Market</span>
         </div>
         <p className="text-gray-400 text-sm">
-          Connecting honey lovers with premium producers worldwide
+          Buy and Sell Products Marketplace
         </p>
       </div>
     </div>

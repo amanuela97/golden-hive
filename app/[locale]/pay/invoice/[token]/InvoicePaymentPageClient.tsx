@@ -12,6 +12,10 @@ interface InvoicePaymentPageClientProps {
   draftData: {
     id: string;
     draftNumber: number;
+    subtotalAmount: string;
+    discountAmount: string;
+    shippingAmount: string;
+    taxAmount: string;
     totalAmount: string;
     currency: string;
     customerEmail: string | null;
@@ -136,11 +140,43 @@ export default function InvoicePaymentPageClient({
               </div>
             </div>
 
-            <div className="flex justify-between items-center pt-4 border-t">
-              <span className="text-lg font-semibold">Total:</span>
-              <span className="text-2xl font-bold">
-                {draftData.totalAmount} {draftData.currency}
-              </span>
+            <div className="space-y-2 pt-4 border-t">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Subtotal:</span>
+                <span className="font-medium">
+                  {draftData.subtotalAmount} {draftData.currency}
+                </span>
+              </div>
+              {parseFloat(draftData.discountAmount) > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Discount:</span>
+                  <span className="font-medium text-green-600">
+                    -{draftData.discountAmount} {draftData.currency}
+                  </span>
+                </div>
+              )}
+              {parseFloat(draftData.shippingAmount) > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Shipping:</span>
+                  <span className="font-medium">
+                    {draftData.shippingAmount} {draftData.currency}
+                  </span>
+                </div>
+              )}
+              {parseFloat(draftData.taxAmount) > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Tax:</span>
+                  <span className="font-medium">
+                    {draftData.taxAmount} {draftData.currency}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between items-center pt-2 border-t">
+                <span className="text-lg font-semibold">Total:</span>
+                <span className="text-2xl font-bold">
+                  {draftData.totalAmount} {draftData.currency}
+                </span>
+              </div>
             </div>
 
             <Button

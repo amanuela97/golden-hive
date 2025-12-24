@@ -48,6 +48,7 @@ export function Navbar(props: NavbarProps = {}) {
   // Always show the same nav items structure to prevent hydration issues
   const defaultItems: NavbarItem[] = [
     { name: t("products"), href: "/products" },
+    { name: t("stores"), href: "/stores" },
     { name: t("about"), href: "/about" },
     { name: t("feedback"), href: "/feedback" },
     { name: t("dashboard"), href: "/dashboard", requiresAuth: true },
@@ -83,18 +84,16 @@ export function Navbar(props: NavbarProps = {}) {
           href="/"
           className="flex items-center gap-3 transition-opacity hover:opacity-80"
         >
-          {props.logoUrl ? (
+          {props.logoUrl && (
             <Image
               src={props.logoUrl}
-              alt={props.title ?? t("goldenHive")}
+              alt={props.title ?? t("title")}
               width={80}
               height={40}
             />
-          ) : (
-            <BeeLogo />
           )}
           <span className="font-serif text-2xl font-bold tracking-tight text-accent md:text-4xl">
-            {props.title ?? t("goldenHive")}
+            {props.title ?? t("title")}
           </span>
         </Link>
 

@@ -13,6 +13,8 @@ import {
   jsonb,
   unique,
   varchar,
+  index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const userStatusEnum = pgEnum("user_status", [
@@ -97,6 +99,11 @@ export const orderStatusEnum = pgEnum("order_status", [
 export const storeMemberRoleEnum = pgEnum("store_member_role", [
   "admin",
   "seller",
+]);
+
+export const storeVisibilityEnum = pgEnum("store_visibility", [
+  "public",
+  "hidden",
 ]);
 
 export const user = pgTable("user", {
@@ -384,25 +391,45 @@ export const markets = pgTable("markets", {
 // ===================================
 // STORE (formerly vendor)
 // ===================================
-export const store = pgTable("store", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  storeName: text("store_name").notNull(),
-  logoUrl: text("logo_url"),
-  description: text("description"),
-  storeCurrency: text("store_currency").notNull().default("EUR"),
-  unitSystem: text("unit_system").notNull().default("Metric system"), // "Metric system" | "Imperial system"
-  stripeAccountId: text("stripe_account_id"), // Stripe Connect account ID
-  stripeOnboardingComplete: boolean("stripe_onboarding_complete").default(
-    false
-  ), // Track if onboarding is complete
-  stripeChargesEnabled: boolean("stripe_charges_enabled").default(false), // Track if charges are enabled
-  stripePayoutsEnabled: boolean("stripe_payouts_enabled").default(false), // Track if payouts are enabled
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at")
-    .defaultNow()
-    .$onUpdate(() => new Date())
-    .notNull(),
-});
+export const store = pgTable(
+  "store",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeName: text("store_name").notNull(),
+    logoUrl: text("logo_url"),
+    // Storefront fields
+    slug: text("slug").notNull(),
+    slugLower: text("slug_lower").notNull(),
+    visibility: storeVisibilityEnum("visibility").notNull().default("public"),
+    // Rating aggregates
+    ratingAvg: numeric("rating_avg", { precision: 3, scale: 2 })
+      .notNull()
+      .default("0"),
+    ratingCount: integer("rating_count").notNull().default(0),
+    ratingSum: integer("rating_sum").notNull().default(0),
+    followerCount: integer("follower_count").notNull().default(0),
+    // Existing fields
+    storeCurrency: text("store_currency").notNull().default("EUR"),
+    unitSystem: text("unit_system").notNull().default("Metric system"), // "Metric system" | "Imperial system"
+    stripeAccountId: text("stripe_account_id"), // Stripe Connect account ID
+    stripeOnboardingComplete: boolean("stripe_onboarding_complete").default(
+      false
+    ), // Track if onboarding is complete
+    stripeChargesEnabled: boolean("stripe_charges_enabled").default(false), // Track if charges are enabled
+    stripePayoutsEnabled: boolean("stripe_payouts_enabled").default(false), // Track if payouts are enabled
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("store_slug_lower_unique").on(t.slugLower),
+    index("store_visibility_idx").on(t.visibility),
+    index("store_rating_idx").on(t.ratingAvg),
+    index("store_followers_idx").on(t.followerCount),
+  ]
+);
 
 // ===================================
 // STORE MEMBERS
@@ -418,6 +445,133 @@ export const storeMembers = pgTable("store_members", {
   role: storeMemberRoleEnum("role").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// ===================================
+// STORE SLUG HISTORY (SEO-safe redirects)
+// ===================================
+export const storeSlugHistory = pgTable(
+  "store_slug_history",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => store.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    slugLower: text("slug_lower").notNull(),
+    isActive: boolean("is_active").notNull().default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("store_slug_history_unique").on(t.slugLower),
+    index("store_slug_history_store_idx").on(t.storeId),
+  ]
+);
+
+// ===================================
+// STORE BANNER IMAGES
+// ===================================
+export const storeBannerImage = pgTable(
+  "store_banner_image",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => store.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    alt: text("alt"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("store_banner_store_idx").on(t.storeId),
+    uniqueIndex("store_banner_store_order_unique").on(t.storeId, t.sortOrder),
+  ]
+);
+
+// ===================================
+// STORE ABOUT SECTION
+// ===================================
+export const storeAbout = pgTable("store_about", {
+  storeId: uuid("store_id")
+    .primaryKey()
+    .references(() => store.id, { onDelete: "cascade" }),
+  title: text("title"),
+  description: text("description"),
+  imageUrl: text("image_url"),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// STORE POLICIES
+// ===================================
+export const storePolicies = pgTable("store_policies", {
+  storeId: uuid("store_id")
+    .primaryKey()
+    .references(() => store.id, { onDelete: "cascade" }),
+  shipping: text("shipping"),
+  returns: text("returns"),
+  cancellations: text("cancellations"),
+  customOrders: text("custom_orders"),
+  privacy: text("privacy"),
+  additional: text("additional"),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// STORE FOLLOW (follow/unfollow stores)
+// ===================================
+export const storeFollow = pgTable(
+  "store_follow",
+  {
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => store.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.storeId, t.userId] }),
+    index("store_follow_user_idx").on(t.userId),
+    index("store_follow_store_idx").on(t.storeId),
+  ]
+);
+
+// ===================================
+// STORE REVIEWS
+// ===================================
+export const storeReview = pgTable(
+  "store_review",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => store.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    rating: integer("rating").notNull(), // 1..5
+    title: text("title"),
+    body: text("body"),
+    orderId: uuid("order_id"), // Link to order for verification
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    index("store_review_store_idx").on(t.storeId),
+    index("store_review_user_idx").on(t.userId),
+  ]
+);
 
 // ===================================
 // LISTING VARIANTS

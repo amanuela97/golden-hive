@@ -15,6 +15,10 @@ export async function getDraftOrderByToken(
   data?: {
     id: string;
     draftNumber: number;
+    subtotalAmount: string;
+    discountAmount: string;
+    shippingAmount: string;
+    taxAmount: string;
     totalAmount: string;
     currency: string;
     customerEmail: string | null;
@@ -43,6 +47,10 @@ export async function getDraftOrderByToken(
       .select({
         id: draftOrders.id,
         draftNumber: draftOrders.draftNumber,
+        subtotalAmount: draftOrders.subtotalAmount,
+        discountAmount: draftOrders.discountAmount,
+        shippingAmount: draftOrders.shippingAmount,
+        taxAmount: draftOrders.taxAmount,
         totalAmount: draftOrders.totalAmount,
         currency: draftOrders.currency,
         customerEmail: draftOrders.customerEmail,
@@ -99,6 +107,10 @@ export async function getDraftOrderByToken(
       data: {
         id: draft.id,
         draftNumber: Number(draft.draftNumber),
+        subtotalAmount: draft.subtotalAmount,
+        discountAmount: draft.discountAmount,
+        shippingAmount: draft.shippingAmount,
+        taxAmount: draft.taxAmount,
         totalAmount: draft.totalAmount,
         currency: draft.currency,
         customerEmail: draft.customerEmail,

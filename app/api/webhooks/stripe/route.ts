@@ -245,6 +245,11 @@ export async function POST(req: NextRequest) {
                 message: `Payment received via Stripe (multi-store checkout)`,
                 visibility: "internal",
                 metadata: {
+                  amount: orderAmount.toFixed(2),
+                  currency: order.currency,
+                  fee: orderPlatformFee.toFixed(2),
+                  stripe_checkout_session: session.id,
+                  provider: "stripe",
                   paymentIntentId: paymentIntentId,
                   transferId: transfer.id,
                 },
@@ -432,9 +437,14 @@ export async function POST(req: NextRequest) {
       await db.insert(orderEvents).values({
         orderId: finalOrderId,
         type: "payment",
-        message: `Payment received via Stripe Checkout (Session: ${session.id})`,
+        message: "Payment received via Stripe Checkout",
         visibility: "internal",
         metadata: {
+          amount: totalAmount,
+          currency: currency,
+          fee: applicationFeeAmount,
+          stripe_checkout_session: session.id,
+          provider: "stripe",
           paymentIntentId: paymentIntentId,
           checkoutSessionId: session.id,
         },

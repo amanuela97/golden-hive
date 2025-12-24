@@ -28,12 +28,23 @@ export function meetsMinimumRequirements(
   discount: Discount,
   items: CartItem[]
 ): boolean {
-  const subtotal = items.reduce(
+  // Only check requirements against items that the discount applies to
+  const applicableItems = items.filter((item) =>
+    discountAppliesToItem(discount, item)
+  );
+
+  // If discount doesn't apply to any items, requirements can't be met
+  if (applicableItems.length === 0) return false;
+
+  const subtotal = applicableItems.reduce(
     (sum, item) => sum + item.price * item.quantity,
     0
   );
 
-  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+  const totalQuantity = applicableItems.reduce(
+    (sum, item) => sum + item.quantity,
+    0
+  );
 
   if (
     discount.minPurchaseAmount != null &&
@@ -85,6 +96,44 @@ export function discountAppliesToItem(
   });
 }
 
+/**
+ * Calculate discount amount for a single item with a single discount
+ */
+function calculateItemDiscountAmount(
+  item: CartItem,
+  discount: Discount
+): number {
+  if (!discountAppliesToItem(discount, item)) return 0;
+
+  const lineSubtotal = item.price * item.quantity;
+  let discountAmount = 0;
+
+  if (discount.valueType === "percentage") {
+    discountAmount = roundMoney((lineSubtotal * discount.value) / 100);
+  }
+
+  if (discount.valueType === "fixed") {
+    // Shopify-style: fixed amount per item
+    discountAmount = Math.min(discount.value * item.quantity, lineSubtotal);
+  }
+
+  return discountAmount > 0 ? discountAmount : 0;
+}
+
+/**
+ * Evaluate a single discount against cart items.
+ * 
+ * IMPORTANT: This function evaluates ONE discount only.
+ * - Each product item can only receive ONE discount (no stacking)
+ * - If multiple discounts are eligible, use evaluateBestDiscountsPerItem() instead
+ * - This function does NOT prevent stacking if called multiple times - the caller must ensure
+ *   only one discount is evaluated/applied at a time
+ * 
+ * @param items - Cart items to evaluate discount for
+ * @param discount - Single discount to evaluate
+ * @param customerId - Optional customer ID for eligibility checking
+ * @returns Discount result with allocations per item, or null if discount doesn't apply
+ */
 export function evaluateAmountOffProductsDiscount(
   items: CartItem[],
   discount: Discount,
@@ -100,20 +149,7 @@ export function evaluateAmountOffProductsDiscount(
   let totalDiscountAmount = 0;
 
   for (const item of items) {
-    if (!discountAppliesToItem(discount, item)) continue;
-
-    const lineSubtotal = item.price * item.quantity;
-    let discountAmount = 0;
-
-    if (discount.valueType === "percentage") {
-      discountAmount = roundMoney((lineSubtotal * discount.value) / 100);
-    }
-
-    if (discount.valueType === "fixed") {
-      // Shopify-style: fixed amount per item
-      discountAmount = Math.min(discount.value * item.quantity, lineSubtotal);
-    }
-
+    const discountAmount = calculateItemDiscountAmount(item, discount);
     if (discountAmount <= 0) continue;
 
     allocations.push({
@@ -131,6 +167,90 @@ export function evaluateAmountOffProductsDiscount(
     discountId: discount.id,
     totalAmount: roundMoney(totalDiscountAmount),
     allocations,
+  };
+}
+
+/**
+ * Evaluate multiple discounts and apply only the best discount per product item.
+ * This ensures discounts don't stack or compound unintentionally.
+ * 
+ * For each cart item, finds all eligible discounts and applies only the one
+ * that gives the highest discount amount for that specific item.
+ * 
+ * @param items - Cart items to evaluate discounts for
+ * @param discounts - Array of eligible discounts to evaluate
+ * @param customerId - Optional customer ID for eligibility checking
+ * @returns Combined discount result with best discount per item, or null if no discounts apply
+ */
+export function evaluateBestDiscountsPerItem(
+  items: CartItem[],
+  discounts: Discount[],
+  customerId?: string | null
+): OrderDiscountResult | null {
+  if (discounts.length === 0 || items.length === 0) return null;
+
+  // Filter to only active, eligible discounts that meet minimum requirements
+  const eligibleDiscounts = discounts.filter((discount) => {
+    if (!isDiscountActive(discount)) return false;
+    if (!isCustomerEligible(discount, customerId)) return false;
+    if (!meetsMinimumRequirements(discount, items)) return false;
+    return true;
+  });
+
+  if (eligibleDiscounts.length === 0) return null;
+
+  // For each item, find the best discount (highest discount amount)
+  // This ensures only one discount is applied per item, preventing stacking
+  const allocations: OrderItemDiscountAllocation[] = [];
+  let totalDiscountAmount = 0;
+  let primaryDiscountId = ""; // The discount ID that gives the highest total savings
+
+  // Track total savings per discount to determine primary discount
+  const discountTotals = new Map<string, number>();
+
+  for (const item of items) {
+    let bestDiscount: Discount | null = null;
+    let bestAmount = 0;
+
+    // Evaluate all eligible discounts for this item and pick the best one
+    for (const discount of eligibleDiscounts) {
+      const discountAmount = calculateItemDiscountAmount(item, discount);
+      if (discountAmount > bestAmount) {
+        bestAmount = discountAmount;
+        bestDiscount = discount;
+      }
+    }
+
+    // Apply only the best discount for this item (no stacking)
+    if (bestDiscount && bestAmount > 0) {
+      allocations.push({
+        cartItemId: item.id,
+        discountId: bestDiscount.id,
+        amount: bestAmount,
+      });
+
+      totalDiscountAmount += bestAmount;
+
+      // Track totals per discount
+      const currentTotal = discountTotals.get(bestDiscount.id) || 0;
+      discountTotals.set(bestDiscount.id, currentTotal + bestAmount);
+    }
+  }
+
+  if (allocations.length === 0) return null;
+
+  // Determine primary discount (the one with highest total savings)
+  // This is used as the main discountId in the result
+  for (const [discountId, total] of discountTotals.entries()) {
+    if (!primaryDiscountId || total > (discountTotals.get(primaryDiscountId) || 0)) {
+      primaryDiscountId = discountId;
+    }
+  }
+
+  return {
+    discountId: primaryDiscountId,
+    totalAmount: roundMoney(totalDiscountAmount),
+    allocations, // Each allocation has its own discountId (best for that item)
   };
 }
 
@@ -160,6 +280,11 @@ function createOrderItemsFromCart(
   });
 }
 
+/**
+ * Apply discount to order items.
+ * IMPORTANT: This function replaces any existing discount on items.
+ * It does NOT stack discounts - only one discount per item is allowed.
+ */
 function applyDiscountToOrderItems(
   orderItems: OrderItem[],
   discountResult: OrderDiscountResult
@@ -174,20 +299,26 @@ function applyDiscountToOrderItems(
       (a) => a.cartItemId === item.id
     );
 
-    if (!allocation) return item;
+    if (!allocation) {
+      // No discount for this item - keep existing discountAmount (if any)
+      // This allows items without discounts to remain unchanged
+      return item;
+    }
 
+    // Apply the discount amount (replaces any existing discount)
+    // This ensures only one discount is applied per item (no stacking)
     const discountAmount = allocation.amount;
 
     orderItemDiscounts.push({
       id: crypto.randomUUID(),
       orderItemId: item.id,
-      orderDiscountId: discountResult.discountId,
+      orderDiscountId: allocation.discountId, // Use the discountId from allocation
       amount: discountAmount,
     });
 
     return {
       ...item,
-      discountAmount: discountAmount,
+      discountAmount: discountAmount, // Replace, don't add
       lineTotal: item.subtotal - discountAmount,
     };
   });
@@ -229,6 +360,16 @@ function calculateOrderTotals(items: OrderItem[]) {
   };
 }
 
+/**
+ * Create order from cart with discount application.
+ * 
+ * IMPORTANT: Only one discount is applied per product item.
+ * If multiple discounts are eligible, only the best one (highest discount amount)
+ * should be selected before calling this function.
+ * 
+ * This function does NOT evaluate multiple discounts - it applies the provided discount.
+ * To evaluate multiple discounts and pick the best, use evaluateBestDiscountsPerItem first.
+ */
 export function createOrderFromCart(params: {
   cartItems: CartItem[];
   discount?: Discount | null;
@@ -244,6 +385,8 @@ export function createOrderFromCart(params: {
   let orderItemDiscounts: OrderItemDiscount[] = [];
 
   // 2️⃣ Apply discount (if present)
+  // NOTE: Only one discount is applied. If multiple discounts are eligible,
+  // the caller should evaluate all and pass only the best discount.
   if (params.discount) {
     const discountResult = evaluateAmountOffProductsDiscount(
       params.cartItems,

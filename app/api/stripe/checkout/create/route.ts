@@ -148,13 +148,14 @@ export async function POST(req: NextRequest) {
 
         const storeInfo = storeData[0];
 
-        // Fetch order items
+        // Fetch order items (including lineTotal which has discounts applied)
         const orderItemsData = await db
           .select({
             listingId: orderItems.listingId,
             variantId: orderItems.variantId,
             quantity: orderItems.quantity,
             unitPrice: orderItems.unitPrice,
+            lineTotal: orderItems.lineTotal,
             title: orderItems.title,
           })
           .from(orderItems)
@@ -185,6 +186,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Build line items and calculate order total
+        // Use lineTotal from database which already includes item-level discounts
         let orderTotalCents = 0;
 
         for (const item of orderItemsData) {
@@ -195,15 +197,18 @@ export async function POST(req: NextRequest) {
             ? variants.find((v) => v.id === item.variantId) || null
             : null;
 
-          const unitPrice = parseFloat(item.unitPrice);
-          const unitPriceCents = Math.round(unitPrice * 100);
-          orderTotalCents += unitPriceCents * item.quantity;
+          // Use lineTotal from database which already includes item-level discounts
+          // lineTotal is the final price after discount for this item
+          const discountedLineTotal = parseFloat(item.lineTotal);
+          const discountedUnitPrice = discountedLineTotal / item.quantity;
+          const discountedUnitPriceCents = Math.round(discountedUnitPrice * 100);
+          orderTotalCents += discountedUnitPriceCents * item.quantity;
 
           allLineItems.push({
             quantity: item.quantity,
             price_data: {
               currency: currency,
-              unit_amount: unitPriceCents,
+              unit_amount: discountedUnitPriceCents, // Use discounted unit price
               product_data: {
                 name: item.title,
                 description: variant ? `${item.title} - ${variant.title}` : undefined,
@@ -300,6 +305,10 @@ export async function POST(req: NextRequest) {
     }> = [];
     let total = 0;
     let finalCurrency: string;
+    let orderDiscountAmount = 0; // Track discount amount
+    let orderShippingAmount = 0;
+    let orderTaxAmount = 0;
+    let orderTotalAmount = 0;
 
     const singleOrderId = orderIdsArray[0];
     if (singleOrderId) {
@@ -322,14 +331,20 @@ export async function POST(req: NextRequest) {
         orderNumber: existingOrder[0].orderNumber,
       };
       finalStoreId = existingOrder[0].storeId!;
+      orderDiscountAmount = parseFloat(existingOrder[0].discountAmount || "0");
+      orderShippingAmount = parseFloat(existingOrder[0].shippingAmount || "0");
+      orderTaxAmount = parseFloat(existingOrder[0].taxAmount || "0");
+      orderTotalAmount = parseFloat(existingOrder[0].totalAmount || "0");
 
-      // Fetch order items
+      // Fetch order items (including lineTotal which has discounts applied)
       const orderItemsData = await db
         .select({
           listingId: orderItems.listingId,
           variantId: orderItems.variantId,
           quantity: orderItems.quantity,
           unitPrice: orderItems.unitPrice,
+          lineTotal: orderItems.lineTotal,
+          discountAmount: orderItems.discountAmount,
           title: orderItems.title,
         })
         .from(orderItems)
@@ -359,7 +374,8 @@ export async function POST(req: NextRequest) {
           .where(inArray(listingVariants.id, variantIds));
       }
 
-      // Build line items data
+      // Build line items data using discounted prices from database
+      // lineTotal already includes item-level discounts, so use it directly
       for (const item of orderItemsData) {
         const listingItem = listings.find((l) => l.id === item.listingId);
         if (!listingItem) continue;
@@ -368,16 +384,24 @@ export async function POST(req: NextRequest) {
           ? variants.find((v) => v.id === item.variantId) || null
           : null;
 
-        const unitPrice = parseFloat(item.unitPrice);
-        total += unitPrice * item.quantity;
+        // Use lineTotal from database which already includes item-level discounts
+        // lineTotal is the final price after discount for this item
+        const discountedLineTotal = parseFloat(item.lineTotal);
+        const discountedUnitPrice = discountedLineTotal / item.quantity;
+        
+        total += discountedLineTotal;
 
         lineItemsData.push({
           listing: listingItem,
           variant,
           quantity: item.quantity,
-          unitPrice,
+          unitPrice: discountedUnitPrice, // Use discounted unit price
         });
       }
+
+      // The total should be the sum of discounted line items + shipping + tax
+      // Use the order's totalAmount which is the source of truth
+      total = orderTotalAmount;
 
       finalCurrency = existingOrder[0].currency;
     } else {
@@ -602,25 +626,67 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Calculate platform fee from the actual total (which includes discounts)
     const platformFeeCents = Math.round(total * 0.05 * 100); // 5% platform fee in cents
 
     // Create Stripe Checkout Session with Connect (Destination Charges)
+    // Use discounted unit prices to ensure discounts are correctly applied
+    const stripeLineItems = lineItemsData.map((item) => ({
+      quantity: item.quantity,
+      price_data: {
+        currency: finalCurrency.toLowerCase(),
+        unit_amount: Math.round(item.unitPrice * 100), // This is already the discounted unit price
+        product_data: {
+          name: item.listing.name,
+          description: item.variant
+            ? `${item.listing.name} - ${item.variant.title}`
+            : undefined,
+        },
+      },
+    }));
+
+    // If there's shipping or tax, add them as separate line items to match the order total
+    if (singleOrderId && (orderShippingAmount > 0 || orderTaxAmount > 0)) {
+      // Calculate the sum of product line items
+      const productsTotal = lineItemsData.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+      
+      // Calculate what the order total should be
+      const expectedTotal = productsTotal + orderShippingAmount + orderTaxAmount;
+      
+      // If there's a difference due to shipping/tax, add them as line items
+      const difference = orderTotalAmount - expectedTotal;
+      
+      // Add shipping and tax as separate line items if they exist
+      if (orderShippingAmount > 0) {
+        stripeLineItems.push({
+          quantity: 1,
+          price_data: {
+            currency: finalCurrency.toLowerCase(),
+            unit_amount: Math.round(orderShippingAmount * 100),
+            product_data: {
+              name: "Shipping",
+            },
+          },
+        });
+      }
+      if (orderTaxAmount > 0) {
+        stripeLineItems.push({
+          quantity: 1,
+          price_data: {
+            currency: finalCurrency.toLowerCase(),
+            unit_amount: Math.round(orderTaxAmount * 100),
+            product_data: {
+              name: "Tax",
+            },
+          },
+        });
+      }
+    }
+
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: customerEmail || undefined,
-      line_items: lineItemsData.map((item) => ({
-        quantity: item.quantity,
-        price_data: {
-          currency: finalCurrency.toLowerCase(),
-          unit_amount: Math.round(item.unitPrice * 100),
-          product_data: {
-            name: item.listing.name,
-            description: item.variant
-              ? `${item.listing.name} - ${item.variant.title}`
-              : undefined,
-          },
-        },
-      })),
+      line_items: stripeLineItems,
       payment_intent_data: {
         application_fee_amount: platformFeeCents,
         on_behalf_of: storeInfo.stripeAccountId,

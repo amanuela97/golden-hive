@@ -501,20 +501,6 @@ export default function ProductDetailPage({
               </div>
             </div>
 
-            <div className="prose prose-sm max-w-none mb-8 text-muted-foreground leading-relaxed">
-              {product.description ? (
-                product.description
-                  .split("\n\n")
-                  .map((paragraph: string, index: number) => (
-                    <p key={index} className="mb-4">
-                      {paragraph}
-                    </p>
-                  ))
-              ) : (
-                <p>{t("noDescription")}</p>
-              )}
-            </div>
-
             {/* Variant Options */}
             {optionKeys.length > 0 && (
               <div className="space-y-4 mb-6">

@@ -163,7 +163,7 @@ export function AboutForm({
               id="content"
               value={formData.content}
               onChange={(e) => handleInputChange("content", e.target.value)}
-              placeholder="Tell your story... Share what makes Golden Hive special, your mission, values, and what customers can expect from your products."
+              placeholder="Tell your story... Share what makes Golden Market special, your mission, values, and what customers can expect from your products."
               maxLength={2000}
               rows={8}
             />

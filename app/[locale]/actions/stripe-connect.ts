@@ -210,3 +210,59 @@ export async function generateOnboardingLink(): Promise<{
   }
 }
 
+/**
+ * Create Stripe dashboard login link for seller to view earnings
+ */
+export async function createStripeDashboardLink(): Promise<{
+  success: boolean;
+  url?: string;
+  error?: string;
+}> {
+  try {
+    const { storeId, isAdmin } = await getStoreIdForUser();
+
+    // Only allow sellers (not admins) to view earnings
+    if (isAdmin) {
+      return {
+        success: false,
+        error: "This feature is only available for sellers",
+      };
+    }
+
+    if (!storeId) {
+      return {
+        success: false,
+        error: "No store found",
+      };
+    }
+
+    const storeData = await db
+      .select({
+        stripeAccountId: store.stripeAccountId,
+      })
+      .from(store)
+      .where(eq(store.id, storeId))
+      .limit(1);
+
+    if (storeData.length === 0 || !storeData[0].stripeAccountId) {
+      return {
+        success: false,
+        error: "No Stripe account connected",
+      };
+    }
+
+    const loginLink = await stripe.accounts.createLoginLink(storeData[0].stripeAccountId);
+
+    return {
+      success: true,
+      url: loginLink.url,
+    };
+  } catch (error) {
+    console.error("Error creating Stripe dashboard link:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to create dashboard link",
+    };
+  }
+}
+

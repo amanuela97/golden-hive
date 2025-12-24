@@ -141,7 +141,9 @@ export const getNavbarData = unstable_cache(
         : Promise.resolve([]),
     ]);
     const navTitle =
-      navTranslations[0]?.title || navTranslationsEn[0]?.title || "Golden Hive";
+      navTranslations[0]?.title ||
+      navTranslationsEn[0]?.title ||
+      "Golden Market";
 
     // Get items with translations (current locale and English for fallback)
     const itemsWithCurrentLocale = await db

@@ -17,7 +17,8 @@ export default function CheckoutSuccessPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Clear cart on success
+    // Clear cart on success - this ensures cart is emptied after successful checkout
+    // This runs immediately when the success page loads
     clearCart();
 
     // Fetch order details if session_id is provided
@@ -28,7 +29,8 @@ export default function CheckoutSuccessPage() {
     } else {
       setLoading(false);
     }
-  }, [sessionId, clearCart]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once when component mounts - cart should be cleared immediately
 
   if (loading) {
     return (

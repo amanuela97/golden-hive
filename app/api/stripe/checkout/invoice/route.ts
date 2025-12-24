@@ -58,49 +58,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Get draft items with product images and names for Stripe Checkout
-    const draftItems = await db
-      .select({
-        title: draftOrderItems.title,
-        quantity: draftOrderItems.quantity,
-        unitPrice: draftOrderItems.unitPrice,
-        lineTotal: draftOrderItems.lineTotal,
-        variantImageUrl: listingVariants.imageUrl,
-        listingImageUrl: listing.imageUrl,
-        listingName: listing.name,
-        variantTitle: listingVariants.title,
-      })
-      .from(draftOrderItems)
-      .leftJoin(listing, eq(draftOrderItems.listingId, listing.id))
-      .leftJoin(listingVariants, eq(draftOrderItems.variantId, listingVariants.id))
-      .where(eq(draftOrderItems.draftOrderId, draft.id));
-
     // Calculate amounts (convert to cents)
+    // IMPORTANT: Use the draft.totalAmount which already includes discounts
+    // Don't recalculate from line items as that would charge the full price
     const totalAmountCents = Math.round(parseFloat(draft.totalAmount) * 100);
     const platformFeeCents = Math.round(totalAmountCents * 0.05); // 5% platform fee
 
-    // Create line items for each product with images
-    const lineItems = draftItems.map((item) => {
-      const unitPriceCents = Math.round(parseFloat(item.unitPrice) * 100);
-      const imageUrl = item.variantImageUrl || item.listingImageUrl || null;
-      const productName = item.listingName || item.title;
-      const displayName = item.variantTitle 
-        ? `${productName} - ${item.variantTitle}`
-        : productName;
-
-      return {
+    // Create a single line item with the total amount (which already includes discount)
+    // This ensures the customer pays the discounted price, not the full price
+    const lineItems = [
+      {
         price_data: {
           currency: draft.currency.toLowerCase(),
-          unit_amount: unitPriceCents,
+          unit_amount: totalAmountCents,
           product_data: {
-            name: displayName,
-            description: item.title,
-            ...(imageUrl && { images: [imageUrl] }),
+            name: `Invoice #${draft.draftNumber} - Payment`,
+            description: `Payment for invoice #${draft.draftNumber}${parseFloat(draft.discountAmount) > 0 ? ` (Discount applied: -${draft.discountAmount} ${draft.currency})` : ""}`,
           },
         },
-        quantity: item.quantity,
-      };
-    });
+        quantity: 1,
+      },
+    ];
 
     // Create Stripe Checkout Session with Connect (Destination Charges)
     // IMPORTANT: Create on platform account (not connected account) so webhooks come to our endpoint
@@ -161,4 +139,5 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
 

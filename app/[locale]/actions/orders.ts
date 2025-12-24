@@ -21,6 +21,8 @@ import {
   orderPayments,
   orderRefunds,
   orderRefundItems,
+  orderDiscounts,
+  discounts,
   type Order,
   type OrderItem,
   type OrderEvent,
@@ -2383,6 +2385,14 @@ type OrderWithItems = Order & {
     >
   >;
   paymentProvider: string | null; // 'stripe' | 'manual' | null
+  discount?: {
+    name: string;
+    code: string | null;
+    valueType: "fixed" | "percentage";
+    value: number;
+    amount: number;
+    currency: string;
+  } | null;
 };
 
 export async function getOrderWithItems(orderId: string): Promise<{
@@ -2515,6 +2525,34 @@ export async function getOrderWithItems(orderId: string): Promise<{
     const paymentProvider =
       paymentData.length > 0 ? paymentData[0].provider : null;
 
+    // Get order discount information with name from discounts table
+    const discountData = await db
+      .select({
+        code: orderDiscounts.code,
+        valueType: orderDiscounts.valueType,
+        value: orderDiscounts.value,
+        amount: orderDiscounts.amount,
+        currency: orderDiscounts.currency,
+        discountId: orderDiscounts.discountId,
+        discountName: discounts.name,
+      })
+      .from(orderDiscounts)
+      .leftJoin(discounts, eq(orderDiscounts.discountId, discounts.id))
+      .where(eq(orderDiscounts.orderId, orderId))
+      .limit(1);
+
+    const discount =
+      discountData.length > 0
+        ? {
+            name: discountData[0].discountName || "Custom discount",
+            code: discountData[0].code,
+            valueType: discountData[0].valueType as "fixed" | "percentage",
+            value: parseFloat(discountData[0].value),
+            amount: parseFloat(discountData[0].amount),
+            currency: discountData[0].currency,
+          }
+        : null;
+
     return {
       success: true,
       data: {
@@ -2546,6 +2584,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
           createdAt: event.createdAt,
         })),
         paymentProvider,
+        discount,
       },
     };
   } catch (error) {
@@ -3022,7 +3061,7 @@ export async function cancelOrder(input: {
             : order.customerEmail || "Customer";
 
         await resend.emails.send({
-          from: "Golden Hive <goldenhive@resend.dev>",
+          from: "Golden Market <goldenmarket@resend.dev>",
           to: order.customerEmail!,
           subject: `Order #${order.orderNumber} Cancellation`,
           react: OrderCancellationEmail({
@@ -3291,7 +3330,8 @@ export async function sendInvoiceForOrder(input: {
 
     const emailResult = await resend.emails.send({
       from:
-        process.env.RESEND_FROM_EMAIL || "Golden Hive <goldenhive@resend.dev>",
+        process.env.RESEND_FROM_EMAIL ||
+        "Golden Market <goldenmarket@resend.dev>",
       to: input.toEmail,
       subject: `Invoice ${invoiceNumber || `#${order.orderNumber}`} - Payment Required`,
       react: OrderInvoiceEmail({
@@ -3482,7 +3522,8 @@ export async function sendInvoicePdfForOrder(input: {
         : order.customerEmail || "Customer";
 
     const fromAddress =
-      process.env.RESEND_FROM_EMAIL || "Golden Hive <goldenhive@resend.dev>";
+      process.env.RESEND_FROM_EMAIL ||
+      "Golden Market <goldenmarket@resend.dev>";
 
     const emailResult = await resend.emails.send({
       from: fromAddress,
@@ -4787,9 +4828,9 @@ export async function processRefund(input: {
 
         let fromAddress =
           process.env.RESEND_FROM_EMAIL ||
-          "Golden Hive <goldenhive@resend.dev>";
+          "Golden Market <goldenmarket@resend.dev>";
         if (fromAddress.includes("yourdomain.com")) {
-          fromAddress = "Golden Hive <goldenhive@resend.dev>";
+          fromAddress = "Golden Market <goldenmarket@resend.dev>";
         }
 
         await resend.emails.send({

@@ -86,7 +86,7 @@ export default function CommunicationTools() {
     },
     {
       id: "3",
-      title: "Welcome to Golden Hive",
+      title: "Welcome to Golden Market",
       content:
         "Welcome to our platform! We're glad to have you as part of our community. Explore our features and start managing your products today.",
       targetAudience: "custom",
@@ -102,9 +102,9 @@ export default function CommunicationTools() {
     {
       id: "1",
       name: "Welcome Email",
-      subject: "Welcome to Golden Hive!",
+      subject: "Welcome to Golden Market!",
       content:
-        "Dear {{name}},\n\nWelcome to Golden Hive! We're excited to have you join our community.\n\nBest regards,\nThe Golden Hive Team",
+        "Dear {{name}},\n\nWelcome to Golden Market! We're excited to have you join our community.\n\nBest regards,\nThe Golden Market Team",
       category: "welcome",
       createdAt: "2024-01-01T00:00:00Z",
     },
@@ -113,7 +113,7 @@ export default function CommunicationTools() {
       name: "System Maintenance",
       subject: "Scheduled System Maintenance",
       content:
-        "Dear {{name}},\n\nWe will be performing scheduled maintenance on {{date}} from {{startTime}} to {{endTime}}.\n\nThank you for your understanding.\n\nThe Golden Hive Team",
+        "Dear {{name}},\n\nWe will be performing scheduled maintenance on {{date}} from {{startTime}} to {{endTime}}.\n\nThank you for your understanding.\n\nThe Golden Market Team",
       category: "announcement",
       createdAt: "2024-01-01T00:00:00Z",
     },
@@ -122,7 +122,7 @@ export default function CommunicationTools() {
       name: "Feature Update",
       subject: "New Features Available",
       content:
-        "Dear {{name}},\n\nWe're excited to announce new features that will enhance your experience:\n\n{{features}}\n\nLog in to explore these updates!\n\nThe Golden Hive Team",
+        "Dear {{name}},\n\nWe're excited to announce new features that will enhance your experience:\n\n{{features}}\n\nLog in to explore these updates!\n\nThe Golden Market Team",
       category: "notification",
       createdAt: "2024-01-01T00:00:00Z",
     },
@@ -424,7 +424,12 @@ function CreateAnnouncementForm({
   const [formData, setFormData] = useState({
     title: "",
     content: "",
-    targetAudience: "all" as "all" | "admins" | "sellers" | "customers" | "custom",
+    targetAudience: "all" as
+      | "all"
+      | "admins"
+      | "sellers"
+      | "customers"
+      | "custom",
     customEmails: "",
     scheduledAt: "",
     status: "draft" as const,
@@ -520,7 +525,15 @@ function CreateAnnouncementForm({
         <Select
           value={formData.targetAudience}
           onValueChange={(value) =>
-            setFormData((prev) => ({ ...prev, targetAudience: value as "all" | "admins" | "sellers" | "customers" | "custom" }))
+            setFormData((prev) => ({
+              ...prev,
+              targetAudience: value as
+                | "all"
+                | "admins"
+                | "sellers"
+                | "customers"
+                | "custom",
+            }))
           }
         >
           <SelectTrigger>

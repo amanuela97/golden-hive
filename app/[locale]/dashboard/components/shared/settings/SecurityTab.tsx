@@ -106,11 +106,6 @@ export default function SecurityTab({
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center gap-3">
-        <Shield className="w-6 h-6 text-blue-600" />
-        <h3 className="text-xl font-semibold">Account & Security</h3>
-      </div>
-
       {/* Change Password Section */}
       {isCredential && (
         <Card className="p-8">

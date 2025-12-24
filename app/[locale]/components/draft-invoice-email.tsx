@@ -8,6 +8,13 @@ interface DraftInvoiceEmailProps {
     lineTotal: string;
   }>;
   subtotal: string;
+  discount?: string;
+  discountName?: string;
+  discountCode?: string | null;
+  discountValueType?: "fixed" | "percentage";
+  discountValue?: number;
+  shipping?: string;
+  tax?: string;
   total: string;
   currency: string;
   paymentUrl: string; // Now uses token-based URL
@@ -20,6 +27,13 @@ export default function DraftInvoiceEmail({
   customerName,
   items,
   subtotal,
+  discount,
+  discountName,
+  discountCode,
+  discountValueType,
+  discountValue,
+  shipping,
+  tax,
   total,
   currency,
   paymentUrl,
@@ -59,6 +73,37 @@ export default function DraftInvoiceEmail({
           ))}
         </tbody>
         <tfoot>
+          <tr>
+            <td colSpan={3} style={{ padding: '10px', textAlign: 'right', border: '1px solid #ddd' }}>Subtotal:</td>
+            <td style={{ padding: '10px', textAlign: 'right', border: '1px solid #ddd' }}>{subtotal} {currency}</td>
+          </tr>
+          {discount && parseFloat(discount) > 0 && (
+            <tr>
+              <td colSpan={3} style={{ padding: '10px', textAlign: 'right', border: '1px solid #ddd' }}>
+                {discountName || "Discount"}
+                {discountCode && ` (${discountCode})`}
+                {discountValueType && discountValue !== undefined && (
+                  <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>
+                    {discountValueType === "percentage" ? `${discountValue}% off` : `${currency} ${discountValue.toFixed(2)} off`}
+                  </span>
+                )}
+                :
+              </td>
+              <td style={{ padding: '10px', textAlign: 'right', color: '#16a34a', border: '1px solid #ddd' }}>-{discount} {currency}</td>
+            </tr>
+          )}
+          {shipping && parseFloat(shipping) > 0 && (
+            <tr>
+              <td colSpan={3} style={{ padding: '10px', textAlign: 'right', border: '1px solid #ddd' }}>Shipping:</td>
+              <td style={{ padding: '10px', textAlign: 'right', border: '1px solid #ddd' }}>{shipping} {currency}</td>
+            </tr>
+          )}
+          {tax && parseFloat(tax) > 0 && (
+            <tr>
+              <td colSpan={3} style={{ padding: '10px', textAlign: 'right', border: '1px solid #ddd' }}>Tax:</td>
+              <td style={{ padding: '10px', textAlign: 'right', border: '1px solid #ddd' }}>{tax} {currency}</td>
+            </tr>
+          )}
           <tr>
             <td colSpan={3} style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', border: '1px solid #ddd' }}>Total:</td>
             <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', border: '1px solid #ddd' }}>{total} {currency}</td>

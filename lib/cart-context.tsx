@@ -94,6 +94,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const clearCart = useCallback(() => {
     setItems([]);
+    // Explicitly clear localStorage to ensure cart is emptied
+    try {
+      localStorage.removeItem(CART_STORAGE_KEY);
+    } catch (error) {
+      console.error("Failed to clear cart from localStorage:", error);
+    }
   }, []);
 
   // Calculate total in EUR (convert from NPR if needed)

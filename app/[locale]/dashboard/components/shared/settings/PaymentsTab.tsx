@@ -4,8 +4,8 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CreditCard, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
-import { checkStripePaymentReadiness, createStripeAccountAndOnboarding, generateOnboardingLink } from "@/app/[locale]/actions/stripe-connect";
+import { CreditCard, CheckCircle2, AlertCircle, Loader2, ExternalLink } from "lucide-react";
+import { checkStripePaymentReadiness, createStripeAccountAndOnboarding, generateOnboardingLink, createStripeDashboardLink } from "@/app/[locale]/actions/stripe-connect";
 import { getStoreSetupStatus } from "@/app/[locale]/actions/store-setup";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import toast from "react-hot-toast";
@@ -27,6 +27,7 @@ export default function PaymentsTab() {
     payoutsEnabled: boolean;
     detailsSubmitted: boolean;
   } | null>(null);
+  const [loadingDashboardLink, setLoadingDashboardLink] = useState(false);
 
   useEffect(() => {
     loadStatus();
@@ -107,13 +108,26 @@ export default function PaymentsTab() {
     }
   };
 
+  const handleViewEarnings = async () => {
+    setLoadingDashboardLink(true);
+    try {
+      const result = await createStripeDashboardLink();
+      if (result.success && result.url) {
+        window.open(result.url, "_blank");
+      } else {
+        toast.error(result.error || "Failed to open Stripe dashboard");
+      }
+    } catch (error) {
+      console.error("Error opening Stripe dashboard:", error);
+      toast.error("Failed to open Stripe dashboard");
+    } finally {
+      setLoadingDashboardLink(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <CreditCard className="w-6 h-6 text-blue-600" />
-          <h3 className="text-xl font-semibold">Payments & Payouts</h3>
-        </div>
         <Card className="p-8">
           <div className="flex items-center justify-center">
             <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
@@ -126,10 +140,6 @@ export default function PaymentsTab() {
   if (!setupStatus?.hasStore) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <CreditCard className="w-6 h-6 text-blue-600" />
-          <h3 className="text-xl font-semibold">Payments & Payouts</h3>
-        </div>
         <Alert>
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Store Setup Required</AlertTitle>
@@ -149,11 +159,6 @@ export default function PaymentsTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <CreditCard className="w-6 h-6 text-blue-600" />
-        <h3 className="text-xl font-semibold">Payments & Payouts</h3>
-      </div>
-
       {!setupStatus.hasStripeAccount ? (
         <Card className="p-8">
           <div className="space-y-4">
@@ -258,6 +263,28 @@ export default function PaymentsTab() {
                 <span>Payouts Enabled</span>
               </div>
             </div>
+            {setupStatus.hasStripeAccount && (
+              <div className="pt-4">
+                <Button
+                  onClick={handleViewEarnings}
+                  disabled={loadingDashboardLink}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  {loadingDashboardLink ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink className="w-4 h-4" />
+                      View Earnings
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
           </div>
         </Card>
       )}

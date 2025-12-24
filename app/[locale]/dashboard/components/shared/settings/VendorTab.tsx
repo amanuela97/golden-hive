@@ -29,7 +29,6 @@ export default function StoreTab() {
   const [loadingData, setLoadingData] = useState(true);
   const [formData, setFormData] = useState({
     storeName: "",
-    description: "",
   });
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
@@ -61,7 +60,6 @@ export default function StoreTab() {
       if (result.success && result.result) {
         setFormData({
           storeName: result.result.storeName || "",
-          description: result.result.description || "",
         });
         if (result.result.logoUrl) {
           setExistingLogoUrl(result.result.logoUrl);
@@ -152,8 +150,9 @@ export default function StoreTab() {
       const result = await upsertStore(
         {
           storeName: formData.storeName.trim(),
-          description: formData.description.trim() || null,
           logoUrl: existingLogoUrl,
+          storeCurrency: "EUR",
+          unitSystem: "Metric system",
         },
         logoFile || undefined
       );
@@ -295,21 +294,6 @@ export default function StoreTab() {
                 placeholder="Enter your store name"
                 required
                 className="h-11"
-              />
-            </div>
-
-            <div className="lg:col-span-2 space-y-2">
-              <Label htmlFor="description" className="text-sm font-medium">
-                Description
-              </Label>
-              <Textarea
-                id="description"
-                name="description"
-                value={formData.description}
-                onChange={handleInputChange}
-                placeholder="Enter a short description about your store"
-                rows={4}
-                className="resize-none"
               />
             </div>
 

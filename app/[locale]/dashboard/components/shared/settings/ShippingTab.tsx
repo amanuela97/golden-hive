@@ -111,10 +111,6 @@ export default function ShippingTab() {
   if (fetching) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Truck className="w-6 h-6 text-blue-600" />
-          <h3 className="text-xl font-semibold">Shipping & Billing</h3>
-        </div>
         <Card className="p-8">
           <div className="text-center">Loading...</div>
         </Card>
@@ -124,11 +120,6 @@ export default function ShippingTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Truck className="w-6 h-6 text-blue-600" />
-        <h3 className="text-xl font-semibold">Shipping & Billing</h3>
-      </div>
-
       <form onSubmit={handleSubmit} className="space-y-8">
         {/* Billing Information */}
         <Card className="p-6">

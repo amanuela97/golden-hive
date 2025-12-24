@@ -17,6 +17,14 @@ interface OrderData {
   taxAmount: string;
   totalAmount: string;
   paymentStatus: string;
+  discount?: {
+    name: string;
+    code: string | null;
+    valueType: "fixed" | "percentage";
+    value: number;
+    amount: number;
+    currency: string;
+  } | null;
 }
 
 interface PaymentSummaryProps {
@@ -56,14 +64,6 @@ export function PaymentSummary({
                 {orderData.currency} {subtotal.toFixed(2)}
               </span>
             </div>
-            {discount > 0 && (
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Discount:</span>
-                <span className="font-medium text-green-600">
-                  -{orderData.currency} {discount.toFixed(2)}
-                </span>
-              </div>
-            )}
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Shipping:</span>
               <span className="font-medium">
@@ -76,6 +76,29 @@ export function PaymentSummary({
                 {orderData.currency} {tax.toFixed(2)}
               </span>
             </div>
+            {discount > 0 && (
+              <div className="flex flex-col gap-1 border-t pt-2 mt-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">
+                    {orderData.discount?.name || "Discount"}
+                    {orderData.discount?.code && (
+                      <span className="ml-1 text-xs">({orderData.discount.code})</span>
+                    )}
+                    :
+                  </span>
+                  <span className="font-medium text-green-600">
+                    -{orderData.currency} {discount.toFixed(2)}
+                  </span>
+                </div>
+                {orderData.discount && (
+                  <div className="text-xs text-muted-foreground pl-1">
+                    {orderData.discount.valueType === "percentage"
+                      ? `${orderData.discount.value}% off`
+                      : `${orderData.discount.currency} ${orderData.discount.value.toFixed(2)} off`}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="border-t pt-3 mt-3">
               <div className="flex justify-between text-lg font-semibold">
                 <span>Total:</span>

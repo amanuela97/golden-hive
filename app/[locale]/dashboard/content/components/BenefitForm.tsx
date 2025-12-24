@@ -36,7 +36,7 @@ export function BenefitForm({
   isLoading = false,
 }: BenefitFormProps) {
   const [formData, setFormData] = useState({
-    title: initialData?.title || "Why Choose Golden Hive?",
+    title: initialData?.title || "Why Choose Golden Market?",
     isActive: initialData?.isActive ?? true,
   });
 
@@ -157,7 +157,7 @@ export function BenefitForm({
               id="title"
               value={formData.title}
               onChange={(e) => handleInputChange("title", e.target.value)}
-              placeholder="Why Choose Golden Hive?"
+              placeholder="Why Choose Golden Market?"
               maxLength={100}
             />
             {errors.title && (

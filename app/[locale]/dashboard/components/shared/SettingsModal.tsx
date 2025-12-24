@@ -38,7 +38,6 @@ type SettingsSection =
   | "feedbacks"
   | "communications"
   | "payments"
-  | "policies"
   | "profile"
   | "security"
   | "shipping-billing"
@@ -60,8 +59,7 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const [activeSection, setActiveSection] =
-    useState<SettingsSection>("store");
+  const [activeSection, setActiveSection] = useState<SettingsSection>("store");
 
   const validSections: SettingsSection[] = [
     "users",
@@ -74,7 +72,6 @@ export function SettingsModal({
     "feedbacks",
     "communications",
     "payments",
-    "policies",
     "profile",
     "security",
     "shipping-billing",
@@ -198,13 +195,7 @@ export function SettingsModal({
       icon: CreditCard,
       roles: ["admin", "seller"], // A, S
     },
-    // Policies (A, S)
-    {
-      id: "policies",
-      label: "Policies",
-      icon: FileCheck,
-      roles: ["admin", "seller"], // A, S
-    },
+
     // Shipping (A, S) - keeping for admin/seller
     {
       id: "shipping-billing",

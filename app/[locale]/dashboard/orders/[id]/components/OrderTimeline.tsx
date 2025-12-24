@@ -37,12 +37,9 @@ export function OrderTimeline({
   const isInternal = userRole === "admin" || userRole === "seller";
 
   // List of sensitive keys to filter out from metadata
+  // Note: For payment events, we want to show amount, fee, stripe_checkout_session, and provider
   const sensitiveKeys = [
-    "stripePaymentIntentId",
-    "stripeCheckoutSessionId",
     "stripeAccountId",
-    "paymentIntentId",
-    "checkoutSessionId",
     "apiKey",
     "secret",
     "token",
@@ -54,19 +51,33 @@ export function OrderTimeline({
   ];
 
   // Filter sensitive information from metadata
+  // For payment events, show specific payment details
   const filterSensitiveMetadata = (
-    metadata: Record<string, unknown> | null
+    metadata: Record<string, unknown> | null,
+    eventType?: string
   ): Record<string, unknown> | null => {
     if (!metadata) return null;
 
+    // For payment events, show specific payment-related fields
+    if (eventType === "payment") {
+      const paymentFields: Record<string, unknown> = {};
+      if (metadata.amount !== undefined) paymentFields.amount = metadata.amount;
+      if (metadata.currency !== undefined) paymentFields.currency = metadata.currency;
+      if (metadata.fee !== undefined) paymentFields.fee = metadata.fee;
+      if (metadata.stripe_checkout_session !== undefined) {
+        paymentFields.stripe_checkout_session = metadata.stripe_checkout_session;
+      }
+      if (metadata.provider !== undefined) paymentFields.provider = metadata.provider;
+      return Object.keys(paymentFields).length > 0 ? paymentFields : null;
+    }
+
+    // For other events, filter out sensitive keys
     const filtered: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(metadata)) {
       // Check if key contains any sensitive keywords (case-insensitive)
       const isSensitive = sensitiveKeys.some(
         (sensitiveKey) =>
           key.toLowerCase().includes(sensitiveKey.toLowerCase()) ||
-          key.toLowerCase().includes("stripe") ||
-          key.toLowerCase().includes("payment") ||
           key.toLowerCase().includes("secret")
       );
 
@@ -170,7 +181,7 @@ export function OrderTimeline({
           ) : (
             visibleEvents.map((event) => {
               const isExpanded = expandedEvents.has(event.id);
-              const filteredMetadata = filterSensitiveMetadata(event.metadata);
+              const filteredMetadata = filterSensitiveMetadata(event.metadata, event.type);
               const hasMetadata =
                 filteredMetadata && Object.keys(filteredMetadata).length > 0;
 
@@ -215,18 +226,36 @@ export function OrderTimeline({
                       {isExpanded && hasMetadata && (
                         <div className="pl-11 pt-2 space-y-3 border-t">
                           {Object.entries(filteredMetadata).map(
-                            ([key, value], index) => (
-                              <div key={index} className="space-y-1">
-                                <p className="text-xs font-semibold text-foreground">
-                                  {key}
-                                </p>
-                                <p className="text-xs text-muted-foreground break-words">
-                                  {typeof value === "object" && value !== null
-                                    ? JSON.stringify(value, null, 2)
-                                    : String(value)}
-                                </p>
-                              </div>
-                            )
+                            ([key, value], index) => {
+                              // Format key for display (convert snake_case to Title Case)
+                              const displayKey = key
+                                .split("_")
+                                .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                                .join(" ");
+                              
+                              // Format value for display
+                              let displayValue: string;
+                              if (event.type === "payment" && key === "amount" && filteredMetadata.currency) {
+                                displayValue = `${filteredMetadata.currency} ${parseFloat(String(value)).toFixed(2)}`;
+                              } else if (event.type === "payment" && key === "fee" && filteredMetadata.currency) {
+                                displayValue = `${filteredMetadata.currency} ${parseFloat(String(value)).toFixed(2)}`;
+                              } else if (typeof value === "object" && value !== null) {
+                                displayValue = JSON.stringify(value, null, 2);
+                              } else {
+                                displayValue = String(value);
+                              }
+                              
+                              return (
+                                <div key={index} className="space-y-1">
+                                  <p className="text-xs font-semibold text-foreground">
+                                    {displayKey}:
+                                  </p>
+                                  <p className="text-xs text-muted-foreground break-words">
+                                    {displayValue}
+                                  </p>
+                                </div>
+                              );
+                            }
                           )}
                         </div>
                       )}

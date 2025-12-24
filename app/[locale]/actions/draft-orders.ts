@@ -1120,8 +1120,9 @@ async function completeDraftOrderInternal(
           },
         ]);
 
-        // Add payment event if marked as paid
-        if (markAsPaid) {
+        // Add payment event if marked as paid (but not from webhook)
+        // When skipAuth is true, it means this is from a webhook, and the webhook will create its own payment event
+        if (markAsPaid && !skipAuth) {
           await tx.insert(orderEvents).values({
             orderId: orderId,
             type: "payment",
@@ -1174,7 +1175,7 @@ async function completeDraftOrderInternal(
           }
 
           await resend.emails.send({
-            from: "Golden Hive <goldenhive@resend.dev>",
+            from: "Golden Market <goldenmarket@resend.dev>",
             to: draft.customerEmail,
             subject: `Order Confirmation #${orderNumber}`,
             react: OrderConfirmationEmail({
@@ -1401,7 +1402,8 @@ export async function sendInvoice(
     // Use configured from address or fallback to default
     // If RESEND_FROM_EMAIL contains placeholder "yourdomain.com", use default Resend email
     const fromAddress =
-      process.env.RESEND_FROM_EMAIL || "Golden Hive <goldenhive@resend.dev>";
+      process.env.RESEND_FROM_EMAIL ||
+      "Golden Market <goldenmarket@resend.dev>";
 
     const emailResult = await resend.emails.send({
       from: fromAddress,
@@ -1418,6 +1420,9 @@ export async function sendInvoice(
           lineTotal: item.lineTotal,
         })),
         subtotal: draft.subtotalAmount,
+        discount: draft.discountAmount,
+        shipping: draft.shippingAmount,
+        tax: draft.taxAmount,
         total: draft.totalAmount,
         currency: draft.currency,
         paymentUrl,

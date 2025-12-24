@@ -21,7 +21,7 @@ export const auth = betterAuth({
       enabled: true,
       sendDeleteAccountVerification: async ({ user, url }) => {
         await resend.emails.send({
-          from: "Golden Hive <goldenhive@resend.dev>",
+          from: "Golden Market <goldenmarket@resend.dev>",
           to: user.email,
           subject: "Verify Account Deletion",
           html: `Click the link to verify your account deletion: ${url}`,
@@ -75,7 +75,7 @@ export const auth = betterAuth({
     sendResetPassword: async ({ user, token }) => {
       const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL}/reset-password?token=${token}`;
       await resend.emails.send({
-        from: "Golden Hive <goldenhive@resend.dev>",
+        from: "Golden Market <goldenmarket@resend.dev>",
         to: user.email,
         subject: "Reset your password",
         react: ResetPasswordEmail({ url: resetUrl }),
@@ -91,7 +91,7 @@ export const auth = betterAuth({
     autoSignInAfterVerification: true, // Automatically signIn the user after verification
     sendVerificationEmail: async ({ user, url }) => {
       await resend.emails.send({
-        from: "Golden Hive <goldenhive@resend.dev>", // You could add your custom domain
+        from: "Golden Market <goldenmarket@resend.dev>", // You could add your custom domain
         to: user.email, // email of the user to want to end
         subject: "Email Verification", // Main subject of the email
         html: `Click the link to verify your email: ${url}`, // Content of the email

@@ -230,10 +230,6 @@ export default function ProfileTab() {
   if (isLoadingProfile) {
     return (
       <div className="space-y-8">
-        <div className="flex items-center gap-3">
-          <User className="w-6 h-6 text-blue-600" />
-          <h3 className="text-xl font-semibold">Profile Information</h3>
-        </div>
         <Card className="p-8">
           <div className="text-center py-8">Loading profile...</div>
         </Card>
@@ -243,10 +239,6 @@ export default function ProfileTab() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center gap-3">
-        <User className="w-6 h-6 text-blue-600" />
-        <h3 className="text-xl font-semibold">Profile Information</h3>
-      </div>
 
       <Card className="p-8">
         <form onSubmit={handleSubmit} className="space-y-8">
