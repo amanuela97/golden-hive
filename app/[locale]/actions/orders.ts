@@ -45,10 +45,11 @@ import {
   generateInvoiceToken,
   getInvoiceExpirationDate,
 } from "@/lib/invoice-token";
+import { generateOrderNumber } from "@/lib/order-number";
 
 export type OrderRow = {
   id: string;
-  orderNumber: number;
+  orderNumber: string;
   customerFirstName: string | null;
   customerLastName: string | null;
   customerEmail: string | null;
@@ -1020,23 +1021,57 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
       );
     }
 
-    // Get total count
-    // For stores, we need to ensure we're counting distinct orders that match the conditions
-    const countQuery = db
-      .selectDistinct({ id: orders.id })
-      .from(orders)
-      .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
-      .leftJoin(listing, eq(orderItems.listingId, listing.id))
-      .where(
-        conditions.length > 0
-          ? searchCondition
-            ? and(...conditions, searchCondition)
-            : and(...conditions)
-          : searchCondition || undefined
-      );
+    // For admins, we need to group orders by checkout session to show unified orders
+    // For stores, show individual orders (they only see their portion anyway)
+    let totalCount: number;
+    
+    if (isAdmin) {
+      // Group orders by checkout session ID for admins
+      // Get distinct checkout session IDs (or order IDs if no session)
+      const sessionQuery = db
+        .selectDistinct({
+          sessionId: orderPayments.stripeCheckoutSessionId,
+          orderId: orders.id,
+        })
+        .from(orders)
+        .leftJoin(orderPayments, eq(orders.id, orderPayments.orderId))
+        .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+        .leftJoin(listing, eq(orderItems.listingId, listing.id))
+        .where(
+          conditions.length > 0
+            ? searchCondition
+              ? and(...conditions, searchCondition)
+              : and(...conditions)
+            : searchCondition || undefined
+        );
 
-    const countResult = await countQuery;
-    const totalCount = countResult.length;
+      const sessionResult = await sessionQuery;
+      
+      // Group by session ID (or use order ID if no session)
+      const uniqueSessions = new Set<string>();
+      for (const row of sessionResult) {
+        const key = row.sessionId || row.orderId;
+        if (key) uniqueSessions.add(key);
+      }
+      totalCount = uniqueSessions.size;
+    } else {
+      // For stores, count distinct orders as before
+      const countQuery = db
+        .selectDistinct({ id: orders.id })
+        .from(orders)
+        .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+        .leftJoin(listing, eq(orderItems.listingId, listing.id))
+        .where(
+          conditions.length > 0
+            ? searchCondition
+              ? and(...conditions, searchCondition)
+              : and(...conditions)
+            : searchCondition || undefined
+        );
+
+      const countResult = await countQuery;
+      totalCount = countResult.length;
+    }
 
     // Build sort - default to latest orders (by date, descending)
     const sortBy = filters.sortBy || "date";
@@ -1074,63 +1109,221 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
       itemsCountExpression = sql<number>`COUNT(${orderItems.id})::int`;
     }
 
-    const data = await db
-      .select({
-        id: orders.id,
-        orderNumber: orders.orderNumber,
-        customerFirstName: orders.customerFirstName,
-        customerLastName: orders.customerLastName,
-        customerEmail: orders.customerEmail,
-        totalAmount: orders.totalAmount,
-        currency: orders.currency,
-        paymentStatus: orders.paymentStatus,
-        fulfillmentStatus: orders.fulfillmentStatus,
-        workflowStatus: orders.workflowStatus,
-        holdReason: orders.holdReason,
-        status: orders.status,
-        placedAt: orders.placedAt,
-        createdAt: orders.createdAt,
-        shippingMethod: orders.shippingMethod,
-        archivedAt: orders.archivedAt,
-        shippingAddressLine1: orders.shippingAddressLine1,
-        shippingCity: orders.shippingCity,
-        shippingCountry: orders.shippingCountry,
-        itemsCount: itemsCountExpression,
-      })
-      .from(orders)
-      .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
-      .leftJoin(listing, eq(orderItems.listingId, listing.id))
-      .where(
-        conditions.length > 0
-          ? searchCondition
-            ? and(...conditions, searchCondition)
-            : and(...conditions)
-          : searchCondition || undefined
-      )
-      .groupBy(
-        orders.id,
-        orders.orderNumber,
-        orders.customerFirstName,
-        orders.customerLastName,
-        orders.customerEmail,
-        orders.totalAmount,
-        orders.currency,
-        orders.paymentStatus,
-        orders.fulfillmentStatus,
-        orders.workflowStatus,
-        orders.holdReason,
-        orders.status,
-        orders.placedAt,
-        orders.createdAt,
-        orders.shippingMethod,
-        orders.archivedAt,
-        orders.shippingAddressLine1,
-        orders.shippingCity,
-        orders.shippingCountry
-      )
-      .orderBy(orderBy)
-      .limit(pageSize)
-      .offset(offset);
+    let data: any[];
+
+    if (isAdmin) {
+      // For admins: Group orders by checkout session ID
+      // First, get all orders with their session IDs
+      const ordersWithSessions = await db
+        .select({
+          id: orders.id,
+          orderNumber: orders.orderNumber,
+          customerFirstName: orders.customerFirstName,
+          customerLastName: orders.customerLastName,
+          customerEmail: orders.customerEmail,
+          totalAmount: orders.totalAmount,
+          currency: orders.currency,
+          paymentStatus: orders.paymentStatus,
+          fulfillmentStatus: orders.fulfillmentStatus,
+          workflowStatus: orders.workflowStatus,
+          holdReason: orders.holdReason,
+          status: orders.status,
+          placedAt: orders.placedAt,
+          createdAt: orders.createdAt,
+          shippingMethod: orders.shippingMethod,
+          archivedAt: orders.archivedAt,
+          shippingAddressLine1: orders.shippingAddressLine1,
+          shippingCity: orders.shippingCity,
+          shippingCountry: orders.shippingCountry,
+          sessionId: orderPayments.stripeCheckoutSessionId,
+        })
+        .from(orders)
+        .leftJoin(orderPayments, eq(orders.id, orderPayments.orderId))
+        .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+        .leftJoin(listing, eq(orderItems.listingId, listing.id))
+        .where(
+          conditions.length > 0
+            ? searchCondition
+              ? and(...conditions, searchCondition)
+              : and(...conditions)
+            : searchCondition || undefined
+        )
+        .groupBy(
+          orders.id,
+          orders.orderNumber,
+          orders.customerFirstName,
+          orders.customerLastName,
+          orders.customerEmail,
+          orders.totalAmount,
+          orders.currency,
+          orders.paymentStatus,
+          orders.fulfillmentStatus,
+          orders.workflowStatus,
+          orders.holdReason,
+          orders.status,
+          orders.placedAt,
+          orders.createdAt,
+          orders.shippingMethod,
+          orders.archivedAt,
+          orders.shippingAddressLine1,
+          orders.shippingCity,
+          orders.shippingCountry,
+          orderPayments.stripeCheckoutSessionId
+        );
+
+      // Get item counts for each order
+      const orderIds = [...new Set(ordersWithSessions.map((o) => o.id))];
+      const itemCounts = await db
+        .select({
+          orderId: orderItems.orderId,
+          count: sql<number>`COUNT(${orderItems.id})::int`,
+        })
+        .from(orderItems)
+        .where(inArray(orderItems.orderId, orderIds))
+        .groupBy(orderItems.orderId);
+
+      const itemCountMap = new Map(
+        itemCounts.map((ic) => [ic.orderId, ic.count])
+      );
+
+      // Group orders by session ID (or order ID if no session)
+      const groupedOrders = new Map<string, typeof ordersWithSessions>();
+      for (const order of ordersWithSessions) {
+        const groupKey = order.sessionId || order.id;
+        if (!groupedOrders.has(groupKey)) {
+          groupedOrders.set(groupKey, []);
+        }
+        groupedOrders.get(groupKey)!.push(order);
+      }
+
+      // Aggregate grouped orders
+      data = Array.from(groupedOrders.values()).map((orderGroup) => {
+        // Use the first order as the base (most recent or primary)
+        const primaryOrder = orderGroup.sort(
+          (a, b) =>
+            (b.placedAt?.getTime() || b.createdAt.getTime()) -
+            (a.placedAt?.getTime() || a.createdAt.getTime())
+        )[0];
+
+        // Aggregate totals
+        const totalAmount = orderGroup.reduce(
+          (sum, o) => sum + parseFloat(o.totalAmount || "0"),
+          0
+        );
+        const totalItems = orderGroup.reduce(
+          (sum, o) => sum + (itemCountMap.get(o.id) || 0),
+          0
+        );
+
+        // Determine overall status (worst case)
+        const statuses = orderGroup.map((o) => o.status);
+        const paymentStatuses = orderGroup.map((o) => o.paymentStatus);
+        const fulfillmentStatuses = orderGroup.map((o) => o.fulfillmentStatus);
+
+        const overallStatus = statuses.includes("canceled")
+          ? "canceled"
+          : statuses.includes("archived")
+            ? "archived"
+            : "open";
+        const overallPaymentStatus = paymentStatuses.includes("paid")
+          ? "paid"
+          : paymentStatuses.includes("failed")
+            ? "failed"
+          : paymentStatuses.includes("refunded")
+            ? "refunded"
+            : "pending";
+        const overallFulfillmentStatus = fulfillmentStatuses.every(
+          (s) => s === "fulfilled"
+        )
+          ? "fulfilled"
+          : fulfillmentStatuses.some((s) => s === "fulfilled" || s === "partial")
+            ? "partial"
+            : "unfulfilled";
+
+        return {
+          ...primaryOrder,
+          id: primaryOrder.id, // Use primary order ID
+          orderNumber: primaryOrder.orderNumber, // Use primary order number
+          totalAmount: totalAmount.toFixed(2),
+          itemsCount: totalItems,
+          paymentStatus: overallPaymentStatus,
+          fulfillmentStatus: overallFulfillmentStatus,
+          status: overallStatus,
+          // Mark as grouped order
+          isGrouped: orderGroup.length > 1,
+          groupedOrderIds: orderGroup.map((o) => o.id),
+        };
+      });
+
+      // Sort the grouped data
+      data.sort((a, b) => {
+        const aDate = a.placedAt?.getTime() || a.createdAt.getTime();
+        const bDate = b.placedAt?.getTime() || b.createdAt.getTime();
+        return sortDirection === "asc" ? aDate - bDate : bDate - aDate;
+      });
+
+      // Apply pagination
+      data = data.slice(offset, offset + pageSize);
+    } else {
+      // For stores: Show individual orders (existing logic)
+      data = await db
+        .select({
+          id: orders.id,
+          orderNumber: orders.orderNumber,
+          customerFirstName: orders.customerFirstName,
+          customerLastName: orders.customerLastName,
+          customerEmail: orders.customerEmail,
+          totalAmount: orders.totalAmount,
+          currency: orders.currency,
+          paymentStatus: orders.paymentStatus,
+          fulfillmentStatus: orders.fulfillmentStatus,
+          workflowStatus: orders.workflowStatus,
+          holdReason: orders.holdReason,
+          status: orders.status,
+          placedAt: orders.placedAt,
+          createdAt: orders.createdAt,
+          shippingMethod: orders.shippingMethod,
+          archivedAt: orders.archivedAt,
+          shippingAddressLine1: orders.shippingAddressLine1,
+          shippingCity: orders.shippingCity,
+          shippingCountry: orders.shippingCountry,
+          itemsCount: itemsCountExpression,
+        })
+        .from(orders)
+        .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+        .leftJoin(listing, eq(orderItems.listingId, listing.id))
+        .where(
+          conditions.length > 0
+            ? searchCondition
+              ? and(...conditions, searchCondition)
+              : and(...conditions)
+            : searchCondition || undefined
+        )
+        .groupBy(
+          orders.id,
+          orders.orderNumber,
+          orders.customerFirstName,
+          orders.customerLastName,
+          orders.customerEmail,
+          orders.totalAmount,
+          orders.currency,
+          orders.paymentStatus,
+          orders.fulfillmentStatus,
+          orders.workflowStatus,
+          orders.holdReason,
+          orders.status,
+          orders.placedAt,
+          orders.createdAt,
+          orders.shippingMethod,
+          orders.archivedAt,
+          orders.shippingAddressLine1,
+          orders.shippingCity,
+          orders.shippingCountry
+        )
+        .orderBy(orderBy)
+        .limit(pageSize)
+        .offset(offset);
+    }
 
     return {
       success: true,
@@ -1166,7 +1359,7 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
 export async function createOrder(input: CreateOrderInput): Promise<{
   success: boolean;
   orderId?: string;
-  orderNumber?: number;
+  orderNumber?: string;
   error?: string;
 }> {
   try {
@@ -1436,9 +1629,13 @@ export async function createOrder(input: CreateOrderInput): Promise<{
         .limit(1);
       const userMarketId = userData.length > 0 ? userData[0].marketId : null;
 
+      // Generate unique order number
+      const orderNumber = await generateOrderNumber();
+
       const newOrder = await tx
         .insert(orders)
         .values({
+          orderNumber: orderNumber,
           storeId: finalStoreId,
           marketId: userMarketId, // Snapshot market at transaction time
           customerId: customerId || null,
@@ -1478,7 +1675,7 @@ export async function createOrder(input: CreateOrderInput): Promise<{
         .returning();
 
       const orderId = newOrder[0].id;
-      const orderNumber = newOrder[0].orderNumber;
+      const returnedOrderNumber = newOrder[0].orderNumber;
 
       // Create order items
       for (const item of input.lineItems) {
@@ -1526,7 +1723,7 @@ export async function createOrder(input: CreateOrderInput): Promise<{
       return {
         success: true,
         orderId,
-        orderNumber: Number(orderNumber),
+        orderNumber: returnedOrderNumber,
       };
     });
   } catch (error) {
@@ -2451,6 +2648,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
     const items = await db
       .select({
         id: orderItems.id,
+        listingId: orderItems.listingId,
         title: orderItems.title,
         sku: orderItems.sku,
         quantity: orderItems.quantity,
@@ -2461,6 +2659,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
         currency: orderItems.currency,
         variantImageUrl: listingVariants.imageUrl,
         listingImageUrl: listing.imageUrl,
+        listingSlug: listing.slug,
       })
       .from(orderItems)
       .innerJoin(listing, eq(orderItems.listingId, listing.id))
@@ -3065,7 +3264,7 @@ export async function cancelOrder(input: {
           to: order.customerEmail!,
           subject: `Order #${order.orderNumber} Cancellation`,
           react: OrderCancellationEmail({
-            orderNumber: Number(order.orderNumber),
+            orderNumber: order.orderNumber,
             customerName,
             customerEmail: order.customerEmail!,
             cancellationReason: input.cancellationReason,

@@ -14,6 +14,7 @@ import {
 import { eq, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { generateOrderNumber } from "@/lib/order-number";
 
 /**
  * Helper to get store ID for user
@@ -296,7 +297,7 @@ export async function POST(req: NextRequest) {
     // Single order flow (existing logic)
     let finalOrderId: string;
     let finalStoreId: string;
-    let orderRow: { id: string; orderNumber: number };
+    let orderRow: { id: string; orderNumber: string };
     const lineItemsData: Array<{
       listing: typeof listing.$inferSelect;
       variant: typeof listingVariants.$inferSelect | null;
@@ -566,10 +567,14 @@ export async function POST(req: NextRequest) {
       total = subtotal; // Add shipping/tax later if needed
       finalCurrency = currency;
 
+      // Generate unique order number
+      const generatedOrderNumber = await generateOrderNumber();
+
       // Create order in DB
       const [newOrderRow] = await db
         .insert(orders)
         .values({
+          orderNumber: generatedOrderNumber,
           storeId: finalStoreId,
           currency,
           subtotalAmount: subtotal.toFixed(2),
@@ -709,7 +714,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       url: checkoutSession.url,
       orderId: finalOrderId,
-      orderNumber: Number(orderRow.orderNumber),
+      orderNumber: orderRow.orderNumber,
     });
   } catch (error) {
     console.error("Error creating checkout session:", error);

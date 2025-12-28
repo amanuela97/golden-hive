@@ -41,6 +41,7 @@
     "drizzle-orm": "0.44.6",
     "json-edit-react": "1.29.0",
     "lucide-react": "0.545.0",
+    "meilisearch": "0.54.0",
     "nanoid": "5.1.6",
     "next": "16.0.8",
     "next-intl": "4.4.0",

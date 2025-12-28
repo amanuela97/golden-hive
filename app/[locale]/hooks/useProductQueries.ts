@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocale } from "next-intl";
 import {
   getPublicProducts,
-  getPublicProductById,
+  getPublicProductBySlug,
   getRelatedProducts,
   getFeaturedProducts,
   getPublicProductVariants,
@@ -29,17 +29,17 @@ export function useProducts() {
   const locale = useLocale();
   return useQuery({
     queryKey: productQueryKeys.products(locale),
-    queryFn: () => getPublicProducts(locale),
+    queryFn: () => getPublicProducts({ locale }),
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 }
 
-export function useProduct(productId: string) {
+export function useProduct(productSlug: string) {
   const locale = useLocale();
   return useQuery({
-    queryKey: productQueryKeys.product(productId, locale),
-    queryFn: () => getPublicProductById(productId, locale),
-    enabled: !!productId,
+    queryKey: productQueryKeys.product(productSlug, locale),
+    queryFn: () => getPublicProductBySlug(productSlug, locale),
+    enabled: !!productSlug,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
 }

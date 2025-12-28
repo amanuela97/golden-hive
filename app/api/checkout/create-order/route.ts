@@ -11,6 +11,7 @@ import {
   discounts,
 } from "@/db/schema";
 import { eq, inArray, and } from "drizzle-orm";
+import { generateOrderNumber } from "@/lib/order-number";
 
 interface CreateOrderRequest {
   customerEmail: string;
@@ -132,7 +133,7 @@ export async function POST(req: NextRequest) {
     if (storesWithoutStripe.length > 0) {
       return NextResponse.json(
         {
-          error: `Store(s) have not connected Stripe account: ${storesWithoutStripe.map((s) => s.name).join(", ")}`,
+          error: `Store(s) have not connected Stripe account: ${storesWithoutStripe.map((s) => s.storeName).join(", ")}`,
         },
         { status: 400 }
       );
@@ -140,7 +141,7 @@ export async function POST(req: NextRequest) {
 
     // Create orders for each store in transaction
     return await db.transaction(async (tx) => {
-      const createdOrders: Array<{ orderId: string; orderNumber: number; storeId: string }> = [];
+      const createdOrders: Array<{ orderId: string; orderNumber: string; storeId: string }> = [];
 
       // Process each store separately
       for (const [storeId, storeLineItems] of itemsByStore.entries()) {
@@ -242,10 +243,14 @@ export async function POST(req: NextRequest) {
             .where(inArray(listingVariants.id, variantIds));
         }
 
+        // Generate unique order number
+        const generatedOrderNumber = await generateOrderNumber();
+
         // Create order for this store
         const newOrder = await tx
           .insert(orders)
           .values({
+            orderNumber: generatedOrderNumber,
             storeId: storeId,
             marketId: null, // Guest orders don't have market
             customerId: customerId,
@@ -353,7 +358,7 @@ export async function POST(req: NextRequest) {
 
         createdOrders.push({
           orderId,
-          orderNumber: Number(orderNumber),
+          orderNumber: orderNumber,
           storeId,
         });
 

@@ -14,7 +14,6 @@ import {
   Tag,
   MessageSquare,
   CreditCard,
-  FileCheck,
   User,
   Truck,
   Store,

@@ -277,7 +277,7 @@
     "current": "Current language"
   },
   "homepage": {
-    "title": "Connecting entrepreneurs with customers",
+    "title": "Golden Market",
     "description": "Discover the finest products from entrepreneurs around the world"
   },
   "faq": {
@@ -385,5 +385,16 @@
     "importedListings": "Successfully imported {count} listings from CSV",
     "passwordResetEmailSentToAdmin": "Password reset email sent successfully.",
     "featuredStatusToggled": "Featured status toggled successfully."
+  },
+  "review": {
+    "title": "Review Your Purchase",
+    "orderNotReady": "Order Not Ready for Review",
+    "orderNotReadyDescription": "You can only review products from paid orders.",
+    "orderNumber": "Order #{orderNumber}",
+    "reviewProduct": "Review Product",
+    "reviewStore": "Review Store",
+    "thankYou": "Thank you for your review!",
+    "feedbackHelps": "Your feedback helps other buyers.",
+    "pleaseProvideId": "Please provide a product or store ID in the URL."
   }
 }

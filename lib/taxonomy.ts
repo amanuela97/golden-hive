@@ -223,3 +223,41 @@ export function getCategoryAttributes(categoryId: string): TaxonomyAttribute[] {
   }
   return category.attributes;
 }
+
+/**
+ * Get all descendant category IDs from a given category ID (recursive)
+ * This includes the category itself and all its children, grandchildren, etc.
+ */
+export function getDescendantTaxonomyIds(categoryId: string): string[] {
+  const categoryMap = new Map<string, TaxonomyCategory>();
+  const data = taxonomyData as TaxonomyData;
+
+  // Build category map
+  for (const vertical of data.verticals) {
+    for (const cat of vertical.categories) {
+      categoryMap.set(cat.id, cat);
+    }
+  }
+
+  const category = categoryMap.get(categoryId);
+  if (!category) {
+    return [categoryId]; // Return just the ID if category not found
+  }
+
+  const descendants: string[] = [categoryId];
+
+  const collectDescendants = (cat: TaxonomyCategory) => {
+    if (cat.children && cat.children.length > 0) {
+      for (const childRef of cat.children) {
+        const child = categoryMap.get(childRef.id);
+        if (child) {
+          descendants.push(child.id);
+          collectDescendants(child);
+        }
+      }
+    }
+  };
+
+  collectDescendants(category);
+  return descendants;
+}

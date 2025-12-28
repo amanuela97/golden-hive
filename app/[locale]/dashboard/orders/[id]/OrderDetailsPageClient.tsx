@@ -44,6 +44,8 @@ import { useEffect } from "react";
 
 interface OrderItem {
   id: string;
+  listingId: string | null;
+  listingSlug: string | null;
   title: string;
   sku: string | null;
   quantity: number;

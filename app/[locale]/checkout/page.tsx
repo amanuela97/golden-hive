@@ -1173,7 +1173,8 @@ export default function CheckoutPage() {
                           </Button>
                         </div>
                       )}
-                      {hasDiscountsWithCodes && (
+                      {/* Always show discount code input when there are items in cart */}
+                      {items.length > 0 && (
                         <div className="flex gap-2">
                           <Input
                             id="discountCode"

@@ -211,7 +211,7 @@ export async function generateOnboardingLink(): Promise<{
 }
 
 /**
- * Create Stripe dashboard login link for seller to view earnings
+ * Create Stripe dashboard login link for seller/admin to view earnings
  */
 export async function createStripeDashboardLink(): Promise<{
   success: boolean;
@@ -219,15 +219,7 @@ export async function createStripeDashboardLink(): Promise<{
   error?: string;
 }> {
   try {
-    const { storeId, isAdmin } = await getStoreIdForUser();
-
-    // Only allow sellers (not admins) to view earnings
-    if (isAdmin) {
-      return {
-        success: false,
-        error: "This feature is only available for sellers",
-      };
-    }
+    const { storeId } = await getStoreIdForUser();
 
     if (!storeId) {
       return {

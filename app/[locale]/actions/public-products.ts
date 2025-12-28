@@ -1,11 +1,12 @@
 "use server";
 
 import { db } from "@/db";
-import { listing, listingTranslations, listingVariants, inventoryItems, inventoryLevels } from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { listing, listingTranslations, listingVariants, inventoryItems, inventoryLevels, store, listingSlugHistory } from "@/db/schema";
+import { eq, and, desc, inArray, sql } from "drizzle-orm";
 
 export interface PublicProduct {
   id: string;
+  slug: string | null;
   name: string;
   description: string | null;
   category: string | null;
@@ -28,6 +29,8 @@ export interface PublicProduct {
   salesCount: number | null;
   createdAt: Date;
   updatedAt: Date;
+  storeName: string | null;
+  storeSlug: string | null;
 }
 
 export interface ProductFilters {
@@ -48,10 +51,19 @@ export interface ActionResponse {
   result?: unknown;
 }
 
-// Get all public products (no server-side filtering)
+// Get all public products with optional filtering
 export async function getPublicProducts(
-  locale: string = "en"
-): Promise<ActionResponse & { result?: PublicProduct[] }> {
+  options?: {
+    locale?: string;
+    categoryIds?: string[];
+    limit?: number;
+    page?: number;
+  }
+): Promise<ActionResponse & { result?: PublicProduct[]; total?: number; totalPages?: number; currentPage?: number }> {
+  const locale = options?.locale || "en";
+  const limit = options?.limit || 1000;
+  const page = options?.page || 1;
+  const offset = (page - 1) * limit;
   try {
     console.log("Fetching all public products...", { locale });
 
@@ -78,11 +90,39 @@ export async function getPublicProducts(
       console.log("Sample listings:", allListings.slice(0, 3).map(l => ({ id: l.id, name: l.name, status: l.status })));
     }
 
+    // Build where conditions for both count and select queries
+    // Ensure categoryIds is always an array
+    const categoryIds = options?.categoryIds 
+      ? Array.isArray(options.categoryIds) 
+        ? options.categoryIds 
+        : [options.categoryIds]
+      : undefined;
+    
+    const whereConditions = and(
+      eq(listing.status, "active"),
+      eq(store.isApproved, true), // Only show products from approved stores
+      categoryIds && categoryIds.length > 0
+        ? inArray(listing.taxonomyCategoryId, categoryIds)
+        : undefined
+    );
+
+    // Get total count of products (before pagination)
+    // Need to join store table for the count query too
+    const totalResult = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(listing)
+      .leftJoin(store, eq(listing.storeId, store.id))
+      .where(whereConditions);
+
+    const total = Number(totalResult[0]?.count || 0);
+    const totalPages = Math.ceil(total / limit);
+
     // Get all active products with category information and translations
     // Note: Only show "active" status products to public
     const products = await db
       .select({
         id: listing.id,
+        slug: listing.slug,
         name: listingTranslations.name,
         description: listingTranslations.description,
         category: listing.taxonomyCategoryId,
@@ -104,6 +144,9 @@ export async function getPublicProducts(
         salesCount: listing.salesCount,
         createdAt: listing.createdAt,
         updatedAt: listing.updatedAt,
+        // Store information
+        storeName: store.storeName,
+        storeSlug: store.slug,
         // Fallback fields from base table
         nameFallback: listing.name,
         descriptionFallback: listing.description,
@@ -118,14 +161,18 @@ export async function getPublicProducts(
           eq(listingTranslations.locale, validLocale)
         )
       )
-      .where(eq(listing.status, "active"))
-      .orderBy(desc(listing.createdAt));
+      .leftJoin(store, eq(listing.storeId, store.id))
+      .where(whereConditions)
+      .orderBy(desc(listing.createdAt))
+      .limit(limit)
+      .offset(offset);
 
     console.log("Active products fetched:", products.length);
 
     // Map products with proper type handling
     const mappedProducts = products.map((p) => ({
       id: p.id,
+      slug: p.slug || null,
       name: p.name || p.nameFallback || "",
       description: p.description || p.descriptionFallback,
       category: p.category,
@@ -148,6 +195,8 @@ export async function getPublicProducts(
       salesCount: p.salesCount ?? 0,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
+      storeName: p.storeName,
+      storeSlug: p.storeSlug,
     }));
 
     console.log("Mapped products:", mappedProducts.length);
@@ -155,6 +204,9 @@ export async function getPublicProducts(
     return {
       success: true,
       result: mappedProducts,
+      total,
+      totalPages,
+      currentPage: page,
     };
   } catch (error) {
     console.error("Error fetching public products:", error);
@@ -166,18 +218,20 @@ export async function getPublicProducts(
   }
 }
 
-// Get a single public product by ID
-export async function getPublicProductById(
-  id: string,
+// Get a single public product by slug
+export async function getPublicProductBySlug(
+  slug: string,
   locale: string = "en"
 ): Promise<ActionResponse & { result?: PublicProduct }> {
   try {
     // Ensure locale is valid
     const validLocale = locale || "en";
+    const slugLower = slug.toLowerCase();
 
     const result = await db
       .select({
         id: listing.id,
+        slug: listing.slug,
         name: listingTranslations.name,
         description: listingTranslations.description,
         category: listing.taxonomyCategoryId,
@@ -199,6 +253,9 @@ export async function getPublicProductById(
         salesCount: listing.salesCount,
         createdAt: listing.createdAt,
         updatedAt: listing.updatedAt,
+        // Store information
+        storeName: store.storeName,
+        storeSlug: store.slug,
         // Fallback fields
         nameFallback: listing.name,
         descriptionFallback: listing.description,
@@ -213,10 +270,41 @@ export async function getPublicProductById(
           eq(listingTranslations.locale, validLocale)
         )
       )
-      .where(and(eq(listing.id, id), eq(listing.status, "active")))
+      .leftJoin(store, eq(listing.storeId, store.id))
+      .where(and(eq(listing.slugLower, slugLower), eq(listing.status, "active")))
       .limit(1);
 
     if (result.length === 0) {
+      // Try checking slug history for redirects
+      const { listingSlugHistory } = await import("@/db/schema");
+      const slugHistory = await db
+        .select({ listingId: listingSlugHistory.listingId })
+        .from(listingSlugHistory)
+        .where(eq(listingSlugHistory.slugLower, slugLower))
+        .limit(1);
+
+      if (slugHistory.length > 0) {
+        // Found in history, fetch by ID
+        const historyResult = await db
+          .select({
+            id: listing.id,
+            slug: listing.slug,
+            slugLower: listing.slugLower,
+          })
+          .from(listing)
+          .where(eq(listing.id, slugHistory[0].listingId))
+          .limit(1);
+
+        if (historyResult.length > 0) {
+          // Redirect to current slug
+          return {
+            success: false,
+            error: "Product moved",
+            result: { redirect: `/products/${historyResult[0].slug}` } as any,
+          };
+        }
+      }
+
       return {
         success: false,
         error: "Product not found",
@@ -228,6 +316,7 @@ export async function getPublicProductById(
       success: true,
       result: {
         id: p.id,
+        slug: p.slug || null,
         name: p.name || p.nameFallback || "",
         description: p.description || p.descriptionFallback,
         category: p.category,
@@ -239,6 +328,8 @@ export async function getPublicProductById(
         compareAtPrice: p.compareAtPrice,
         currency: p.currency || "NPR",
         stockQuantity: null, // Stock quantity is calculated from inventory levels
+        storeName: p.storeName,
+        storeSlug: p.storeSlug,
         unit: p.unit || "kg",
         isActive: p.status === "active", // Compare status field
         isFeatured: p.isFeatured ?? false,
@@ -282,6 +373,7 @@ export async function getRelatedProducts(
     const query = db
       .select({
         id: listing.id,
+        slug: listing.slug,
         name: listingTranslations.name,
         description: listingTranslations.description,
         category: listing.taxonomyCategoryId,
@@ -303,6 +395,9 @@ export async function getRelatedProducts(
         salesCount: listing.salesCount,
         createdAt: listing.createdAt,
         updatedAt: listing.updatedAt,
+        // Store information
+        storeName: store.storeName,
+        storeSlug: store.slug,
         // Fallback fields
         nameFallback: listing.name,
         descriptionFallback: listing.description,
@@ -317,6 +412,7 @@ export async function getRelatedProducts(
           eq(listingTranslations.locale, validLocale)
         )
       )
+      .leftJoin(store, eq(listing.storeId, store.id))
       .where(and(...whereConditions))
       .orderBy(desc(listing.createdAt))
       .limit(limit + 1); // Get one extra to account for filtering
@@ -329,6 +425,7 @@ export async function getRelatedProducts(
       .slice(0, limit)
       .map((p) => ({
         id: p.id,
+        slug: p.slug || null,
         name: p.name || p.nameFallback || "",
         description: p.description || p.descriptionFallback,
         category: p.category,
@@ -351,6 +448,8 @@ export async function getRelatedProducts(
         salesCount: p.salesCount ?? 0,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
+        storeName: p.storeName,
+        storeSlug: p.storeSlug,
       }));
 
     return {
@@ -381,6 +480,7 @@ export async function getFeaturedProducts(
     const products = await db
       .select({
         id: listing.id,
+        slug: listing.slug,
         name: listingTranslations.name,
         description: listingTranslations.description,
         category: listing.taxonomyCategoryId,
@@ -416,6 +516,7 @@ export async function getFeaturedProducts(
           eq(listingTranslations.locale, validLocale)
         )
       )
+      .leftJoin(store, eq(listing.storeId, store.id))
       .where(and(eq(listing.status, "active"), eq(listing.isFeatured, true)))
       .orderBy(desc(listing.createdAt))
       .limit(limit);
@@ -424,6 +525,7 @@ export async function getFeaturedProducts(
       success: true,
       result: products.map((p) => ({
         id: p.id,
+        slug: p.slug || null,
         name: p.name || p.nameFallback || "",
         description: p.description || p.descriptionFallback,
         category: p.category,
@@ -432,8 +534,9 @@ export async function getFeaturedProducts(
         gallery: p.gallery,
         tags: p.tags || p.tagsFallback,
         price: p.price || "0",
+        compareAtPrice: p.compareAtPrice,
         currency: p.currency || "NPR",
-        stockQuantity: p.stockQuantity,
+        stockQuantity: null,
         unit: p.unit || "kg",
         isActive: p.status === "active", // Compare status field
         isFeatured: p.isFeatured ?? false,
@@ -445,6 +548,8 @@ export async function getFeaturedProducts(
         salesCount: p.salesCount ?? 0,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
+        storeName: p.storeName,
+        storeSlug: p.storeSlug,
       })),
     };
   } catch (error) {

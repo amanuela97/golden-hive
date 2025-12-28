@@ -6,7 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
-import { Save, Store, Image as ImageIcon, X, Plus, MapPin, Edit, Trash2 } from "lucide-react";
+import {
+  Save,
+  Store,
+  Image as ImageIcon,
+  X,
+  Plus,
+  MapPin,
+  Edit,
+  Trash2,
+} from "lucide-react";
 import { upsertStore, getStore } from "../../../../actions/store";
 import {
   getAllInventoryLocations,
@@ -37,15 +46,18 @@ export default function StoreTab() {
   // Location management state
   const [locations, setLocations] = useState<Location[]>([]);
   const [loadingLocations, setLoadingLocations] = useState(false);
-  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(
+    null
+  );
   const [showLocationForm, setShowLocationForm] = useState(false);
-  const [locationFormData, setLocationFormData] = useState<InventoryLocationData>({
-    name: "",
-    address: "",
-    phone: "",
-    fulfillmentRules: "",
-    isActive: true,
-  });
+  const [locationFormData, setLocationFormData] =
+    useState<InventoryLocationData>({
+      name: "",
+      address: "",
+      phone: "",
+      fulfillmentRules: "",
+      isActive: true,
+    });
   const [isSavingLocation, setIsSavingLocation] = useState(false);
 
   useEffect(() => {
@@ -223,7 +235,10 @@ export default function StoreTab() {
     try {
       let result;
       if (editingLocationId) {
-        result = await updateInventoryLocation(editingLocationId, locationFormData);
+        result = await updateInventoryLocation(
+          editingLocationId,
+          locationFormData
+        );
       } else {
         result = await createInventoryLocation(locationFormData);
       }
@@ -245,7 +260,11 @@ export default function StoreTab() {
   };
 
   const handleDeleteLocation = async (locationId: string) => {
-    if (!confirm("Are you sure you want to delete this location? This action cannot be undone.")) {
+    if (
+      !confirm(
+        "Are you sure you want to delete this location? This action cannot be undone."
+      )
+    ) {
       return;
     }
 
@@ -356,11 +375,7 @@ export default function StoreTab() {
             <h3 className="text-xl font-semibold">Inventory Locations</h3>
           </div>
           {!showLocationForm && (
-            <Button
-              type="button"
-              onClick={handleAddLocation}
-              variant="outline"
-            >
+            <Button type="button" onClick={handleAddLocation} variant="outline">
               <Plus className="w-4 h-4 mr-2" />
               Add Location
             </Button>
@@ -388,7 +403,10 @@ export default function StoreTab() {
                 </div>
 
                 <div className="md:col-span-2 space-y-2">
-                  <Label htmlFor="locationAddress" className="text-sm font-medium">
+                  <Label
+                    htmlFor="locationAddress"
+                    className="text-sm font-medium"
+                  >
                     Address
                   </Label>
                   <Textarea
@@ -403,7 +421,10 @@ export default function StoreTab() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="locationPhone" className="text-sm font-medium">
+                  <Label
+                    htmlFor="locationPhone"
+                    className="text-sm font-medium"
+                  >
                     Phone / Contact
                   </Label>
                   <Input
@@ -417,7 +438,10 @@ export default function StoreTab() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="locationFulfillmentRules" className="text-sm font-medium">
+                  <Label
+                    htmlFor="locationFulfillmentRules"
+                    className="text-sm font-medium"
+                  >
                     Fulfillment Rules
                   </Label>
                   <Input
@@ -458,7 +482,8 @@ export default function StoreTab() {
           <Card className="p-8 text-center">
             <MapPin className="w-12 h-12 mx-auto mb-4 text-gray-400" />
             <p className="text-sm text-gray-600">
-              No locations found. Create your first location to start tracking inventory.
+              No locations found. Create your first location to start tracking
+              inventory.
             </p>
           </Card>
         ) : (
@@ -477,17 +502,20 @@ export default function StoreTab() {
                     </div>
                     {location.address && (
                       <p className="text-sm text-gray-600 mb-1">
-                        <span className="font-medium">Address:</span> {location.address}
+                        <span className="font-medium">Address:</span>{" "}
+                        {location.address}
                       </p>
                     )}
                     {location.phone && (
                       <p className="text-sm text-gray-600 mb-1">
-                        <span className="font-medium">Phone:</span> {location.phone}
+                        <span className="font-medium">Phone:</span>{" "}
+                        {location.phone}
                       </p>
                     )}
                     {location.fulfillmentRules && (
                       <p className="text-sm text-gray-600">
-                        <span className="font-medium">Fulfillment Rules:</span> {location.fulfillmentRules}
+                        <span className="font-medium">Fulfillment Rules:</span>{" "}
+                        {location.fulfillmentRules}
                       </p>
                     )}
                   </div>

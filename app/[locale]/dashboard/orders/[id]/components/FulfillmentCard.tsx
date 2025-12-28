@@ -23,8 +23,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Package, Truck, ChevronDown } from "lucide-react";
+import { Package, Truck, ChevronDown, Star } from "lucide-react";
 import Image from "next/image";
+import { Link } from "@/i18n/navigation";
 import toast from "react-hot-toast";
 import { updateFulfillmentStatus } from "@/app/[locale]/actions/orders";
 import { fulfillOrder } from "@/app/[locale]/actions/orders-fulfillment";
@@ -32,6 +33,8 @@ import { updateWorkflowStatus } from "@/app/[locale]/actions/orders-workflow";
 
 interface OrderItem {
   id: string;
+  listingId: string | null;
+  listingSlug: string | null;
   title: string;
   sku: string | null;
   quantity: number;
@@ -45,7 +48,9 @@ interface OrderItem {
 
 interface OrderData {
   id: string;
+  orderNumber: string | number;
   fulfillmentStatus: string;
+  paymentStatus: string;
   shippingMethod: string | null;
   items: OrderItem[];
 }
@@ -350,6 +355,19 @@ export function FulfillmentCard({
                     <p className="text-xs text-muted-foreground">
                       {item.currency} {parseFloat(item.unitPrice).toFixed(2)}
                     </p>
+                    {orderData.paymentStatus === "paid" && item.listingId && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        asChild
+                        className="mt-2 gap-1"
+                      >
+                        <Link href={`/review?order=${orderData.id}&product=${item.listingId}`}>
+                          <Star className="h-3 w-3" />
+                          Review
+                        </Link>
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}

@@ -72,7 +72,10 @@ export async function listPublicStores(options?: {
 }) {
   const { sortBy = "followers", search, limit = 50 } = options || {};
 
-  const conditions = [eq(store.visibility, "public")];
+  const conditions = [
+    eq(store.visibility, "public"),
+    eq(store.isApproved, true), // Only show approved stores
+  ];
 
   if (search) {
     conditions.push(
@@ -149,26 +152,30 @@ export async function getStorefrontData(slug: string) {
 
   const storeData = slugResult.store;
 
-  // Check visibility
+  // Check if store is approved (unless owner/admin viewing)
   const session = await auth.api.getSession({ headers: await headers() });
-  const isOwnerOrAdmin =
-    session?.user?.id &&
-    (await (async () => {
-      if (!session.user.id) return false;
-      const member = await db
-        .select()
-        .from(storeMembers)
-        .where(
-          and(
-            eq(storeMembers.storeId, storeData.id),
-            eq(storeMembers.userId, session.user.id),
-            inArray(storeMembers.role, ["admin", "seller"])
+  const isOwnerOrAdmin = session?.user?.id
+    ? await (async () => {
+        const member = await db
+          .select()
+          .from(storeMembers)
+          .where(
+            and(
+              eq(storeMembers.storeId, storeData.id),
+              eq(storeMembers.userId, session.user.id),
+              inArray(storeMembers.role, ["admin", "seller"])
+            )
           )
-        )
-        .limit(1);
-      return member.length > 0;
-    })());
+          .limit(1);
+        return member.length > 0;
+      })()
+    : false;
 
+  if (!storeData.isApproved && !isOwnerOrAdmin) {
+    return null; // Store not approved, don't show to public
+  }
+
+  // Check visibility (reuse isOwnerOrAdmin from above)
   if (storeData.visibility === "hidden" && !isOwnerOrAdmin) {
     return null; // Will trigger 404
   }

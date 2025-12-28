@@ -2,7 +2,7 @@
 
 import { usePathname } from "@/i18n/navigation";
 import { useEffect, useState } from "react";
-import { Navbar } from "./navbar";
+import { MarketplaceHeader } from "./marketplace-header";
 
 export default function ConditionalNavbar() {
   const pathname = usePathname();
@@ -32,7 +32,6 @@ export default function ConditionalNavbar() {
     return null;
   }
 
-  // Use the static Navbar component for now
-  // If you need dynamic navbar data, you can create an API route and fetch it here
-  return <Navbar />;
+  // Use MarketplaceHeader instead of Navbar
+  return <MarketplaceHeader />;
 }

@@ -22,6 +22,7 @@ import {
   isNull,
   isNotNull,
   ne,
+  inArray,
 } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -225,27 +226,133 @@ export async function listCustomers(filters: CustomerFilters = {}): Promise<{
     const totalCount = countResult[0]?.count || 0;
 
     // Get customers with aggregated data
-    // For stores, only aggregate orders that have items from their listings
-    const customersData = await db
-      .select({
-        id: customers.id,
-        email: customers.email,
-        firstName: customers.firstName,
-        lastName: customers.lastName,
-        phone: customers.phone,
-        storeId: customers.storeId,
-        createdAt: customers.createdAt,
-        ordersCount: sql<number>`COUNT(DISTINCT ${orders.id})::int`,
-        totalSpent: sql<string>`COALESCE(SUM(${orders.totalAmount}), 0)::text`,
-        lastOrderDate: sql<Date | null>`MAX(${orders.createdAt})`,
-      })
-      .from(customers)
-      .leftJoin(orders, ordersJoinCondition)
-      .where(whereClause)
-      .groupBy(customers.id)
-      .orderBy(orderBy)
-      .limit(pageSize)
-      .offset(page * pageSize);
+    // For admins: Group customers by email to show one customer per email
+    // For stores: Show individual customers (they only see customers with their products anyway)
+    let customersData: any[];
+
+    if (isAdmin) {
+      // For admins: Get all customers, then group by email
+      const allCustomers = await db
+        .select({
+          id: customers.id,
+          email: customers.email,
+          firstName: customers.firstName,
+          lastName: customers.lastName,
+          phone: customers.phone,
+          storeId: customers.storeId,
+          createdAt: customers.createdAt,
+        })
+        .from(customers)
+        .where(whereClause);
+
+      // Get orders for all customers
+      const customerIds = allCustomers.map((c) => c.id);
+      const customerOrders = customerIds.length > 0
+        ? await db
+            .select({
+              customerId: orders.customerId,
+              id: orders.id,
+              totalAmount: orders.totalAmount,
+              createdAt: orders.createdAt,
+            })
+            .from(orders)
+            .where(
+              customerIds.length > 0
+                ? inArray(orders.customerId, customerIds)
+                : undefined
+            )
+        : [];
+
+      // Group customers by email
+      const customersByEmail = new Map<string, typeof allCustomers>();
+      for (const customer of allCustomers) {
+        const email = customer.email.toLowerCase();
+        if (!customersByEmail.has(email)) {
+          customersByEmail.set(email, []);
+        }
+        customersByEmail.get(email)!.push(customer);
+      }
+
+      // Aggregate data for each email group
+      customersData = Array.from(customersByEmail.entries()).map(
+        ([email, customerGroup]) => {
+          // Use the most recent customer as the base
+          const primaryCustomer = customerGroup.sort(
+            (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+          )[0];
+
+          // Get all customer IDs in this group
+          const groupCustomerIds = customerGroup.map((c) => c.id);
+
+          // Aggregate orders for all customers in this group
+          const groupOrders = customerOrders.filter((o) =>
+            o.customerId && groupCustomerIds.includes(o.customerId)
+          );
+
+          const ordersCount = new Set(groupOrders.map((o) => o.id)).size;
+          const totalSpent = groupOrders.reduce(
+            (sum, o) => sum + parseFloat(o.totalAmount || "0"),
+            0
+          );
+          const lastOrderDate =
+            groupOrders.length > 0
+              ? groupOrders.sort(
+                  (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+                )[0].createdAt
+              : null;
+
+          return {
+            id: primaryCustomer.id,
+            email: primaryCustomer.email,
+            firstName: primaryCustomer.firstName,
+            lastName: primaryCustomer.lastName,
+            phone: primaryCustomer.phone,
+            storeId: null, // For grouped customers, storeId is null (they span multiple stores)
+            createdAt: primaryCustomer.createdAt,
+            ordersCount,
+            totalSpent: totalSpent.toFixed(2),
+            lastOrderDate,
+            isGrouped: customerGroup.length > 1,
+            groupedCustomerIds: customerGroup.map((c) => c.id),
+          };
+        }
+      );
+
+      // Sort the grouped data
+      customersData.sort((a, b) => {
+        const aDate = a.createdAt.getTime();
+        const bDate = b.createdAt.getTime();
+        return sortDirection === "desc" ? bDate - aDate : aDate - bDate;
+      });
+
+      // Apply pagination
+      customersData = customersData.slice(
+        page * pageSize,
+        (page + 1) * pageSize
+      );
+    } else {
+      // For stores: Show individual customers (existing logic)
+      customersData = await db
+        .select({
+          id: customers.id,
+          email: customers.email,
+          firstName: customers.firstName,
+          lastName: customers.lastName,
+          phone: customers.phone,
+          storeId: customers.storeId,
+          createdAt: customers.createdAt,
+          ordersCount: sql<number>`COUNT(DISTINCT ${orders.id})::int`,
+          totalSpent: sql<string>`COALESCE(SUM(${orders.totalAmount}), 0)::text`,
+          lastOrderDate: sql<Date | null>`MAX(${orders.createdAt})`,
+        })
+        .from(customers)
+        .leftJoin(orders, ordersJoinCondition)
+        .where(whereClause)
+        .groupBy(customers.id)
+        .orderBy(orderBy)
+        .limit(pageSize)
+        .offset(page * pageSize);
+    }
 
     return {
       success: true,
@@ -714,7 +821,7 @@ export async function getCustomerOrders(customerId: string): Promise<{
   success: boolean;
   data?: Array<{
     id: string;
-    orderNumber: number;
+    orderNumber: string;
     totalAmount: string;
     currency: string;
     paymentStatus: string;

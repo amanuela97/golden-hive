@@ -221,6 +221,31 @@ export const verification = pgTable("verification", {
     .notNull(),
 });
 
+// ===================================
+// CATEGORIES (Shopify Taxonomy)
+// ===================================
+export const categories = pgTable(
+  "categories",
+  {
+    id: text("id").primaryKey(), // Shopify taxonomy ID
+    name: text("name").notNull(),
+    handle: text("handle").notNull(), // URL-friendly slug
+    parentId: text("parent_id"), // Self-reference - defined after table creation
+    level: integer("level").notNull().default(0), // 0 = top-level
+    fullName: text("full_name"), // Full path like "Home & Living > Furniture"
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    index("categories_parent_idx").on(t.parentId),
+    index("categories_level_idx").on(t.level),
+    index("categories_handle_idx").on(t.handle),
+  ]
+);
+
 // 2️⃣ Category Rules table - stores documentation requirements for taxonomy categories
 export const categoryRules = pgTable("category_rules", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -297,6 +322,9 @@ export const listing = pgTable("listing", {
   // Basic product info
   name: text("name").notNull(), // e.g. "Himalayan Mad Honey"
   description: text("description"),
+  // Slug fields for SEO-friendly URLs
+  slug: text("slug").notNull(),
+  slugLower: text("slug_lower").notNull(),
   storeId: uuid("store_id")
     .references(() => store.id, {
       onDelete: "set null",
@@ -340,7 +368,10 @@ export const listing = pgTable("listing", {
   salesCount: integer("sales_count").default(0),
   originVillage: text("origin_village"),
   harvestDate: timestamp("harvest_date"),
-});
+}, (t) => [
+  uniqueIndex("listing_slug_lower_unique").on(t.slugLower),
+  index("listing_slug_idx").on(t.slug),
+]);
 
 //////////////////////////////////////////////////////////
 // LISTING TRANSLATIONS TABLE
@@ -417,6 +448,12 @@ export const store = pgTable(
     ), // Track if onboarding is complete
     stripeChargesEnabled: boolean("stripe_charges_enabled").default(false), // Track if charges are enabled
     stripePayoutsEnabled: boolean("stripe_payouts_enabled").default(false), // Track if payouts are enabled
+    // Admin moderation
+    isApproved: boolean("is_approved").default(false).notNull(),
+    approvedAt: timestamp("approved_at"),
+    approvedBy: text("approved_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -428,6 +465,7 @@ export const store = pgTable(
     index("store_visibility_idx").on(t.visibility),
     index("store_rating_idx").on(t.ratingAvg),
     index("store_followers_idx").on(t.followerCount),
+    index("store_approved_idx").on(t.isApproved),
   ]
 );
 
@@ -545,6 +583,46 @@ export const storeFollow = pgTable(
 );
 
 // ===================================
+// PRODUCT REVIEWS
+// ===================================
+export const productReview = pgTable(
+  "product_review",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    listingId: uuid("listing_id")
+      .notNull()
+      .references(() => listing.id, { onDelete: "cascade" }),
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => store.id, { onDelete: "cascade" }),
+    // Support both authenticated and guest reviews
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }), // null for guests
+    guestName: text("guest_name"), // For guest reviews
+    guestEmail: text("guest_email"), // For guest reviews
+    rating: integer("rating").notNull(), // 1-5
+    title: text("title"),
+    comment: text("comment").notNull(), // Required comment
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }), // Required for verification
+    verified: boolean("verified").default(true).notNull(), // All reviews are verified purchases
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    index("product_review_listing_idx").on(t.listingId),
+    index("product_review_store_idx").on(t.storeId),
+    index("product_review_user_idx").on(t.userId),
+    index("product_review_order_idx").on(t.orderId),
+    // Ensure one review per order per product
+    unique("product_review_order_listing_unique").on(t.orderId, t.listingId),
+  ]
+);
+
+// ===================================
 // STORE REVIEWS
 // ===================================
 export const storeReview = pgTable(
@@ -554,13 +632,17 @@ export const storeReview = pgTable(
     storeId: uuid("store_id")
       .notNull()
       .references(() => store.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    rating: integer("rating").notNull(), // 1..5
+    // Support both authenticated and guest reviews
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }), // null for guests
+    guestName: text("guest_name"), // For guest reviews
+    guestEmail: text("guest_email"), // For guest reviews
+    rating: integer("rating").notNull(), // 1-5
     title: text("title"),
-    body: text("body"),
-    orderId: uuid("order_id"), // Link to order for verification
+    body: text("body").notNull(), // Required comment
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }), // Required for verification
+    verified: boolean("verified").default(true).notNull(), // All reviews are verified purchases
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -570,6 +652,51 @@ export const storeReview = pgTable(
   (t) => [
     index("store_review_store_idx").on(t.storeId),
     index("store_review_user_idx").on(t.userId),
+    index("store_review_order_idx").on(t.orderId),
+    // Ensure one review per order per store
+    unique("store_review_order_store_unique").on(t.orderId, t.storeId),
+  ]
+);
+
+// ===================================
+// LISTING FAVORITES (product favorites)
+// ===================================
+export const listingFavorite = pgTable(
+  "listing_favorite",
+  {
+    listingId: uuid("listing_id")
+      .notNull()
+      .references(() => listing.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.listingId, t.userId] }),
+    index("listing_favorite_user_idx").on(t.userId),
+    index("listing_favorite_listing_idx").on(t.listingId),
+  ]
+);
+
+// ===================================
+// LISTING SLUG HISTORY (SEO-safe redirects)
+// ===================================
+export const listingSlugHistory = pgTable(
+  "listing_slug_history",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    listingId: uuid("listing_id")
+      .notNull()
+      .references(() => listing.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    slugLower: text("slug_lower").notNull(),
+    isActive: boolean("is_active").notNull().default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("listing_slug_history_unique").on(t.slugLower),
+    index("listing_slug_history_listing_idx").on(t.listingId),
   ]
 );
 
@@ -727,8 +854,8 @@ export const customers = pgTable(
 // ===================================
 export const orders = pgTable("orders", {
   id: uuid("id").defaultRandom().primaryKey(),
-  // Human-friendly incremental number, e.g. 1001, 1002
-  orderNumber: serial("order_number").notNull(), // Use this as "order_id" in UI
+  // Human-friendly order number in format: GM-YYYY-XXXXXX
+  orderNumber: text("order_number").notNull(), // Use this as "order_id" in UI
 
   storeId: uuid("store_id").references(() => store.id, {
     onDelete: "set null",
@@ -841,7 +968,7 @@ export const orders = pgTable("orders", {
 // ===================================
 export const draftOrders = pgTable("draft_orders", {
   id: uuid("id").defaultRandom().primaryKey(),
-  draftNumber: serial("draft_number").notNull(), // Sequential number for drafts (#D1, #D2, etc.)
+  draftNumber: text("draft_number").notNull(), // Draft order number in format: GM-DRAFT-YYYY-XXXXXX
 
   storeId: uuid("store_id").references(() => store.id, {
     onDelete: "set null",
@@ -1606,6 +1733,8 @@ export type FaqSectionTranslation = InferSelectModel<
 export type FaqItem = InferSelectModel<typeof faqItems>;
 export type FaqItemTranslation = InferSelectModel<typeof faqItemTranslations>;
 export type Store = InferSelectModel<typeof store>;
+export type StoreFollow = InferSelectModel<typeof storeFollow>;
+export type ListingFavorite = InferSelectModel<typeof listingFavorite>;
 export type ListingVariant = InferSelectModel<typeof listingVariants>;
 export type ListingVariantTranslation = InferSelectModel<
   typeof listingVariantTranslations
@@ -1633,3 +1762,5 @@ export type DiscountTarget = InferSelectModel<typeof discountTargets>;
 export type DiscountCustomer = InferSelectModel<typeof discountCustomers>;
 export type OrderDiscount = InferSelectModel<typeof orderDiscounts>;
 export type OrderItemDiscount = InferSelectModel<typeof orderItemDiscounts>;
+export type ProductReview = InferSelectModel<typeof productReview>;
+export type StoreReview = InferSelectModel<typeof storeReview>;

@@ -19,6 +19,8 @@ import { eq, and, sql, inArray, isNotNull } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { translateText } from "./translate";
 import { findCategoryById } from "./taxonomy";
+import { generateUniqueListingSlug, slugify } from "./slug-utils";
+import { listingSlugHistory } from "@/db/schema";
 
 // Helper function to translate text to all locales
 async function translateToAllLocales(
@@ -189,6 +191,7 @@ export type VariantData = {
 // Types for CRUD operations
 export type CreateListingData = {
   name: string;
+  slug: string; // Required - URL-friendly slug
   description?: string;
   categoryRuleId?: string; // Optional - reference to category_rules table (only if category has rules)
   taxonomyCategoryId: string; // Required - Taxonomy category ID from JSON file
@@ -235,12 +238,13 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
     // Validate required fields
     if (
       !data.name ||
+      !data.slug ||
       !data.price ||
       !data.producerId ||
       !data.taxonomyCategoryId
     ) {
       throw new Error(
-        "Name, price, producerId, and taxonomyCategoryId are required"
+        "Name, slug, price, producerId, and taxonomyCategoryId are required"
       );
     }
 
@@ -332,7 +336,11 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
     const finalTaxonomyCategoryName =
       data.taxonomyCategoryName || taxonomyCategoryName;
 
-    // Step 1: Create listing in database
+    // Step 1: Generate unique slug
+    const uniqueSlug = await generateUniqueListingSlug(db, data.slug);
+    const slugLower = uniqueSlug.toLowerCase();
+
+    // Step 2: Create listing in database
     const listingId = uuidv4();
     const publishedAt = data.status === "active" ? new Date() : null;
 
@@ -341,6 +349,8 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
       .values({
         id: listingId,
         name: data.name,
+        slug: uniqueSlug,
+        slugLower: slugLower,
         description: data.description,
         storeId: storeId,
         categoryRuleId: data.categoryRuleId || null,
@@ -364,6 +374,14 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
         harvestDate: data.harvestDate,
       })
       .returning();
+
+    // Step 3: Save slug to history
+    await db.insert(listingSlugHistory).values({
+      listingId: listingId,
+      slug: uniqueSlug,
+      slugLower: slugLower,
+      isActive: true,
+    });
 
     // Step 2: Create variants (only if variants are provided)
     const variantsToCreate =
@@ -1208,6 +1226,34 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
             ? null
             : existingListing.publishedAt;
 
+    // Handle slug update if provided
+    let slugUpdate: { slug: string; slugLower: string } | undefined = undefined;
+    if (updateData.slug !== undefined && updateData.slug !== existingListing.slug) {
+      // Generate unique slug
+      const uniqueSlug = await generateUniqueListingSlug(db, updateData.slug, id);
+      const slugLower = uniqueSlug.toLowerCase();
+      slugUpdate = { slug: uniqueSlug, slugLower };
+
+      // Deactivate old slug in history
+      await db
+        .update(listingSlugHistory)
+        .set({ isActive: false })
+        .where(
+          and(
+            eq(listingSlugHistory.listingId, id),
+            eq(listingSlugHistory.isActive, true)
+          )
+        );
+
+      // Save new slug to history
+      await db.insert(listingSlugHistory).values({
+        listingId: id,
+        slug: uniqueSlug,
+        slugLower: slugLower,
+        isActive: true,
+      });
+    }
+
     // Update base listing table (non-translatable fields)
     const baseUpdateData: Partial<typeof listing.$inferInsert> = {
       categoryRuleId:
@@ -1235,6 +1281,12 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
       publishedAt,
       harvestDate: updateData.harvestDate,
     };
+
+    // Add slug update if provided
+    if (slugUpdate) {
+      baseUpdateData.slug = slugUpdate.slug;
+      baseUpdateData.slugLower = slugUpdate.slugLower;
+    }
 
     // Also update base table fields for fallback (if provided)
     if (updateData.name !== undefined) baseUpdateData.name = updateData.name;

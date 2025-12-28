@@ -1,5 +1,6 @@
 interface OrderConfirmationEmailProps {
-  orderNumber: number;
+  orderNumber: string;
+  orderId: string;
   customerName: string;
   customerEmail: string;
   items: Array<{
@@ -8,6 +9,11 @@ interface OrderConfirmationEmailProps {
     unitPrice: string;
     lineTotal: string;
     sku?: string | null;
+    listingId?: string | null;
+    listingSlug?: string | null;
+    storeId?: string | null;
+    storeSlug?: string | null;
+    orderId?: string | null; // Order ID for this specific item (for multi-store orders)
   }>;
   subtotal: string;
   discount: string;
@@ -31,6 +37,7 @@ interface OrderConfirmationEmailProps {
 
 export default function OrderConfirmationEmail({
   orderNumber,
+  orderId,
   customerName,
   customerEmail,
   items,
@@ -42,6 +49,7 @@ export default function OrderConfirmationEmail({
   currency,
   paymentStatus,
   orderStatus,
+  fulfillmentStatus = "unfulfilled",
   shippingAddress,
   orderUrl,
 }: OrderConfirmationEmailProps) {
@@ -163,10 +171,29 @@ export default function OrderConfirmationEmail({
               >
                 Total
               </th>
+              <th
+                style={{
+                  padding: "12px",
+                  textAlign: "center",
+                  border: "1px solid #ddd",
+                  fontSize: "14px",
+                  fontWeight: "bold",
+                }}
+              >
+                Review
+              </th>
             </tr>
           </thead>
           <tbody>
-            {items.map((item, idx) => (
+            {items.map((item, idx) => {
+              const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+              // Use item's orderId if available (for multi-store orders), otherwise fall back to main orderId
+              const itemOrderId = item.orderId || orderId;
+              const reviewUrl = item.listingId
+                ? `${baseUrl}/review?order=${itemOrderId}&product=${item.listingId}`
+                : null;
+              
+              return (
               <tr key={idx}>
                 <td
                   style={{
@@ -219,8 +246,35 @@ export default function OrderConfirmationEmail({
                 >
                   {formatCurrency(item.lineTotal)}
                 </td>
+                <td
+                  style={{
+                    padding: "12px",
+                    textAlign: "center",
+                    border: "1px solid #ddd",
+                    fontSize: "14px",
+                  }}
+                >
+                  {reviewUrl && paymentStatus === "paid" ? (
+                    <a
+                      href={reviewUrl}
+                      style={{
+                        color: "#007bff",
+                        textDecoration: "none",
+                        fontSize: "12px",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      ⭐ Review
+                    </a>
+                  ) : (
+                    <span style={{ color: "#999", fontSize: "12px" }}>
+                      {paymentStatus === "paid" ? "—" : "After payment"}
+                    </span>
+                  )}
+                </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>
@@ -391,6 +445,54 @@ export default function OrderConfirmationEmail({
             </div>
             {shippingAddress.country && <div>{shippingAddress.country}</div>}
           </div>
+        </div>
+      )}
+
+      {/* Review CTA Section */}
+      {paymentStatus === "paid" && items.some((item) => item.listingId) && (
+        <div
+          style={{
+            background: "#f8f9fa",
+            padding: "20px",
+            borderRadius: "5px",
+            margin: "30px 0",
+            textAlign: "center",
+          }}
+        >
+          <h2 style={{ color: "#333", fontSize: "18px", marginBottom: "10px" }}>
+            ⭐ How was your experience?
+          </h2>
+          <p style={{ color: "#666", marginBottom: "15px", fontSize: "14px" }}>
+            We&apos;d love to hear your feedback! Leave a review for your purchase.
+          </p>
+          {items
+            .filter((item) => item.listingId)
+            .slice(0, 3)
+            .map((item, idx) => {
+              const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+              // Use item's orderId if available (for multi-store orders), otherwise fall back to main orderId
+              const itemOrderId = item.orderId || orderId;
+              const reviewUrl = `${baseUrl}/review?order=${itemOrderId}&product=${item.listingId}`;
+              return (
+                <a
+                  key={idx}
+                  href={reviewUrl}
+                  style={{
+                    display: "inline-block",
+                    margin: "5px",
+                    padding: "10px 20px",
+                    background: "#ffc107",
+                    color: "#333",
+                    textDecoration: "none",
+                    borderRadius: "5px",
+                    fontWeight: "bold",
+                    fontSize: "14px",
+                  }}
+                >
+                  Review {item.title.length > 20 ? `${item.title.substring(0, 20)}...` : item.title}
+                </a>
+              );
+            })}
         </div>
       )}
 

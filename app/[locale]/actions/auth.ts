@@ -5,7 +5,7 @@ import { APIError, User } from "better-auth";
 import { headers } from "next/headers";
 import { z } from "zod";
 import { db } from "@/db";
-import { user, roles, userRoles, store } from "@/db/schema";
+import { user, roles, userRoles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { redirect } from "@/i18n/navigation";
@@ -260,14 +260,15 @@ export async function loginAction(
       .where(eq(userRoles.userId, result.user.id))
       .limit(1);
 
-    const roleName = userRole.length > 0 ? userRole[0].roleName.toLowerCase() : null;
+    const roleName =
+      userRole.length > 0 ? userRole[0].roleName.toLowerCase() : null;
     const needsStoreSetup = roleName === "admin" || roleName === "seller";
 
     if (needsStoreSetup) {
       // Check if user has a store
       const { userHasStore } = await import("./store-members");
       const { hasStore } = await userHasStore();
-      
+
       if (!hasStore) {
         return {
           success: true,

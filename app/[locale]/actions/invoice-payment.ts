@@ -1,20 +1,24 @@
 "use server";
 
 import { db } from "@/db";
-import { draftOrders, draftOrderItems, store, listing, listingVariants } from "@/db/schema";
+import {
+  draftOrders,
+  draftOrderItems,
+  store,
+  listing,
+  listingVariants,
+} from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { stripe } from "@/lib/stripe";
 
 /**
  * Get draft order by invoice token (public access)
  */
-export async function getDraftOrderByToken(
-  token: string
-): Promise<{
+export async function getDraftOrderByToken(token: string): Promise<{
   success: boolean;
   data?: {
     id: string;
-    draftNumber: number;
+    draftNumber: string;
     subtotalAmount: string;
     discountAmount: string;
     shippingAmount: string;
@@ -99,14 +103,17 @@ export async function getDraftOrderByToken(
       })
       .from(draftOrderItems)
       .leftJoin(listing, eq(draftOrderItems.listingId, listing.id))
-      .leftJoin(listingVariants, eq(draftOrderItems.variantId, listingVariants.id))
+      .leftJoin(
+        listingVariants,
+        eq(draftOrderItems.variantId, listingVariants.id)
+      )
       .where(eq(draftOrderItems.draftOrderId, draft.id));
 
     return {
       success: true,
       data: {
         id: draft.id,
-        draftNumber: Number(draft.draftNumber),
+        draftNumber: draft.draftNumber,
         subtotalAmount: draft.subtotalAmount,
         discountAmount: draft.discountAmount,
         shippingAmount: draft.shippingAmount,
@@ -141,9 +148,7 @@ export async function getDraftOrderByToken(
  * Create Stripe Checkout Session for invoice payment
  * @deprecated Use API route /api/stripe/checkout/invoice instead
  */
-export async function createInvoiceCheckoutSession(
-  token: string
-): Promise<{
+export async function createInvoiceCheckoutSession(token: string): Promise<{
   success: boolean;
   checkoutUrl?: string;
   error?: string;
@@ -185,4 +190,3 @@ export async function createInvoiceCheckoutSession(
     };
   }
 }
-

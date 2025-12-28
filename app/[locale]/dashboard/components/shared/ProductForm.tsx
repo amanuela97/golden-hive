@@ -37,6 +37,7 @@ import type { VariantData } from "@/lib/listing";
 import { getCategoryAttributes, type TaxonomyAttribute } from "@/lib/taxonomy";
 import { getStore } from "../../../actions/store";
 import { getStoreIdForUser } from "../../../actions/store-members";
+import { slugify } from "@/lib/slug-utils";
 
 const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP", "JFIF"];
 
@@ -98,6 +99,7 @@ export default function ProductForm({
 }: ProductFormProps) {
   const [formData, setFormData] = useState({
     name: initialData?.name || "",
+    slug: initialData?.slug || "",
     description: initialData?.description || "",
     taxonomyCategoryId: initialData?.taxonomyCategoryId || "",
     price: initialData?.price ? parseFloat(initialData.price) : 0,
@@ -319,10 +321,17 @@ export default function ProductForm({
     >
   ) => {
     const { name, value, type } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: type === "number" ? parseFloat(value) || 0 : value,
-    }));
+    setFormData((prev) => {
+      const newData = {
+        ...prev,
+        [name]: type === "number" ? parseFloat(value) || 0 : value,
+      };
+      // Auto-generate slug from name if slug is empty and name changed
+      if (name === "name" && !prev.slug && value) {
+        newData.slug = slugify(value);
+      }
+      return newData;
+    });
   };
 
   const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -473,7 +482,7 @@ export default function ProductForm({
     setVariantImagePreviews((prev) => {
       const previews = prev[variantId] || [];
       // Only revoke object URLs (blob URLs), not regular URLs
-      if (previews[index] && previews[index].startsWith('blob:')) {
+      if (previews[index] && previews[index].startsWith("blob:")) {
         URL.revokeObjectURL(previews[index]);
       }
       const newPreviews = previews.filter((_, i) => i !== index);
@@ -561,8 +570,8 @@ export default function ProductForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.name || !formData.price) {
-      toast.error("Name and price are required");
+    if (!formData.name || !formData.slug || !formData.price) {
+      toast.error("Name, slug, and price are required");
       return;
     }
 
@@ -644,7 +653,8 @@ export default function ProductForm({
             return;
           }
           // Currency is auto-set from store, validate it exists
-          const variantCurrency = variant.currency || storeCurrency || formData.currency;
+          const variantCurrency =
+            variant.currency || storeCurrency || formData.currency;
           if (
             !variantCurrency ||
             !["EUR", "USD", "NPR"].includes(variantCurrency)
@@ -710,7 +720,10 @@ export default function ProductForm({
 
           // Check if there are new File objects to upload for this variant
           // Only include File objects, not URLs (URLs are already uploaded)
-          if (variantImages[variant.id] && variantImages[variant.id].length > 0) {
+          if (
+            variantImages[variant.id] &&
+            variantImages[variant.id].length > 0
+          ) {
             // Filter to only include File objects (new uploads)
             const newFiles = variantImages[variant.id].filter(
               (item): item is File => item instanceof File
@@ -729,10 +742,10 @@ export default function ProductForm({
             compareAtPrice: undefined,
             // Only set imageUrl if it's an existing URL (not base64, not a File)
             imageUrl:
-              imageUrl && 
-              !imageUrl.startsWith("data:") && 
+              imageUrl &&
+              !imageUrl.startsWith("data:") &&
               !(imageUrl instanceof File)
-                ? imageUrl 
+                ? imageUrl
                 : undefined,
             options: variant.options,
             initialStock: formData.tracksInventory
@@ -745,6 +758,7 @@ export default function ProductForm({
 
         const baseData = {
           ...formData,
+          slug: slugify(formData.slug), // Ensure slug is properly formatted
           producerId: session.user.id, // Set automatically from session
           categoryRuleId: categoryRuleId, // Optional - only set if category rule exists
           taxonomyCategoryId: formData.taxonomyCategoryId, // Already set by user
@@ -793,7 +807,8 @@ export default function ProductForm({
             return;
           }
           // Currency is auto-set from store, validate it exists
-          const variantCurrency = variant.currency || storeCurrency || formData.currency;
+          const variantCurrency =
+            variant.currency || storeCurrency || formData.currency;
           if (
             !variantCurrency ||
             !["EUR", "USD", "NPR"].includes(variantCurrency)
@@ -859,7 +874,10 @@ export default function ProductForm({
 
           // Check if there are new File objects to upload for this variant
           // Only include File objects, not URLs (URLs are already uploaded)
-          if (variantImages[variant.id] && variantImages[variant.id].length > 0) {
+          if (
+            variantImages[variant.id] &&
+            variantImages[variant.id].length > 0
+          ) {
             // Filter to only include File objects (new uploads)
             const newFiles = variantImages[variant.id].filter(
               (item): item is File => item instanceof File
@@ -878,10 +896,10 @@ export default function ProductForm({
             compareAtPrice: undefined,
             // Only set imageUrl if it's an existing URL (not base64, not a File)
             imageUrl:
-              imageUrl && 
-              !imageUrl.startsWith("data:") && 
+              imageUrl &&
+              !imageUrl.startsWith("data:") &&
               !(imageUrl instanceof File)
-                ? imageUrl 
+                ? imageUrl
                 : undefined,
             options: variant.options,
             initialStock: formData.tracksInventory
@@ -894,6 +912,7 @@ export default function ProductForm({
 
         const baseData = {
           ...formData,
+          slug: formData.slug ? slugify(formData.slug) : undefined, // Ensure slug is properly formatted if provided
           tags,
           compareAtPrice: formData.compareAtPrice || undefined,
           harvestDate: formData.harvestDate
@@ -952,7 +971,8 @@ export default function ProductForm({
   };
 
   // Show warning only if user has no store AND is not a storemember (for sellers)
-  const showStoreWarning = mode === "create" && !isAdmin && !hasStore && !checkingStore;
+  const showStoreWarning =
+    mode === "create" && !isAdmin && !hasStore && !checkingStore;
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 py-6">
@@ -987,7 +1007,8 @@ export default function ProductForm({
             </div>
             <div className="ml-3">
               <p className="text-sm text-yellow-700">
-                <strong>Store setup required:</strong> You must set up your store first before creating products. Please go to{" "}
+                <strong>Store setup required:</strong> You must set up your
+                store first before creating products. Please go to{" "}
                 <a
                   href="/dashboard/settings/store"
                   className="underline font-medium hover:text-yellow-800"
@@ -1019,6 +1040,21 @@ export default function ProductForm({
                     placeholder="e.g., Himalayan Mad Honey"
                     required
                   />
+                </div>
+                <div className="md:col-span-2">
+                  <Label htmlFor="slug">Product Slug *</Label>
+                  <Input
+                    id="slug"
+                    name="slug"
+                    value={formData.slug}
+                    onChange={handleInputChange}
+                    placeholder="e.g., himalayan-mad-honey"
+                    required
+                  />
+                  <p className="text-sm text-gray-500 mt-1">
+                    URL-friendly identifier for your product. Auto-generated
+                    from name if left empty.
+                  </p>
                 </div>
                 <div className="md:col-span-2">
                   <Label htmlFor="description">Description</Label>
@@ -1139,6 +1175,7 @@ export default function ProductForm({
                     <option value="bottle">bottle</option>
                     <option value="jar">jar</option>
                     <option value="piece">piece</option>
+                    <option value="item">item</option>
                   </select>
                 </div>
                 <div>

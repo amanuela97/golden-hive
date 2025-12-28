@@ -129,6 +129,7 @@ export type Money = number;
 export interface CartItem {
   id: string; // Unique cart item ID (variantId || listingId)
   listingId: string; // Required for order creation
+  listingSlug?: string | null; // Product slug for URL generation
   variantId?: string | null; // Optional variant ID
   variantTitle?: string | null; // Variant title (e.g., "Size: Large, Color: Red")
   name: string;

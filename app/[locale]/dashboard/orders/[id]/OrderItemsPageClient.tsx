@@ -11,13 +11,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Star } from "lucide-react";
 import { useRouter } from "@/i18n/navigation";
+import { Link } from "@/i18n/navigation";
 import { format } from "date-fns";
 import Image from "next/image";
+import { Button } from "@/components/ui/button";
 
 interface OrderItem {
   id: string;
+  listingId: string | null;
+  listingSlug: string | null;
   title: string;
   sku: string | null;
   quantity: number;
@@ -155,6 +159,9 @@ export default function OrderItemsPageClient({
                 <TableHead className="text-right">Unit Price</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
                 <TableHead className="text-right">Total</TableHead>
+                {orderData.paymentStatus === "paid" && (
+                  <TableHead className="text-center">Review</TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -162,6 +169,11 @@ export default function OrderItemsPageClient({
                 const unitPrice = parseFloat(item.unitPrice);
                 const lineSubtotal = parseFloat(item.lineSubtotal);
                 const lineTotal = parseFloat(item.lineTotal);
+                const canReview = orderData.paymentStatus === "paid" && item.listingId;
+                const reviewUrl = canReview
+                  ? `/review?order=${orderData.id}&product=${item.listingId}`
+                  : null;
+                
                 return (
                   <TableRow key={item.id}>
                     <TableCell>
@@ -195,6 +207,25 @@ export default function OrderItemsPageClient({
                     <TableCell className="text-right font-medium">
                       {item.currency} {lineTotal.toFixed(2)}
                     </TableCell>
+                    {orderData.paymentStatus === "paid" && (
+                      <TableCell className="text-center">
+                        {reviewUrl ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            className="gap-2"
+                          >
+                            <Link href={reviewUrl}>
+                              <Star className="h-4 w-4" />
+                              Review
+                            </Link>
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 );
               })}

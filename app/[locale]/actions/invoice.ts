@@ -51,7 +51,7 @@ async function generateInvoiceNumber(storeId: string): Promise<string> {
 async function generateInvoicePdf(
   order: {
     id: string;
-    orderNumber: number;
+    orderNumber: string;
     invoiceNumber: string;
     storeId: string | null;
     customerEmail: string | null;

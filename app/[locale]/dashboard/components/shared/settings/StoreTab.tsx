@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import { upsertStore } from "@/app/[locale]/actions/store";
 import {
   getAllInventoryLocations,
@@ -72,6 +73,7 @@ export default function StoreTab() {
   const [existingLogoUrl, setExistingLogoUrl] = useState<string | null>(null);
   const [slugError, setSlugError] = useState<string | null>(null);
   const [storeId, setStoreId] = useState<string | null>(null);
+  const [isApproved, setIsApproved] = useState<boolean>(false);
 
   // Banner tab state
   const [banners, setBanners] = useState<
@@ -144,6 +146,7 @@ export default function StoreTab() {
           setExistingLogoUrl(result.result.logoUrl);
           setLogoPreview(result.result.logoUrl);
         }
+        setIsApproved(result.result.isApproved || false);
 
         // Load banners
         const bannersResult = await getStoreBanners();
@@ -477,6 +480,19 @@ export default function StoreTab() {
         {/* Profile Tab */}
         <TabsContent value="profile" className="space-y-8">
           <Card className="p-8">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">Store Information</h3>
+                <p className="text-sm text-muted-foreground">
+                  Manage your store details and settings
+                </p>
+              </div>
+              {isApproved ? (
+                <Badge className="bg-green-500">Approved</Badge>
+              ) : (
+                <Badge className="bg-orange-500">Pending</Badge>
+              )}
+            </div>
             <form onSubmit={handleSubmit} className="space-y-8">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="lg:col-span-2 space-y-2">

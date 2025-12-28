@@ -1,9 +1,7 @@
 "use client";
 
-import { Search, Bell, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,6 +14,8 @@ import { useSession } from "@/lib/auth-client";
 import { useRouter } from "@/i18n/navigation";
 import { signOut } from "@/lib/auth-client";
 import toast from "react-hot-toast";
+import Link from "next/link";
+import Image from "next/image";
 
 interface DashboardNavbarProps {
   userName?: string;
@@ -59,55 +59,24 @@ export function DashboardNavbar({ userName, userImage }: DashboardNavbarProps) {
     <header className="sticky top-0 z-50 border-b border-border bg-background">
       <div className="flex h-14 items-center gap-4 px-4">
         {/* Logo */}
-        <div className="flex items-center gap-2">
-          <svg
-            width="28"
-            height="28"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            className="text-primary"
-          >
-            <path
-              d="M12 2L2 7L12 12L22 7L12 2Z"
-              fill="currentColor"
-              opacity="0.9"
-            />
-            <path
-              d="M2 17L12 22L22 17"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M2 12L12 17L22 12"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
-
-        {/* Search Bar */}
-        <div className="flex-1 max-w-lg">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Search"
-              className="w-full pl-9 bg-muted/50 border-0"
-            />
-          </div>
-        </div>
+        <Link
+          href="/"
+          className="flex items-center gap-1 hover:opacity-80 transition-opacity"
+        >
+          <Image
+            src="/logo.png"
+            alt="Golden Market Logo"
+            width={80}
+            height={0}
+            className="object-contain"
+          />
+          <span className="text-xl font-semibold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+            Golden Market
+          </span>
+        </Link>
 
         {/* Right Side Actions */}
         <div className="flex items-center gap-3 ml-auto">
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="h-5 w-5" />
-          </Button>
-
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Avatar className="h-8 w-8 cursor-pointer">

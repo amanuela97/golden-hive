@@ -150,9 +150,9 @@ export function ProductVariants({
   useEffect(() => {
     if (storeCurrency && variants.length > 0) {
       setVariants((prev) =>
-        prev.map((v) => ({ 
-          ...v, 
-          currency: (v.currency || storeCurrency) as "EUR" | "USD" | "NPR" 
+        prev.map((v) => ({
+          ...v,
+          currency: (v.currency || storeCurrency) as "EUR" | "USD" | "NPR",
         }))
       );
     }
@@ -232,7 +232,10 @@ export function ProductVariants({
         const values: OptionValue[] = Array.from(valuesSet).map((val) => {
           // Try to find matching value from option data
           const optionType = matchingOption?.value;
-          const optionData = (optionType && optionTypeData[optionType]) ? optionTypeData[optionType] : [];
+          const optionData =
+            optionType && optionTypeData[optionType]
+              ? optionTypeData[optionType]
+              : [];
           const matchingValue = optionData?.find(
             (v) =>
               v.value === val.toLowerCase() ||
@@ -279,7 +282,9 @@ export function ProductVariants({
         const initialVariantIds = new Set(initialVariants.map((v) => v.id));
         const idsMatch =
           currentVariantIds.size === initialVariantIds.size &&
-          Array.from(currentVariantIds).every((id) => initialVariantIds.has(id));
+          Array.from(currentVariantIds).every((id) =>
+            initialVariantIds.has(id)
+          );
 
         // Only update if IDs don't match (meaning initialVariants changed from parent)
         if (!idsMatch) {
@@ -311,7 +316,7 @@ export function ProductVariants({
     let hash = 0;
     for (let i = 0; i < sortedEntries.length; i++) {
       const char = sortedEntries.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Convert to 32-bit integer
     }
     return `variant-${Math.abs(hash).toString(36)}`;
@@ -666,7 +671,10 @@ export function ProductVariants({
             <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(200px,1.2fr)_minmax(120px,0.8fr)] gap-4 border-b border-border bg-muted/50 px-4 py-3 text-sm font-medium">
               <div onClick={(e) => e.stopPropagation()}>
                 <Checkbox
-                  checked={selectedVariants.size === variants.length && variants.length > 0}
+                  checked={
+                    selectedVariants.size === variants.length &&
+                    variants.length > 0
+                  }
                   onCheckedChange={toggleSelectAll}
                 />
               </div>
@@ -1291,7 +1299,9 @@ function EditVariantsModal({
                   onChange={(e) => setBulkValue(e.target.value)}
                   placeholder={`Apply to all: ${config.placeholder}`}
                 />
-                <Button type="button" onClick={handleApplyToAll}>Apply to all</Button>
+                <Button type="button" onClick={handleApplyToAll}>
+                  Apply to all
+                </Button>
               </div>
 
               <div className="space-y-2">
@@ -1322,7 +1332,9 @@ function EditVariantsModal({
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="button" onClick={() => onSave(editedVariants)}>Save changes</Button>
+          <Button type="button" onClick={() => onSave(editedVariants)}>
+            Save changes
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1599,7 +1611,12 @@ function OptionEditor({
         </div>
 
         <div className="flex items-center justify-between pt-2">
-          <Button type="button" variant="destructive" size="sm" onClick={onDelete}>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={onDelete}
+          >
             Delete
           </Button>
           <Button type="button" size="sm" onClick={onDone}>

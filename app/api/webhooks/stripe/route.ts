@@ -1,19 +1,176 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { db } from "@/db";
-import {
-  draftOrders,
-  orders,
-  orderEvents,
-  orderPayments,
-  orderRefunds,
-  orderItems,
-  store,
-} from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { draftOrders, orders, orderEvents, orderPayments, orderItems, listing, store } from "@/db/schema";
+import { eq, inArray } from "drizzle-orm";
 import { headers } from "next/headers";
 import { completeDraftOrderFromWebhook } from "@/app/[locale]/actions/draft-orders";
 import Stripe from "stripe";
+
+/**
+ * Helper function to send order confirmation email
+ */
+async function sendOrderConfirmationEmail(
+  primaryOrderId: string,
+  sessionId: string,
+  allOrderIds?: string[]
+): Promise<void> {
+  try {
+    const resend = (await import("@/lib/resend")).default;
+    const OrderConfirmationEmail = (
+      await import("@/app/[locale]/components/order-confirmation-email")
+    ).default;
+
+    // Fetch primary order data
+    const primaryOrder = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.id, primaryOrderId))
+      .limit(1);
+
+    if (primaryOrder.length === 0) {
+      console.error(`Order not found: ${primaryOrderId}`);
+      return;
+    }
+
+    const order = primaryOrder[0];
+
+    // If multi-store, fetch all order items from all orders
+    const orderIdsToFetch = allOrderIds || [primaryOrderId];
+    const allItems = await db
+      .select({
+        id: orderItems.id,
+        orderId: orderItems.orderId, // Include orderId for each item
+        listingId: orderItems.listingId,
+        title: orderItems.title,
+        quantity: orderItems.quantity,
+        unitPrice: orderItems.unitPrice,
+        lineTotal: orderItems.lineTotal,
+        sku: orderItems.sku,
+      })
+      .from(orderItems)
+      .where(inArray(orderItems.orderId, orderIdsToFetch));
+
+    // Get listing and store info for review links
+    const listingIds = allItems
+      .map((item) => item.listingId)
+      .filter((id): id is string => !!id);
+
+    let listingMap = new Map<string, { slug: string | null; storeId: string | null }>();
+    let storeMap = new Map<string, { slug: string | null }>();
+
+    if (listingIds.length > 0) {
+      const listings = await db
+        .select({
+          id: listing.id,
+          slug: listing.slug,
+          storeId: listing.storeId,
+        })
+        .from(listing)
+        .where(inArray(listing.id, listingIds));
+
+      for (const l of listings) {
+        listingMap.set(l.id, { slug: l.slug, storeId: l.storeId });
+      }
+
+      const storeIds = Array.from(
+        new Set(
+          Array.from(listingMap.values())
+            .map((l) => l.storeId)
+            .filter((id): id is string => !!id)
+        )
+      );
+
+      if (storeIds.length > 0) {
+        const stores = await db
+          .select({
+            id: store.id,
+            slug: store.slug,
+          })
+          .from(store)
+          .where(inArray(store.id, storeIds));
+
+        for (const s of stores) {
+          storeMap.set(s.id, { slug: s.slug });
+        }
+      }
+    }
+
+    const customerName =
+      order.customerFirstName && order.customerLastName
+        ? `${order.customerFirstName} ${order.customerLastName}`
+        : order.customerEmail || "Customer";
+
+    const orderUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/orders/${primaryOrderId}`;
+
+    if (!order.customerEmail) {
+      console.error("Customer email is required to send confirmation email");
+      return;
+    }
+
+    // Calculate totals from all items if multi-store
+    const subtotal = allOrderIds
+      ? allItems.reduce((sum, item) => sum + parseFloat(item.lineTotal || "0"), 0).toFixed(2)
+      : order.subtotalAmount;
+    const total = allOrderIds
+      ? allItems.reduce((sum, item) => sum + parseFloat(item.lineTotal || "0"), 0).toFixed(2)
+      : order.totalAmount;
+
+    await resend.emails.send({
+      from: "Golden Market <goldenmarket@resend.dev>",
+      to: order.customerEmail,
+      subject: `Order Confirmation #${order.orderNumber}`,
+      react: OrderConfirmationEmail({
+        orderNumber: order.orderNumber,
+        orderId: primaryOrderId,
+        customerName,
+        customerEmail: order.customerEmail,
+        items: allItems.map((item) => {
+          const listingInfo = item.listingId ? listingMap.get(item.listingId) : null;
+          const storeInfo = listingInfo?.storeId ? storeMap.get(listingInfo.storeId) : null;
+          return {
+            title: item.title,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            lineTotal: item.lineTotal || "0",
+            sku: item.sku || null,
+            listingId: item.listingId || null,
+            listingSlug: listingInfo?.slug || null,
+            storeId: listingInfo?.storeId || null,
+            storeSlug: storeInfo?.slug || null,
+            orderId: item.orderId || null, // Include the orderId for this specific item
+          };
+        }),
+        subtotal: subtotal,
+        discount: order.discountAmount || "0",
+        shipping: order.shippingAmount || "0",
+        tax: order.taxAmount || "0",
+        total: total,
+        currency: order.currency,
+        paymentStatus: order.paymentStatus === "paid" ? "paid" : "pending",
+        orderStatus: order.status === "completed" ? "fulfilled" : (order.status as "open" | "fulfilled" | "cancelled"),
+        shippingAddress:
+          order.shippingAddressLine1 ||
+          order.shippingCity ||
+          order.shippingCountry
+            ? {
+                name: order.shippingName || null,
+                line1: order.shippingAddressLine1 || null,
+                line2: order.shippingAddressLine2 || null,
+                city: order.shippingCity || null,
+                region: order.shippingRegion || null,
+                postalCode: order.shippingPostalCode || null,
+                country: order.shippingCountry || null,
+              }
+            : null,
+        orderUrl,
+      }),
+    });
+  } catch (error) {
+    console.error("Error sending order confirmation email:", error);
+    throw error;
+  }
+}
 
 export async function POST(req: NextRequest) {
   console.log("=== WEBHOOK RECEIVED ===");
@@ -60,7 +217,10 @@ export async function POST(req: NextRequest) {
 
       // Check if this is a multi-store checkout
       let isMultiStore = metadata.multiStore === "true";
-      let storeBreakdown: Record<string, { stripeAccountId: string; amount: number; orderIds: string[] }> | null = null;
+      let storeBreakdown: Record<
+        string,
+        { stripeAccountId: string; amount: number; orderIds: string[] }
+      > | null = null;
       let orderIdsArray: string[] = [];
 
       if (isMultiStore && metadata.storeBreakdown) {
@@ -114,16 +274,25 @@ export async function POST(req: NextRequest) {
               orderIdsArray = JSON.parse(paymentIntent.metadata.orderIds);
             }
           } catch (e) {
-            console.error("Failed to parse store breakdown from payment intent:", e);
+            console.error(
+              "Failed to parse store breakdown from payment intent:",
+              e
+            );
           }
         }
       }
 
-      console.log("📋 Payment Intent metadata:", JSON.stringify(paymentIntent.metadata, null, 2));
+      console.log(
+        "📋 Payment Intent metadata:",
+        JSON.stringify(paymentIntent.metadata, null, 2)
+      );
       console.log("🔍 Draft ID:", draftId);
       console.log("🔍 Order ID:", orderId);
       console.log("🔍 Is Multi-Store:", isMultiStore);
-      console.log("🔍 Store Breakdown:", storeBreakdown ? "Present" : "Missing");
+      console.log(
+        "🔍 Store Breakdown:",
+        storeBreakdown ? "Present" : "Missing"
+      );
 
       // For multi-store checkout, we don't need draftId or orderId
       // Skip the validation if it's a multi-store checkout
@@ -146,12 +315,16 @@ export async function POST(req: NextRequest) {
         }
 
         console.log("🏪 Processing multi-store transfers...");
-        const chargeId = typeof paymentIntent.latest_charge === "string" 
-          ? paymentIntent.latest_charge 
-          : paymentIntent.latest_charge.id;
-        
+        const chargeId =
+          typeof paymentIntent.latest_charge === "string"
+            ? paymentIntent.latest_charge
+            : paymentIntent.latest_charge.id;
+
         console.log("💰 Charge ID:", chargeId);
-        console.log("💰 Store breakdown:", JSON.stringify(storeBreakdown, null, 2));
+        console.log(
+          "💰 Store breakdown:",
+          JSON.stringify(storeBreakdown, null, 2)
+        );
 
         for (const [storeId, storeInfo] of Object.entries(storeBreakdown)) {
           const storeAmountCents = storeInfo.amount;
@@ -177,7 +350,10 @@ export async function POST(req: NextRequest) {
               },
             });
 
-            console.log(`✅ Transfer created for store ${storeId}:`, transfer.id);
+            console.log(
+              `✅ Transfer created for store ${storeId}:`,
+              transfer.id
+            );
 
             // Create payment records and update order status for each order in this store
             for (const orderId of storeInfo.orderIds) {
@@ -219,7 +395,8 @@ export async function POST(req: NextRequest) {
 
               // Update order payment status and check if order should be completed
               const isFulfilled =
-                order.fulfillmentStatus === "fulfilled" || order.fulfillmentStatus === "partial";
+                order.fulfillmentStatus === "fulfilled" ||
+                order.fulfillmentStatus === "partial";
 
               let newOrderStatus = order.status;
               if (isFulfilled) {
@@ -257,12 +434,30 @@ export async function POST(req: NextRequest) {
               });
             }
           } catch (transferError) {
-            console.error(`❌ Failed to transfer to store ${storeId}:`, transferError);
+            console.error(
+              `❌ Failed to transfer to store ${storeId}:`,
+              transferError
+            );
             // Continue with other stores even if one fails
           }
         }
 
         console.log("✅ Multi-store transfers completed");
+        
+        // Send confirmation email for multi-store checkout (send one email with all orders)
+        try {
+          // Get all order IDs from the breakdown
+          const allOrderIds = orderIdsArray;
+          if (allOrderIds.length > 0) {
+            // Send email for the first order (primary order) which will include all items
+            await sendOrderConfirmationEmail(allOrderIds[0], session.id, allOrderIds);
+            console.log("✅ Confirmation email sent for multi-store checkout");
+          }
+        } catch (emailError) {
+          console.error("❌ Failed to send confirmation email:", emailError);
+          // Don't fail the webhook if email fails
+        }
+        
         return NextResponse.json({ received: true });
       }
 
@@ -452,8 +647,14 @@ export async function POST(req: NextRequest) {
       });
       console.log("✅ Order event created");
 
-      // Send confirmation email (placeholder for now)
-      console.log("📧 Confirmation email would be sent here");
+      // Send confirmation email
+      try {
+        await sendOrderConfirmationEmail(finalOrderId, session.id);
+        console.log("✅ Confirmation email sent");
+      } catch (emailError) {
+        console.error("❌ Failed to send confirmation email:", emailError);
+        // Don't fail the webhook if email fails
+      }
 
       return NextResponse.json({ received: true });
     } catch (error) {
@@ -476,8 +677,25 @@ export async function POST(req: NextRequest) {
     const refund = event.data.object as Stripe.Refund;
 
     try {
+      // For thin payloads, we might need to retrieve the full refund
       // Find the payment intent associated with this refund
-      const paymentIntentId = refund.payment_intent as string;
+      let paymentIntentId: string | null = null;
+
+      if (refund.payment_intent) {
+        paymentIntentId =
+          typeof refund.payment_intent === "string"
+            ? refund.payment_intent
+            : refund.payment_intent.id;
+      } else {
+        // Thin payload might not include payment_intent, retrieve full refund
+        console.log("📋 Thin payload detected, retrieving full refund object");
+        const fullRefund = await stripe.refunds.retrieve(refund.id);
+        paymentIntentId =
+          typeof fullRefund.payment_intent === "string"
+            ? fullRefund.payment_intent
+            : fullRefund.payment_intent?.id || null;
+      }
+
       if (!paymentIntentId) {
         console.error("❌ No payment intent found in refund");
         return NextResponse.json(
@@ -525,8 +743,8 @@ export async function POST(req: NextRequest) {
             totalRefundedAmount === 0
               ? "completed"
               : totalRefundedAmount >= parseFloat(payment.amount) * 100
-              ? "refunded"
-              : "partially_refunded",
+                ? "refunded"
+                : "partially_refunded",
         })
         .where(eq(orderPayments.id, payment.id));
 
@@ -543,9 +761,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            error instanceof Error
-              ? error.message
-              : "Failed to process refund",
+            error instanceof Error ? error.message : "Failed to process refund",
         },
         { status: 500 }
       );

@@ -5,7 +5,7 @@ export function Footer() {
   return (
     <footer className="bg-neutral-900 text-neutral-300 mt-24">
       <div className="container mx-auto px-4 py-12 lg:py-16">
-        <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-4">
+        <div className="flex  flex-col justify-around items-start gap-8 md:flex-row md:gap-0">
           {/* Office Section */}
           <div>
             <h3 className="mb-4 text-lg font-semibold text-white">Office</h3>
@@ -65,43 +65,6 @@ export function Footer() {
           </div>
 
           {/* Support Section */}
-          <div>
-            <h3 className="mb-4 text-lg font-semibold text-white">Support</h3>
-            <ul className="space-y-2 text-sm">
-              <li>
-                <Link
-                  href="/help"
-                  className="hover:text-white transition-colors"
-                >
-                  Help Center
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/covid-response"
-                  className="hover:text-white transition-colors"
-                >
-                  Our Covid 19 Response
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/cancellation"
-                  className="hover:text-white transition-colors"
-                >
-                  Cancellation Options
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/safety"
-                  className="hover:text-white transition-colors"
-                >
-                  Safety Information
-                </Link>
-              </li>
-            </ul>
-          </div>
 
           {/* Company Section */}
           <div>
@@ -120,7 +83,7 @@ export function Footer() {
                   href="/faq"
                   className="hover:text-white transition-colors"
                 >
-                  Doses & FAQ
+                  FAQ
                 </Link>
               </li>
               <li>
@@ -128,39 +91,7 @@ export function Footer() {
                   href="/store"
                   className="hover:text-white transition-colors"
                 >
-                  About Mad Honey Store
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/contact"
-                  className="hover:text-white transition-colors"
-                >
-                  Contact Us
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/expedition"
-                  className="hover:text-white transition-colors"
-                >
-                  Mad Honey Expedition
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/b2b"
-                  className="hover:text-white transition-colors"
-                >
-                  B2B
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/blogs"
-                  className="hover:text-white transition-colors"
-                >
-                  Blogs
+                  Store
                 </Link>
               </li>
             </ul>

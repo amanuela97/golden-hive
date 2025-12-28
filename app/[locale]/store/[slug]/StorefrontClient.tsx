@@ -11,7 +11,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Heart, Star, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import {
+  Heart,
+  Star,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  X,
+} from "lucide-react";
 import Image from "next/image";
 import {
   toggleStoreFollow,
@@ -27,6 +34,7 @@ import {
 } from "@/components/ui/accordion";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { StoreReviewDisplay } from "../../components/reviews/StoreReviewDisplay";
 
 interface StorefrontClientProps {
   data: {
@@ -189,9 +197,7 @@ export function StorefrontClient({
   };
 
   const nextBanner = () => {
-    setCurrentBannerIndex(
-      (prev) => (prev + 1) % data.banners.length
-    );
+    setCurrentBannerIndex((prev) => (prev + 1) % data.banners.length);
   };
 
   const prevBanner = () => {
@@ -280,7 +286,7 @@ export function StorefrontClient({
         </div>
       )}
 
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-6 md:px-8 lg:px-12 py-8">
         {/* Store Header */}
         <div className="flex items-start gap-6 mb-8">
           {data.store.logoUrl && (
@@ -322,8 +328,8 @@ export function StorefrontClient({
         </div>
 
         {/* Sticky Tabbed Navigation */}
-        <div className="sticky top-0 z-50 bg-background border-b shadow-sm mb-8">
-          <div className="container mx-auto px-4">
+        <div className="sticky top-0 z-[60] left-0 right-0 bg-background border-b shadow-sm mb-8 -mx-6 md:-mx-8 lg:-mx-12">
+          <div className="w-full px-6 md:px-8 lg:px-12">
             <div className="flex gap-1 overflow-x-auto">
               <button
                 onClick={() => scrollToSection("items")}
@@ -378,13 +384,17 @@ export function StorefrontClient({
         </div>
 
         {/* Products Section with Search, Filters, and Sort */}
-        <div id="items" ref={itemsRef} className="mb-12 scroll-mt-24">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold">Products</h2>
-            <div className="text-sm text-muted-foreground">
-              {listingsTotalCount} {listingsTotalCount === 1 ? "product" : "products"}
+        <div id="items" ref={itemsRef} className="py-12 scroll-mt-24">
+          <div className="grid grid-cols-5 gap-8">
+            <div className="col-span-1">
+              <h2 className="text-2xl font-bold">Items</h2>
             </div>
-          </div>
+            <div className="col-span-4">
+              <div className="flex items-center justify-between mb-6">
+                <div className="text-sm text-muted-foreground">
+                  {listingsTotalCount} {listingsTotalCount === 1 ? "item" : "items"}
+                </div>
+              </div>
 
           {/* Search and Filters */}
           <div className="mb-6 space-y-4">
@@ -487,7 +497,7 @@ export function StorefrontClient({
                 {listings.map((listing) => (
                   <Link
                     key={listing.id}
-                    href={`/products/${listing.id}`}
+                    href={`/products/${listing.slug || listing.id}`}
                     className="group"
                   >
                     <Card className="overflow-hidden hover:shadow-lg transition-shadow">
@@ -527,34 +537,41 @@ export function StorefrontClient({
                     Previous
                   </Button>
                   <div className="flex items-center gap-1">
-                    {Array.from({ length: Math.min(5, listingsTotalPages) }, (_, i) => {
-                      let pageNum;
-                      if (listingsTotalPages <= 5) {
-                        pageNum = i + 1;
-                      } else if (listingsPage <= 3) {
-                        pageNum = i + 1;
-                      } else if (listingsPage >= listingsTotalPages - 2) {
-                        pageNum = listingsTotalPages - 4 + i;
-                      } else {
-                        pageNum = listingsPage - 2 + i;
+                    {Array.from(
+                      { length: Math.min(5, listingsTotalPages) },
+                      (_, i) => {
+                        let pageNum;
+                        if (listingsTotalPages <= 5) {
+                          pageNum = i + 1;
+                        } else if (listingsPage <= 3) {
+                          pageNum = i + 1;
+                        } else if (listingsPage >= listingsTotalPages - 2) {
+                          pageNum = listingsTotalPages - 4 + i;
+                        } else {
+                          pageNum = listingsPage - 2 + i;
+                        }
+                        return (
+                          <Button
+                            key={pageNum}
+                            variant={
+                              listingsPage === pageNum ? "default" : "outline"
+                            }
+                            size="sm"
+                            onClick={() => setListingsPage(pageNum)}
+                          >
+                            {pageNum}
+                          </Button>
+                        );
                       }
-                      return (
-                        <Button
-                          key={pageNum}
-                          variant={listingsPage === pageNum ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setListingsPage(pageNum)}
-                        >
-                          {pageNum}
-                        </Button>
-                      );
-                    })}
+                    )}
                   </div>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() =>
-                      setListingsPage((p) => Math.min(listingsTotalPages, p + 1))
+                      setListingsPage((p) =>
+                        Math.min(listingsTotalPages, p + 1)
+                      )
                     }
                     disabled={listingsPage === listingsTotalPages}
                   >
@@ -565,136 +582,36 @@ export function StorefrontClient({
               )}
             </>
           )}
+            </div>
+          </div>
         </div>
 
-        {/* About Section */}
-        {data.about && (
-          <Card id="about" ref={aboutRef} className="p-6 mb-8 scroll-mt-24">
-            <h2 className="text-2xl font-bold mb-4">About</h2>
-            {data.about.imageUrl && (
-              <div className="relative w-full h-64 mb-4 rounded-lg overflow-hidden">
-                <Image
-                  src={data.about.imageUrl}
-                  alt={data.about.title || "About"}
-                  fill
-                  className="object-cover"
-                />
-              </div>
-            )}
-            {data.about.title && (
-              <h3 className="text-xl font-semibold mb-2">
-                {data.about.title}
-              </h3>
-            )}
-            {data.about.description && (
-              <p className="text-muted-foreground whitespace-pre-line">
-                {data.about.description}
-              </p>
-            )}
-          </Card>
-        )}
-
-        {/* Policies Accordion */}
-        {data.policies && (
-          <Card id="policies" ref={policiesRef} className="p-6 mb-8 scroll-mt-24">
-            <h2 className="text-2xl font-bold mb-4">Policies</h2>
-            <Accordion type="single" collapsible className="w-full">
-              {data.policies.shipping && (
-                <AccordionItem value="shipping">
-                  <AccordionTrigger>Shipping Policy</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.shipping}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.returns && (
-                <AccordionItem value="returns">
-                  <AccordionTrigger>Returns & Refunds</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.returns}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.cancellations && (
-                <AccordionItem value="cancellations">
-                  <AccordionTrigger>Cancellations</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.cancellations}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.customOrders && (
-                <AccordionItem value="custom-orders">
-                  <AccordionTrigger>Custom Orders</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.customOrders}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.privacy && (
-                <AccordionItem value="privacy">
-                  <AccordionTrigger>Privacy Policy</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.privacy}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.additional && (
-                <AccordionItem value="additional">
-                  <AccordionTrigger>Additional Policies</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.additional}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-            </Accordion>
-          </Card>
-        )}
-
         {/* Reviews Section */}
-        <Card id="reviews" ref={reviewsRef} className="p-6 scroll-mt-24">
-          <h2 className="text-2xl font-bold mb-4">Reviews</h2>
-          {reviewsLoading ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground">Loading reviews...</p>
+        <div
+          id="reviews"
+          ref={reviewsRef}
+          className="py-12 border-t border-border scroll-mt-24"
+        >
+          <div className="grid grid-cols-5 gap-8">
+            <div className="col-span-1">
+              <h2 className="text-2xl font-bold">Reviews</h2>
             </div>
-          ) : reviews.length === 0 ? (
-            <p className="text-muted-foreground">No reviews yet.</p>
-          ) : (
-            <>
-              <div className="space-y-4 mb-6">
-                {reviews.map((review: any) => (
-                  <div key={review.id} className="border-b pb-4 last:border-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="flex items-center gap-1">
-                        {[...Array(5)].map((_, i) => (
-                          <Star
-                            key={i}
-                            className={`w-4 h-4 ${
-                              i < review.rating
-                                ? "fill-yellow-400 text-yellow-400"
-                                : "text-gray-300"
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      <span className="font-semibold">{review.userName}</span>
-                      <span className="text-sm text-muted-foreground">
-                        {new Date(review.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                    {review.title && (
-                      <h4 className="font-semibold mb-1">{review.title}</h4>
-                    )}
-                    {review.body && (
-                      <p className="text-muted-foreground">{review.body}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
+            <div className="col-span-4">
+              {reviewsLoading ? (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground">Loading reviews...</p>
+                </div>
+              ) : reviews.length === 0 ? (
+                <p className="text-muted-foreground">No reviews yet.</p>
+              ) : (
+                <>
+                  <StoreReviewDisplay
+                    reviews={reviews}
+                    storeId={data.store.id}
+                  />
 
-              {/* Pagination for Reviews */}
-              {reviewsTotalPages > 1 && (
+                  {/* Pagination for Reviews */}
+                  {reviewsTotalPages > 1 && (
                 <div className="flex items-center justify-center gap-2">
                   <Button
                     variant="outline"
@@ -749,7 +666,111 @@ export function StorefrontClient({
               )}
             </>
           )}
-        </Card>
+            </div>
+          </div>
+        </div>
+
+        {/* About Section */}
+        {data.about && (
+          <div
+            id="about"
+            ref={aboutRef}
+            className="py-12 border-t border-border scroll-mt-24"
+          >
+            <div className="grid grid-cols-5 gap-8">
+              <div className="col-span-1">
+                <h2 className="text-2xl font-bold">About</h2>
+              </div>
+              <div className="col-span-4">
+            {data.about.imageUrl && (
+              <div className="relative w-full h-64 mb-4 rounded-lg overflow-hidden">
+                <Image
+                  src={data.about.imageUrl}
+                  alt={data.about.title || "About"}
+                  fill
+                  className="object-cover"
+                />
+              </div>
+            )}
+            {data.about.title && (
+              <h3 className="text-xl font-semibold mb-2">{data.about.title}</h3>
+            )}
+            {data.about.description && (
+              <p className="text-muted-foreground whitespace-pre-line">
+                {data.about.description}
+              </p>
+            )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Policies Accordion */}
+        {data.policies && (
+          <div
+            id="policies"
+            ref={policiesRef}
+            className="py-12 border-t border-border scroll-mt-24"
+          >
+            <div className="grid grid-cols-5 gap-8">
+              <div className="col-span-1">
+                <h2 className="text-2xl font-bold">Policies</h2>
+              </div>
+              <div className="col-span-4">
+            <Accordion type="single" collapsible className="w-full">
+              {data.policies.shipping && (
+                <AccordionItem value="shipping">
+                  <AccordionTrigger>Shipping Policy</AccordionTrigger>
+                  <AccordionContent className="whitespace-pre-line">
+                    {data.policies.shipping}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+              {data.policies.returns && (
+                <AccordionItem value="returns">
+                  <AccordionTrigger>Returns & Refunds</AccordionTrigger>
+                  <AccordionContent className="whitespace-pre-line">
+                    {data.policies.returns}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+              {data.policies.cancellations && (
+                <AccordionItem value="cancellations">
+                  <AccordionTrigger>Cancellations</AccordionTrigger>
+                  <AccordionContent className="whitespace-pre-line">
+                    {data.policies.cancellations}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+              {data.policies.customOrders && (
+                <AccordionItem value="custom-orders">
+                  <AccordionTrigger>Custom Orders</AccordionTrigger>
+                  <AccordionContent className="whitespace-pre-line">
+                    {data.policies.customOrders}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+              {data.policies.privacy && (
+                <AccordionItem value="privacy">
+                  <AccordionTrigger>Privacy Policy</AccordionTrigger>
+                  <AccordionContent className="whitespace-pre-line">
+                    {data.policies.privacy}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+              {data.policies.additional && (
+                <AccordionItem value="additional">
+                  <AccordionTrigger>Additional Policies</AccordionTrigger>
+                  <AccordionContent className="whitespace-pre-line">
+                    {data.policies.additional}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+            </Accordion>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

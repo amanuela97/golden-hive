@@ -23,7 +23,7 @@ import { headers } from "next/headers";
 
 export type DraftOrderRow = {
   id: string;
-  draftNumber: number; // Sequential number for drafts (#D1, #D2, etc.)
+  draftNumber: string; // Draft order number in format: GM-DRAFT-YYYY-XXXXXX
   customerFirstName: string | null;
   customerLastName: string | null;
   customerEmail: string | null;
@@ -248,7 +248,7 @@ export async function listDraftOrders(
       success: true,
       data: draftOrdersData.map((draft) => ({
         id: draft.id,
-        draftNumber: Number(draft.draftNumber),
+        draftNumber: draft.draftNumber,
         customerFirstName: draft.customerFirstName,
         customerLastName: draft.customerLastName,
         customerEmail: draft.customerEmail,
@@ -281,7 +281,7 @@ export async function getDraftOrder(draftId: string): Promise<{
   success: boolean;
   data?: {
     id: string;
-    draftNumber: number;
+    draftNumber: string;
     customerId: string | null;
     customerEmail: string | null;
     customerFirstName: string | null;
@@ -450,7 +450,7 @@ export async function getDraftOrder(draftId: string): Promise<{
       )
       .where(and(...itemConditions));
 
-    const draftNumber = Number(draft.draftNumber);
+    const draftNumber = draft.draftNumber;
 
     return {
       success: true,
@@ -647,7 +647,7 @@ async function completeDraftOrderInternal(
 ): Promise<{
   success: boolean;
   orderId?: string;
-  orderNumber?: number;
+  orderNumber?: string;
   error?: string;
 }> {
   try {
@@ -796,7 +796,7 @@ async function completeDraftOrderInternal(
       // Map to the expected format
       draft = {
         id: draftData.id,
-        draftNumber: Number(draftData.draftNumber),
+        draftNumber: draftData.draftNumber,
         customerId: draftData.customerId,
         customerEmail: draftData.customerEmail,
         customerFirstName: draftData.customerFirstName,
@@ -985,10 +985,14 @@ async function completeDraftOrderInternal(
           }
         }
 
+        // Generate unique order number
+        const generatedOrderNumber = await generateOrderNumber();
+
         // Step 1: Create new Order record
         const newOrder = await tx
           .insert(orders)
           .values({
+            orderNumber: generatedOrderNumber,
             storeId: draft.storeId,
             customerId: finalCustomerId, // Use the found/created customerId
             customerEmail: draft.customerEmail,
@@ -1036,7 +1040,7 @@ async function completeDraftOrderInternal(
         }
 
         const orderId = newOrder[0].id;
-        const orderNumber = newOrder[0].orderNumber;
+        const returnedOrderNumber = newOrder[0].orderNumber;
 
         // Step 2: Copy line items from draft to order
         for (const item of draft.items) {
@@ -1174,21 +1178,74 @@ async function completeDraftOrderInternal(
             );
           }
 
+          // Fetch listing and store info for review links
+          const listingIds = draft.items
+            .map((item) => item.listingId)
+            .filter((id): id is string => !!id);
+          
+          let listingMap = new Map<string, { slug: string | null; storeId: string | null }>();
+          let storeMap = new Map<string, { slug: string | null }>();
+
+          if (listingIds.length > 0) {
+            const listings = await tx
+              .select({
+                id: listing.id,
+                slug: listing.slug,
+                storeId: listing.storeId,
+              })
+              .from(listing)
+              .where(inArray(listing.id, listingIds));
+
+            for (const l of listings) {
+              listingMap.set(l.id, { slug: l.slug, storeId: l.storeId });
+            }
+
+            const storeIds = Array.from(new Set(
+              Array.from(listingMap.values())
+                .map((l) => l.storeId)
+                .filter((id): id is string => !!id)
+            ));
+
+            if (storeIds.length > 0) {
+              const stores = await tx
+                .select({
+                  id: store.id,
+                  slug: store.slug,
+                })
+                .from(store)
+                .where(inArray(store.id, storeIds));
+
+              for (const s of stores) {
+                storeMap.set(s.id, { slug: s.slug });
+              }
+            }
+          }
+
           await resend.emails.send({
             from: "Golden Market <goldenmarket@resend.dev>",
             to: draft.customerEmail,
-            subject: `Order Confirmation #${orderNumber}`,
+            subject: `Order Confirmation #${returnedOrderNumber}`,
             react: OrderConfirmationEmail({
-              orderNumber: Number(orderNumber),
+              orderNumber: returnedOrderNumber,
+              orderId: orderId,
               customerName,
               customerEmail: draft.customerEmail,
-              items: draft.items.map((item) => ({
-                title: item.title,
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                lineTotal: item.lineTotal || "0",
-                sku: item.sku || null,
-              })),
+              items: draft.items.map((item) => {
+                const listingInfo = item.listingId ? listingMap.get(item.listingId) : null;
+                const storeInfo = listingInfo?.storeId ? storeMap.get(listingInfo.storeId) : null;
+                return {
+                  title: item.title,
+                  quantity: item.quantity,
+                  unitPrice: item.unitPrice,
+                  lineTotal: item.lineTotal || "0",
+                  sku: item.sku || null,
+                  listingId: item.listingId || null,
+                  listingSlug: listingInfo?.slug || null,
+                  storeId: listingInfo?.storeId || null,
+                  storeSlug: storeInfo?.slug || null,
+                  orderId: orderId, // All items in draft orders belong to the same order
+                };
+              }),
               subtotal: draft.subtotalAmount,
               discount: draft.discountAmount || "0",
               shipping: draft.shippingAmount || "0",
@@ -1197,6 +1254,7 @@ async function completeDraftOrderInternal(
               currency: draft.currency,
               paymentStatus: markAsPaid ? "paid" : "pending",
               orderStatus: "open",
+              fulfillmentStatus: "unfulfilled",
               shippingAddress:
                 draft.shippingAddressLine1 ||
                 draft.shippingCity ||
@@ -1222,7 +1280,7 @@ async function completeDraftOrderInternal(
         return {
           success: true,
           orderId: orderId,
-          orderNumber: Number(orderNumber),
+          orderNumber: returnedOrderNumber,
         };
       })
       .then(async (result) => {
@@ -1289,7 +1347,7 @@ export async function completeDraftOrder(
 ): Promise<{
   success: boolean;
   orderId?: string;
-  orderNumber?: number;
+  orderNumber?: string;
   error?: string;
 }> {
   return completeDraftOrderInternal(draftId, markAsPaid, false);
@@ -1304,7 +1362,7 @@ export async function completeDraftOrderFromWebhook(
 ): Promise<{
   success: boolean;
   orderId?: string;
-  orderNumber?: number;
+  orderNumber?: string;
   error?: string;
 }> {
   return completeDraftOrderInternal(draftId, markAsPaid, true);
@@ -1794,7 +1852,7 @@ export async function createDraftOrder(input: {
 }): Promise<{
   success: boolean;
   draftId?: string;
-  draftNumber?: number;
+  draftNumber?: string;
   error?: string;
 }> {
   try {
@@ -1989,10 +2047,14 @@ export async function createDraftOrder(input: {
         }
       }
 
+      // Generate unique draft order number
+      const draftNumber = await generateDraftOrderNumber();
+
       // Create draft order
       const newDraft = await tx
         .insert(draftOrders)
         .values({
+          draftNumber: draftNumber,
           storeId: finalStoreId,
           marketId: userMarketId, // Snapshot market at transaction time
           customerId: finalCustomerId, // Use the found/created customerId
@@ -2029,7 +2091,7 @@ export async function createDraftOrder(input: {
         .returning();
 
       const draftId = newDraft[0].id;
-      const draftNumber = newDraft[0].draftNumber;
+      const returnedDraftNumber = newDraft[0].draftNumber;
 
       // Create draft items
       for (const item of input.lineItems) {
@@ -2057,7 +2119,7 @@ export async function createDraftOrder(input: {
       return {
         success: true,
         draftId: draftId,
-        draftNumber: Number(draftNumber),
+        draftNumber: returnedDraftNumber,
       };
     });
   } catch (error) {

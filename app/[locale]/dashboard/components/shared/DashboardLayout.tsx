@@ -14,11 +14,17 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
   // Check if we're on a settings page
   const isSettingsPage = pathname?.startsWith("/dashboard/settings");
+
+  // Track mount state to prevent hydration mismatches
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     // Continuously save the current path if it's NOT a settings page
@@ -32,7 +38,10 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
   }, [pathname, isSettingsPage]);
 
   // Prevent body scrolling when modal is open
+  // Only run after component is mounted to prevent hydration mismatches
   useEffect(() => {
+    if (!isMounted) return;
+
     if (isSettingsOpen) {
       // Save the current overflow style
       const originalOverflow = document.body.style.overflow;
@@ -44,7 +53,7 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
         document.body.style.overflow = originalOverflow;
       };
     }
-  }, [isSettingsOpen]);
+  }, [isSettingsOpen, isMounted]);
 
   return (
     <div className="min-h-screen">

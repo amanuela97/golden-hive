@@ -15,6 +15,7 @@ import {
   Users,
   Globe,
   Percent,
+  Store,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -73,6 +74,12 @@ const allNavItems: NavItem[] = [
     href: "/dashboard/markets",
     icon: Globe,
     roles: ["admin", "seller"], // A, S
+  },
+  {
+    label: "Stores",
+    href: "/dashboard/stores",
+    icon: Store,
+    roles: ["admin"], // A
   },
 ];
 
