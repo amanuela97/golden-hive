@@ -69,7 +69,7 @@ export default function InventoryPageClient({
       totalCount: initialTotalCount,
     },
     staleTime: 5000, // Consider data stale after 5 seconds
-    refetchInterval: (query) => {
+    refetchInterval: () => {
       // Only poll if page is visible and user is on inventory page
       // Check if we're in a browser environment
       if (typeof document !== "undefined" && document.hidden) return false;

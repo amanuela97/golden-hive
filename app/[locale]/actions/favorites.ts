@@ -1,18 +1,21 @@
 "use server";
 
 import { db } from "@/db";
-import { listingFavorite, storeFollow, listing, store, listingTranslations } from "@/db/schema";
+import {
+  listingFavorite,
+  storeFollow,
+  listing,
+  store,
+  listingTranslations,
+} from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { eq, and, inArray, desc } from "drizzle-orm";
-import { sql } from "drizzle-orm";
 
 /**
  * Toggle favorite status for a listing (product)
  */
-export async function toggleListingFavorite(
-  listingId: string
-): Promise<{
+export async function toggleListingFavorite(listingId: string): Promise<{
   success: boolean;
   isFavorite: boolean;
   error?: string;
@@ -63,7 +66,8 @@ export async function toggleListingFavorite(
     return {
       success: false,
       isFavorite: false,
-      error: error instanceof Error ? error.message : "Failed to toggle favorite",
+      error:
+        error instanceof Error ? error.message : "Failed to toggle favorite",
     };
   }
 }
@@ -169,12 +173,7 @@ export async function getFavoriteListings(locale: string = "en") {
         )
       )
       .leftJoin(store, eq(store.id, listing.storeId))
-      .where(
-        and(
-          inArray(listing.id, listingIds),
-          eq(listing.status, "active")
-        )
-      )
+      .where(and(inArray(listing.id, listingIds), eq(listing.status, "active")))
       .orderBy(desc(listingFavorite.createdAt));
 
     return { success: true, result: listings };
@@ -211,10 +210,7 @@ export async function getFollowedStores() {
       .from(store)
       .innerJoin(storeFollow, eq(storeFollow.storeId, store.id))
       .where(
-        and(
-          eq(storeFollow.userId, userId),
-          eq(store.visibility, "public")
-        )
+        and(eq(storeFollow.userId, userId), eq(store.visibility, "public"))
       )
       .orderBy(desc(storeFollow.createdAt));
 
@@ -250,4 +246,3 @@ export async function getFavorites(locale: string = "en") {
     };
   }
 }
-

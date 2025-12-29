@@ -51,6 +51,7 @@ import toast from "react-hot-toast";
 import { FileUploader } from "react-drag-drop-files";
 import type { InventoryLocation } from "@/db/schema";
 import currenciesData from "@/data/currency/currency.json";
+import Image from "next/image";
 
 const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP", "JFIF"];
 
@@ -590,10 +591,12 @@ export default function StoreTab() {
                   <div className="flex items-start gap-4">
                     {logoPreview && (
                       <div className="relative w-24 h-24 rounded-lg border border-gray-200 overflow-hidden bg-gray-50">
-                        <img
+                        <Image
+                          width={96}
+                          height={96}
                           src={logoPreview}
                           alt="Logo preview"
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-cover rounded-lg"
                         />
                         <button
                           type="button"
@@ -869,7 +872,9 @@ export default function StoreTab() {
                         className="flex items-center gap-4 p-4 border rounded-lg"
                       >
                         <GripVertical className="w-5 h-5 text-gray-400" />
-                        <img
+                        <Image
+                          width={128}
+                          height={80}
                           src={banner.url}
                           alt={banner.alt || `Banner ${index + 1}`}
                           className="w-32 h-20 object-cover rounded"
@@ -936,7 +941,9 @@ export default function StoreTab() {
                 <Label>About Image (optional)</Label>
                 {aboutImagePreview && (
                   <div className="relative w-48 h-32 rounded-lg border overflow-hidden mb-2">
-                    <img
+                    <Image
+                      width={192}
+                      height={128}
                       src={aboutImagePreview}
                       alt="About preview"
                       className="w-full h-full object-cover"

@@ -9,8 +9,10 @@ import {
   listing,
   store,
   user,
+  userRoles,
+  roles,
 } from "@/db/schema";
-import { eq, and, desc, sql, or, isNull } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
@@ -178,8 +180,7 @@ export async function submitProductReview(
     // Verify guest email matches order email (if guest)
     if (!userId && order[0].customerEmail) {
       if (
-        input.guestEmail?.toLowerCase() !==
-        order[0].customerEmail.toLowerCase()
+        input.guestEmail?.toLowerCase() !== order[0].customerEmail.toLowerCase()
       ) {
         return {
           success: false,
@@ -316,8 +317,7 @@ export async function submitStoreReview(
     // Verify guest email matches order email (if guest)
     if (!userId && order[0].customerEmail) {
       if (
-        input.guestEmail?.toLowerCase() !==
-        order[0].customerEmail.toLowerCase()
+        input.guestEmail?.toLowerCase() !== order[0].customerEmail.toLowerCase()
       ) {
         return {
           success: false,
@@ -496,7 +496,19 @@ export async function deleteProductReview(
 
     // Check permissions (reviewer or admin)
     const isReviewer = review[0].userId === session.user.id;
-    const isAdmin = session.user.role === "admin";
+
+    // Check if user is admin
+    const userRole = await db
+      .select({
+        roleName: roles.name,
+      })
+      .from(userRoles)
+      .innerJoin(roles, eq(userRoles.roleId, roles.id))
+      .where(eq(userRoles.userId, session.user.id))
+      .limit(1);
+
+    const isAdmin =
+      userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
 
     if (!isReviewer && !isAdmin) {
       return {
@@ -562,7 +574,19 @@ export async function deleteStoreReview(
 
     // Check permissions (reviewer or admin)
     const isReviewer = review[0].userId === session.user.id;
-    const isAdmin = session.user.role === "admin";
+
+    // Check if user is admin
+    const userRole = await db
+      .select({
+        roleName: roles.name,
+      })
+      .from(userRoles)
+      .innerJoin(roles, eq(userRoles.roleId, roles.id))
+      .where(eq(userRoles.userId, session.user.id))
+      .limit(1);
+
+    const isAdmin =
+      userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
 
     if (!isReviewer && !isAdmin) {
       return {
@@ -672,14 +696,16 @@ export async function canReviewProduct(
       };
     }
 
+    const { customers } = await import("@/db/schema");
     const paidOrders = await db
       .select({ orderId: orderItems.orderId })
       .from(orderItems)
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .leftJoin(customers, eq(orders.customerId, customers.id))
       .where(
         and(
           eq(orderItems.listingId, listingId),
-          eq(orders.userId, userId),
+          eq(customers.userId, userId),
           eq(orders.paymentStatus, "paid")
         )
       )
@@ -706,7 +732,7 @@ export async function canReviewProduct(
  * Update product rating aggregates
  */
 async function updateProductRatingAggregates(
-  tx: any,
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   listingId: string
 ): Promise<void> {
   const stats = await tx
@@ -720,7 +746,6 @@ async function updateProductRatingAggregates(
 
   const avg = stats[0]?.avg || 0;
   const count = stats[0]?.count || 0;
-  const sum = stats[0]?.sum || 0;
 
   await tx
     .update(listing)
@@ -735,7 +760,7 @@ async function updateProductRatingAggregates(
  * Update store rating aggregates
  */
 async function updateStoreRatingAggregates(
-  tx: any,
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   storeId: string
 ): Promise<void> {
   const stats = await tx
@@ -760,4 +785,3 @@ async function updateStoreRatingAggregates(
     })
     .where(eq(store.id, storeId));
 }
-

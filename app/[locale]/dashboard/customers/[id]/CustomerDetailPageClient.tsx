@@ -45,7 +45,7 @@ interface CustomerData {
 
 interface OrderData {
   id: string;
-  orderNumber: number;
+  orderNumber: string;
   totalAmount: string;
   currency: string;
   paymentStatus: string;
@@ -53,6 +53,14 @@ interface OrderData {
   status: string;
   createdAt: Date;
   itemsCount: number;
+  stripeCheckoutSessionId?: string | null;
+  isGrouped?: boolean;
+  subOrders?: Array<{
+    id: string;
+    orderNumber: string;
+    storeName?: string;
+    totalAmount: string;
+  }>;
 }
 
 interface CustomerDetailPageClientProps {
@@ -226,35 +234,87 @@ export default function CustomerDetailPageClient({
             </TableHeader>
             <TableBody>
               {ordersData.map((order) => (
-                <TableRow key={order.id}>
-                  <TableCell>
-                    <Link
-                      href={`/dashboard/orders/${order.id}`}
-                      className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                    >
-                      #{order.orderNumber}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    {format(new Date(order.createdAt), "MMM dd, yyyy")}
-                  </TableCell>
-                  <TableCell>
-                    <span className="capitalize">
-                      {order.paymentStatus.replace("_", " ")}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="capitalize">
-                      {order.fulfillmentStatus.replace("_", " ")}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right font-medium">
-                    {order.currency} {parseFloat(order.totalAmount).toFixed(2)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {order.itemsCount}
-                  </TableCell>
-                </TableRow>
+                <React.Fragment key={order.id}>
+                  <TableRow>
+                    <TableCell>
+                      {order.isGrouped ? (
+                        <div className="flex flex-col gap-1">
+                          <Link
+                            href={`/dashboard/orders/${order.id}`}
+                            className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                          >
+                            Order Group #{order.orderNumber}
+                          </Link>
+                          <span className="text-xs text-muted-foreground">
+                            {order.subOrders?.length || 0} stores
+                          </span>
+                        </div>
+                      ) : (
+                        <Link
+                          href={`/dashboard/orders/${order.id}`}
+                          className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          #{order.orderNumber}
+                        </Link>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {format(new Date(order.createdAt), "MMM dd, yyyy")}
+                    </TableCell>
+                    <TableCell>
+                      <span className="capitalize">
+                        {order.paymentStatus.replace("_", " ")}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="capitalize">
+                        {order.fulfillmentStatus.replace("_", " ")}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      {order.currency} {parseFloat(order.totalAmount).toFixed(2)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {order.itemsCount}
+                    </TableCell>
+                  </TableRow>
+                  {order.isGrouped && order.subOrders && order.subOrders.length > 0 && (
+                    <TableRow className="bg-muted/50">
+                      <TableCell colSpan={6} className="py-2">
+                        <details className="cursor-pointer">
+                          <summary className="text-sm font-medium text-muted-foreground hover:text-foreground">
+                            View {order.subOrders.length} sub-order{order.subOrders.length > 1 ? 's' : ''}
+                          </summary>
+                          <div className="mt-2 space-y-2 pl-4">
+                            {order.subOrders.map((subOrder) => (
+                              <div
+                                key={subOrder.id}
+                                className="flex items-center justify-between text-sm border-l-2 border-border pl-3"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <Link
+                                    href={`/dashboard/orders/${subOrder.id}`}
+                                    className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                                  >
+                                    #{subOrder.orderNumber}
+                                  </Link>
+                                  {subOrder.storeName && (
+                                    <span className="text-muted-foreground">
+                                      • {subOrder.storeName}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-medium">
+                                  {order.currency} {parseFloat(subOrder.totalAmount).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </React.Fragment>
               ))}
             </TableBody>
           </Table>

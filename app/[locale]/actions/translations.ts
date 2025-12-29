@@ -253,7 +253,8 @@ export async function translateModifiedKeys(
     if (!process.env.GOOGLE_TRANSLATE_API_KEY) {
       return {
         success: false,
-        error: "Google Translate API key is not configured. Please set GOOGLE_TRANSLATE_API_KEY in your environment variables.",
+        error:
+          "Google Translate API key is not configured. Please set GOOGLE_TRANSLATE_API_KEY in your environment variables.",
       };
     }
 
@@ -327,21 +328,24 @@ export async function translateModifiedKeys(
   } catch (error) {
     console.error("Error translating modified keys:", error);
     const errorMessage =
-      error instanceof Error
-        ? error.message
-        : "Failed to translate keys";
-    
+      error instanceof Error ? error.message : "Failed to translate keys";
+
     // Provide more specific error messages
-    if (errorMessage.includes("API key") || errorMessage.includes("authentication")) {
+    if (
+      errorMessage.includes("API key") ||
+      errorMessage.includes("authentication")
+    ) {
       return {
         success: false,
-        error: "Google Translate API authentication failed. Please check your API key.",
+        error:
+          "Google Translate API authentication failed. Please check your API key.",
       };
     }
     if (errorMessage.includes("quota") || errorMessage.includes("limit")) {
       return {
         success: false,
-        error: "Google Translate API quota exceeded. Please check your usage limits.",
+        error:
+          "Google Translate API quota exceeded. Please check your usage limits.",
       };
     }
 
@@ -368,7 +372,8 @@ export async function translateToLanguage(
     if (!process.env.GOOGLE_TRANSLATE_API_KEY) {
       return {
         success: false,
-        error: "Google Translate API key is not configured. Please set GOOGLE_TRANSLATE_API_KEY in your environment variables.",
+        error:
+          "Google Translate API key is not configured. Please set GOOGLE_TRANSLATE_API_KEY in your environment variables.",
       };
     }
 
@@ -389,18 +394,23 @@ export async function translateToLanguage(
     console.error("Error translating:", error);
     const errorMessage =
       error instanceof Error ? error.message : "Failed to translate";
-    
+
     // Provide more specific error messages
-    if (errorMessage.includes("API key") || errorMessage.includes("authentication")) {
+    if (
+      errorMessage.includes("API key") ||
+      errorMessage.includes("authentication")
+    ) {
       return {
         success: false,
-        error: "Google Translate API authentication failed. Please check your API key.",
+        error:
+          "Google Translate API authentication failed. Please check your API key.",
       };
     }
     if (errorMessage.includes("quota") || errorMessage.includes("limit")) {
       return {
         success: false,
-        error: "Google Translate API quota exceeded. Please check your usage limits.",
+        error:
+          "Google Translate API quota exceeded. Please check your usage limits.",
       };
     }
 

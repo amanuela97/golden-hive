@@ -2,7 +2,7 @@
 
 import type React from "react";
 
-import { useCart, type CartItem } from "@/lib/cart-context";
+import { useCart } from "@/lib/cart-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,7 +20,7 @@ import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
 import { getShippingBillingInfo } from "../actions/shipping-billing";
-import { Link, useRouter } from "@/i18n/navigation";
+import { Link } from "@/i18n/navigation";
 import {
   getDiscountByCodeForCheckout,
   evaluateDiscountForCheckout,
@@ -29,16 +29,16 @@ import {
 } from "../actions/order-discounts";
 import { X, AlertCircle, Info } from "lucide-react";
 import toast from "react-hot-toast";
+import { type CartItem } from "@/lib/types";
 
 export default function CheckoutPage() {
-  const { items, total, clearCart } = useCart();
-  const router = useRouter();
+  const { items, total } = useCart();
   const { data: session } = useSession();
   const [isProcessing, setIsProcessing] = useState(false);
   const [shipToDifferentAddress, setShipToDifferentAddress] = useState(false);
   const [loadingSavedInfo, setLoadingSavedInfo] = useState(true);
   const [orderNotes, setOrderNotes] = useState("");
-  
+
   // Discount state
   const [discountCode, setDiscountCode] = useState("");
   const [applyingDiscount, setApplyingDiscount] = useState(false);
@@ -63,19 +63,22 @@ export default function CheckoutPage() {
     };
   } | null>(null);
   const [discountError, setDiscountError] = useState<string | null>(null);
-  const [betterDiscountMessage, setBetterDiscountMessage] = useState<string | null>(null);
-  const [availableDiscounts, setAvailableDiscounts] = useState<Array<{
-    id: string;
-    name: string;
-    code: string | null;
-    evaluationResult?: {
-      canApply: boolean;
-      reason?: string;
-      missingAmount?: number;
-      missingQuantity?: number;
-    };
-  }>>([]);
-  const [checkingDiscounts, setCheckingDiscounts] = useState(false);
+  const [betterDiscountMessage, setBetterDiscountMessage] = useState<
+    string | null
+  >(null);
+  const [availableDiscounts, setAvailableDiscounts] = useState<
+    Array<{
+      id: string;
+      name: string;
+      code: string | null;
+      evaluationResult?: {
+        canApply: boolean;
+        reason?: string;
+        missingAmount?: number;
+        missingQuantity?: number;
+      };
+    }>
+  >([]);
   const [hasDiscountsWithCodes, setHasDiscountsWithCodes] = useState(false);
 
   // Form state
@@ -160,7 +163,6 @@ export default function CheckoutPage() {
         return;
       }
 
-      setCheckingDiscounts(true);
       try {
         const cartItemsForEvaluation = items.map((item) => ({
           id: item.id,
@@ -181,11 +183,14 @@ export default function CheckoutPage() {
 
         if (bestDiscountResult.success && bestDiscountResult.bestDiscount) {
           const best = bestDiscountResult.bestDiscount;
-          
+
           // Only auto-apply if it doesn't require a code
           if (!best.discountCode) {
             // Check if we already have this discount applied
-            if (!appliedDiscount || appliedDiscount.discountId !== best.discountId) {
+            if (
+              !appliedDiscount ||
+              appliedDiscount.discountId !== best.discountId
+            ) {
               setAppliedDiscount({
                 discountId: best.discountId,
                 discountName: best.discountName,
@@ -209,7 +214,10 @@ export default function CheckoutPage() {
           billingData.email || null
         );
 
-        if (automaticDiscountsResult.success && automaticDiscountsResult.discounts) {
+        if (
+          automaticDiscountsResult.success &&
+          automaticDiscountsResult.discounts
+        ) {
           // Check if there are any discounts with codes that could apply
           const discountsWithCodes = automaticDiscountsResult.discounts.filter(
             (d) => d.code && d.evaluationResult && d.evaluationResult.canApply
@@ -223,8 +231,12 @@ export default function CheckoutPage() {
               .filter((d) => {
                 // Only show if it applies to items but can't be applied (due to requirements)
                 // Don't show if it doesn't apply to any items at all
-                return d.evaluationResult && !d.evaluationResult.canApply && 
-                       d.evaluationResult.reason !== "Discount does not apply to any items in cart";
+                return (
+                  d.evaluationResult &&
+                  !d.evaluationResult.canApply &&
+                  d.evaluationResult.reason !==
+                    "Discount does not apply to any items in cart"
+                );
               })
               .map((d) => ({
                 id: d.id,
@@ -238,8 +250,6 @@ export default function CheckoutPage() {
         }
       } catch (error) {
         console.error("Error checking automatic discounts:", error);
-      } finally {
-        setCheckingDiscounts(false);
       }
     }
 
@@ -292,13 +302,6 @@ export default function CheckoutPage() {
         quantity: item.quantity,
       }));
 
-      // Check if there's already a better discount applied
-      const bestDiscountResult = await findBestDiscountForCheckout(
-        cartItemsForEvaluation,
-        billingData.email || null,
-        discount.id // Exclude the code discount we're trying to apply
-      );
-
       const evaluationResult = await evaluateDiscountForCheckout(
         discount.id,
         cartItemsForEvaluation,
@@ -306,20 +309,24 @@ export default function CheckoutPage() {
       );
 
       if (!evaluationResult.success || !evaluationResult.result) {
-        let errorMessage = evaluationResult.validationError || evaluationResult.error || "Failed to apply discount";
-        
+        let errorMessage =
+          evaluationResult.validationError ||
+          evaluationResult.error ||
+          "Failed to apply discount";
+
         // Add helpful context about requirements
         if (evaluationResult.eligibilityInfo) {
           const info = evaluationResult.eligibilityInfo;
           if (info.customerEligibilityType === "specific") {
-            errorMessage = "This discount is only available to specific customers. Please sign in or contact support.";
+            errorMessage =
+              "This discount is only available to specific customers. Please sign in or contact support.";
           } else if (info.minPurchaseAmount) {
             errorMessage = `Minimum purchase of ${discount.currency || "€"}${info.minPurchaseAmount} required. Add €${(info.minPurchaseAmount - total).toFixed(2)} more to your cart.`;
           } else if (info.minPurchaseQuantity) {
             errorMessage = `Minimum quantity of ${info.minPurchaseQuantity} items required.`;
           }
         }
-        
+
         setDiscountError(errorMessage);
         return;
       }
@@ -332,12 +339,12 @@ export default function CheckoutPage() {
       const appliedDiscountItemIds = new Set(
         appliedDiscount?.allocations?.map((a) => a.cartItemId) || []
       );
-      
+
       // Check if discounts apply to overlapping items
       const hasOverlap = Array.from(newDiscountItemIds).some((id) =>
         appliedDiscountItemIds.has(id)
       );
-      
+
       // If discounts apply to the same items (overlap), check which is better
       if (appliedDiscount && hasOverlap) {
         // They apply to some of the same items, check if the applied discount is better
@@ -350,7 +357,7 @@ export default function CheckoutPage() {
         }
         // If the new discount is better for overlapping items, we'll replace via findBestDiscountForCheckout below
       }
-      
+
       // If discounts apply to different items (no overlap), we should combine them
       // Always use findBestDiscountForCheckout to evaluate all discounts and pick best per item
       // This handles both cases: different items (combine) and same items (pick best)
@@ -364,7 +371,7 @@ export default function CheckoutPage() {
         undefined, // excludeDiscountId
         false // include discounts with codes since user entered a code
       );
-      
+
       if (allBestDiscountResult.success && allBestDiscountResult.bestDiscount) {
         const best = allBestDiscountResult.bestDiscount;
         setAppliedDiscount({
@@ -460,7 +467,7 @@ export default function CheckoutPage() {
             const allocation = appliedDiscount?.allocations?.find(
               (a) => a.cartItemId === item.id
             );
-            
+
             return {
               listingId: item.listingId,
               variantId: item.variantId || null,
@@ -995,7 +1002,7 @@ export default function CheckoutPage() {
                     );
                     const itemDiscount = allocation ? allocation.amount : 0;
                     const itemTotal = itemSubtotal - itemDiscount;
-                    
+
                     return (
                       <div key={item.id} className="space-y-2">
                         <div className="flex gap-3">
@@ -1022,13 +1029,11 @@ export default function CheckoutPage() {
                           </div>
                           <div className="text-right shrink-0">
                             <div className="text-sm font-medium text-foreground">
-                              {item.currency || "€"}{" "}
-                              {itemTotal.toFixed(2)}
+                              {item.currency || "€"} {itemTotal.toFixed(2)}
                             </div>
                             {itemDiscount > 0 && (
                               <div className="text-xs text-muted-foreground line-through">
-                                {item.currency || "€"}{" "}
-                                {itemSubtotal.toFixed(2)}
+                                {item.currency || "€"} {itemSubtotal.toFixed(2)}
                               </div>
                             )}
                           </div>
@@ -1036,7 +1041,8 @@ export default function CheckoutPage() {
                         {itemDiscount > 0 && (
                           <div className="flex justify-end text-xs text-destructive">
                             <span>
-                              Discount: -{item.currency || "€"}{itemDiscount.toFixed(2)}
+                              Discount: -{item.currency || "€"}
+                              {itemDiscount.toFixed(2)}
                             </span>
                           </div>
                         )}
@@ -1057,16 +1063,27 @@ export default function CheckoutPage() {
                       <div className="flex items-center justify-between p-3 bg-muted rounded-md">
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-sm">
-                            {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
+                            {appliedDiscount.appliedDiscountNames &&
+                            appliedDiscount.appliedDiscountNames.length > 1 ? (
                               <div className="space-y-1">
-                                {appliedDiscount.appliedDiscountNames.map((name, idx) => (
-                                  <div key={idx} className="flex items-center gap-1">
-                                    <span>{name}</span>
-                                    {idx < appliedDiscount.appliedDiscountNames!.length - 1 && (
-                                      <span className="text-muted-foreground">+</span>
-                                    )}
-                                  </div>
-                                ))}
+                                {appliedDiscount.appliedDiscountNames.map(
+                                  (name, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="flex items-center gap-1"
+                                    >
+                                      <span>{name}</span>
+                                      {idx <
+                                        appliedDiscount.appliedDiscountNames!
+                                          .length -
+                                          1 && (
+                                        <span className="text-muted-foreground">
+                                          +
+                                        </span>
+                                      )}
+                                    </div>
+                                  )
+                                )}
                               </div>
                             ) : (
                               <>
@@ -1080,7 +1097,8 @@ export default function CheckoutPage() {
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground mt-1">
-                            {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
+                            {appliedDiscount.appliedDiscountNames &&
+                            appliedDiscount.appliedDiscountNames.length > 1 ? (
                               <span>Multiple discounts applied</span>
                             ) : (
                               <>
@@ -1092,20 +1110,32 @@ export default function CheckoutPage() {
                           </div>
                           {appliedDiscount.eligibilityInfo && (
                             <div className="text-xs text-muted-foreground mt-1">
-                              {appliedDiscount.eligibilityInfo.customerEligibilityType === "specific" && (
+                              {appliedDiscount.eligibilityInfo
+                                .customerEligibilityType === "specific" && (
                                 <span className="text-amber-600">
                                   Available to specific customers only
                                 </span>
                               )}
-                              {appliedDiscount.eligibilityInfo.minPurchaseAmount && (
+                              {appliedDiscount.eligibilityInfo
+                                .minPurchaseAmount && (
                                 <div>
-                                  Min. purchase: {appliedDiscount.currency || "€"}
-                                  {appliedDiscount.eligibilityInfo.minPurchaseAmount}
+                                  Min. purchase:{" "}
+                                  {appliedDiscount.currency || "€"}
+                                  {
+                                    appliedDiscount.eligibilityInfo
+                                      .minPurchaseAmount
+                                  }
                                 </div>
                               )}
-                              {appliedDiscount.eligibilityInfo.minPurchaseQuantity && (
+                              {appliedDiscount.eligibilityInfo
+                                .minPurchaseQuantity && (
                                 <div>
-                                  Min. quantity: {appliedDiscount.eligibilityInfo.minPurchaseQuantity} items
+                                  Min. quantity:{" "}
+                                  {
+                                    appliedDiscount.eligibilityInfo
+                                      .minPurchaseQuantity
+                                  }{" "}
+                                  items
                                 </div>
                               )}
                             </div>
@@ -1128,16 +1158,28 @@ export default function CheckoutPage() {
                         <div className="flex items-center justify-between p-3 bg-muted rounded-md">
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-sm">
-                              {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
+                              {appliedDiscount.appliedDiscountNames &&
+                              appliedDiscount.appliedDiscountNames.length >
+                                1 ? (
                                 <div className="space-y-1">
-                                  {appliedDiscount.appliedDiscountNames.map((name, idx) => (
-                                    <div key={idx} className="flex items-center gap-1">
-                                      <span>{name}</span>
-                                      {idx < appliedDiscount.appliedDiscountNames!.length - 1 && (
-                                        <span className="text-muted-foreground">+</span>
-                                      )}
-                                    </div>
-                                  ))}
+                                  {appliedDiscount.appliedDiscountNames.map(
+                                    (name, idx) => (
+                                      <div
+                                        key={idx}
+                                        className="flex items-center gap-1"
+                                      >
+                                        <span>{name}</span>
+                                        {idx <
+                                          appliedDiscount.appliedDiscountNames!
+                                            .length -
+                                            1 && (
+                                          <span className="text-muted-foreground">
+                                            +
+                                          </span>
+                                        )}
+                                      </div>
+                                    )
+                                  )}
                                 </div>
                               ) : (
                                 <>
@@ -1151,7 +1193,9 @@ export default function CheckoutPage() {
                               )}
                             </div>
                             <div className="text-xs text-muted-foreground mt-1">
-                              {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
+                              {appliedDiscount.appliedDiscountNames &&
+                              appliedDiscount.appliedDiscountNames.length >
+                                1 ? (
                                 <span>Multiple discounts applied</span>
                               ) : (
                                 <>
@@ -1207,13 +1251,17 @@ export default function CheckoutPage() {
                   {betterDiscountMessage && (
                     <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
                       <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-                      <p className="text-sm text-blue-800">{betterDiscountMessage}</p>
+                      <p className="text-sm text-blue-800">
+                        {betterDiscountMessage}
+                      </p>
                     </div>
                   )}
                   {discountError && (
                     <div className="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
                       <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                      <p className="text-sm text-destructive">{discountError}</p>
+                      <p className="text-sm text-destructive">
+                        {discountError}
+                      </p>
                     </div>
                   )}
                   {/* Show available discounts with requirements */}
@@ -1235,12 +1283,18 @@ export default function CheckoutPage() {
                                 {discount.evaluationResult.reason}
                                 {discount.evaluationResult.missingAmount && (
                                   <span className="ml-1">
-                                    Add €{discount.evaluationResult.missingAmount.toFixed(2)} more.
+                                    Add €
+                                    {discount.evaluationResult.missingAmount.toFixed(
+                                      2
+                                    )}{" "}
+                                    more.
                                   </span>
                                 )}
                                 {discount.evaluationResult.missingQuantity && (
                                   <span className="ml-1">
-                                    Add {discount.evaluationResult.missingQuantity} more item(s).
+                                    Add{" "}
+                                    {discount.evaluationResult.missingQuantity}{" "}
+                                    more item(s).
                                   </span>
                                 )}
                               </div>
@@ -1259,15 +1313,25 @@ export default function CheckoutPage() {
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Subtotal</span>
                     <span className="font-medium text-foreground">
-                      €{items.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)}
+                      €
+                      {items
+                        .reduce(
+                          (sum, item) => sum + item.price * item.quantity,
+                          0
+                        )
+                        .toFixed(2)}
                     </span>
                   </div>
 
                   {appliedDiscount && (
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">
-                        {appliedDiscount.appliedDiscountNames && appliedDiscount.appliedDiscountNames.length > 1 ? (
-                          <>Discount ({appliedDiscount.appliedDiscountNames.join(", ")})</>
+                        {appliedDiscount.appliedDiscountNames &&
+                        appliedDiscount.appliedDiscountNames.length > 1 ? (
+                          <>
+                            Discount (
+                            {appliedDiscount.appliedDiscountNames.join(", ")})
+                          </>
                         ) : (
                           <>Discount ({appliedDiscount.discountName})</>
                         )}
@@ -1288,7 +1352,8 @@ export default function CheckoutPage() {
                   <div className="flex justify-between text-lg">
                     <span className="font-bold text-foreground">Total</span>
                     <span className="font-bold text-foreground">
-                      €{(total - (appliedDiscount?.totalAmount || 0)).toFixed(2)}
+                      €
+                      {(total - (appliedDiscount?.totalAmount || 0)).toFixed(2)}
                     </span>
                   </div>
                 </div>

@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { redirect } from "@/i18n/navigation";
 import { db } from "@/db";
-import { userRoles, roles, store } from "@/db/schema";
+import { userRoles, roles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
 import { DashboardWrapper } from "../components/shared/DashboardWrapper";
@@ -71,4 +71,3 @@ export default async function DraftOrdersPage() {
     </DashboardWrapper>
   );
 }
-

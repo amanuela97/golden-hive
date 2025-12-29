@@ -15,7 +15,7 @@ import { headers } from "next/headers";
 import { uploadFile } from "@/lib/cloudinary";
 import { revalidatePath } from "next/cache";
 import { getStoreIdForUser } from "./store-members";
-import { slugify, generateUniqueSlug } from "@/lib/slug-utils";
+import { slugify } from "@/lib/slug-utils";
 
 /**
  * Verify user is store owner/admin
@@ -167,10 +167,7 @@ export async function updateStoreVisibility(
   }
 
   try {
-    await db
-      .update(store)
-      .set({ visibility })
-      .where(eq(store.id, storeId));
+    await db.update(store).set({ visibility }).where(eq(store.id, storeId));
 
     revalidatePath(`/store/${storeId}`);
     return { success: true };
@@ -203,8 +200,7 @@ export async function getStoreBanners() {
   } catch (error) {
     return {
       success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to fetch banners",
+      error: error instanceof Error ? error.message : "Failed to fetch banners",
       banners: [],
     };
   }
@@ -249,8 +245,7 @@ export async function addBannerImage(
   } catch (error) {
     return {
       success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to add banner",
+      error: error instanceof Error ? error.message : "Failed to add banner",
     };
   }
 }
@@ -321,8 +316,7 @@ export async function deleteBannerImage(
   } catch (error) {
     return {
       success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to delete banner",
+      error: error instanceof Error ? error.message : "Failed to delete banner",
     };
   }
 }
@@ -484,4 +478,3 @@ export async function updateStorePolicies(
     };
   }
 }
-

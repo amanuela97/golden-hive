@@ -1,11 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import {
-  listing,
-  listingTranslations,
-  store,
-} from "@/db/schema";
+import { listing, listingTranslations, store } from "@/db/schema";
 import { eq, and, or, ilike, sql, desc, isNotNull } from "drizzle-orm";
 
 export interface SearchResult {
@@ -87,10 +83,7 @@ export async function searchAll(
       })
       .from(store)
       .where(
-        and(
-          eq(store.visibility, "public"),
-          ilike(store.storeName, searchTerm)
-        )
+        and(eq(store.visibility, "public"), ilike(store.storeName, searchTerm))
       )
       .limit(10);
 
@@ -301,4 +294,3 @@ export async function searchProducts(
     };
   }
 }
-

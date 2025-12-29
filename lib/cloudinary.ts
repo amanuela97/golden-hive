@@ -9,11 +9,89 @@ cloudinary.config({
 });
 
 /**
- * Check if a file is an image
+ * Check if a file is an image by MIME type and/or file extension
  */
 function isImageFile(file: File | Blob): boolean {
+  // Check MIME type first
   const fileType = file instanceof File ? file.type : "";
-  return fileType.startsWith("image/");
+  if (fileType.startsWith("image/")) {
+    return true;
+  }
+
+  // Fallback: check file extension if MIME type is missing or generic
+  if (file instanceof File && file.name) {
+    const fileName = file.name.toLowerCase();
+    const imageExtensions = [
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".gif",
+      ".webp",
+      ".bmp",
+      ".svg",
+      ".ico",
+      ".tiff",
+      ".tif",
+    ];
+    return imageExtensions.some((ext) => fileName.endsWith(ext));
+  }
+
+  return false;
+}
+
+/**
+ * Check if a buffer contains image data by checking magic bytes
+ */
+function isImageBuffer(buffer: Buffer): boolean {
+  // Check for common image file signatures (magic bytes)
+  if (buffer.length < 4) return false;
+
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return true;
+  }
+
+  // PNG: 89 50 4E 47
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return true;
+  }
+
+  // GIF: 47 49 46 38
+  if (
+    buffer[0] === 0x47 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x38
+  ) {
+    return true;
+  }
+
+  // WebP: Check for "RIFF" header and "WEBP" format
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return true;
+  }
+
+  // BMP: 42 4D
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -107,9 +185,15 @@ export async function uploadFileWithResult(
     let buffer: Buffer = Buffer.from(new Uint8Array(arrayBuffer));
     const originalSize = buffer.length;
 
-    // Compress image if it's an image file
-    if (isImageFile(file)) {
+    // Always attempt compression for image files
+    // Check by MIME type, file extension, and magic bytes for maximum reliability
+    const isImage = isImageFile(file) || isImageBuffer(buffer);
+
+    if (isImage) {
       try {
+        console.log(
+          `[Compression] Compressing image: ${fileName} (${originalSize} bytes)`
+        );
         const compressedBuffer = await compressImage(buffer, fileType);
         buffer = compressedBuffer;
         const compressedSize = buffer.length;
@@ -118,21 +202,26 @@ export async function uploadFileWithResult(
           100
         ).toFixed(1);
         console.log(
-          `Image compressed: ${originalSize} bytes -> ${compressedSize} bytes (${compressionRatio}% reduction)`
+          `[Compression] ✅ Image compressed: ${originalSize} bytes -> ${compressedSize} bytes (${compressionRatio}% reduction)`
         );
       } catch (error) {
-        console.warn("Failed to compress image, using original:", error);
+        console.warn(
+          "[Compression] ⚠️ Failed to compress image, using original:",
+          error
+        );
         // Continue with original buffer if compression fails
       }
+    } else {
+      console.log(
+        `[Compression] Skipping compression for non-image file: ${fileName}`
+      );
     }
 
     // Convert buffer to base64 data URI
     const base64 = buffer.toString("base64");
     // Use WebP MIME type if image was compressed to WebP, otherwise use original
     const mimeType =
-      isImageFile(file) && buffer.length < originalSize
-        ? "image/webp"
-        : fileType;
+      isImage && buffer.length < originalSize ? "image/webp" : fileType;
     const dataURI = `data:${mimeType};base64,${base64}`;
 
     console.log(`Uploading to folder: golden-hive/${folder}`);
@@ -205,9 +294,15 @@ export async function uploadFile(
     let buffer: Buffer = Buffer.from(new Uint8Array(arrayBuffer));
     const originalSize = buffer.length;
 
-    // Compress image if it's an image file
-    if (isImageFile(file)) {
+    // Always attempt compression for image files
+    // Check by MIME type, file extension, and magic bytes for maximum reliability
+    const isImage = isImageFile(file) || isImageBuffer(buffer);
+
+    if (isImage) {
       try {
+        console.log(
+          `[Compression] Compressing image: ${fileName} (${originalSize} bytes)`
+        );
         const compressedBuffer = await compressImage(buffer, fileType);
         buffer = compressedBuffer;
         const compressedSize = buffer.length;
@@ -216,21 +311,26 @@ export async function uploadFile(
           100
         ).toFixed(1);
         console.log(
-          `Image compressed: ${originalSize} bytes -> ${compressedSize} bytes (${compressionRatio}% reduction)`
+          `[Compression] ✅ Image compressed: ${originalSize} bytes -> ${compressedSize} bytes (${compressionRatio}% reduction)`
         );
       } catch (error) {
-        console.warn("Failed to compress image, using original:", error);
+        console.warn(
+          "[Compression] ⚠️ Failed to compress image, using original:",
+          error
+        );
         // Continue with original buffer if compression fails
       }
+    } else {
+      console.log(
+        `[Compression] Skipping compression for non-image file: ${fileName}`
+      );
     }
 
     // Convert buffer to base64 data URI
     const base64 = buffer.toString("base64");
     // Use WebP MIME type if image was compressed to WebP, otherwise use original
     const mimeType =
-      isImageFile(file) && buffer.length < originalSize
-        ? "image/webp"
-        : fileType;
+      isImage && buffer.length < originalSize ? "image/webp" : fileType;
     const dataURI = `data:${mimeType};base64,${base64}`;
 
     console.log(`Uploading to folder: golden-hive/${folder}`);

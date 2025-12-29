@@ -6,9 +6,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StarRating } from "./StarRating";
-import { submitProductReview, type ProductReviewInput } from "../../actions/reviews";
+import {
+  submitProductReview,
+  type ProductReviewInput,
+} from "@/app/[locale]/actions/reviews";
 import toast from "react-hot-toast";
 import { useRouter } from "@/i18n/navigation";
+import Image from "next/image";
 
 interface ProductReviewFormProps {
   listingId: string;
@@ -30,7 +34,6 @@ export function ProductReviewForm({
   storeName,
   isAuthenticated,
   userName,
-  userEmail,
   onSuccess,
 }: ProductReviewFormProps) {
   const router = useRouter();
@@ -101,7 +104,9 @@ export function ProductReviewForm({
       {/* Product Info */}
       <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
         {productImage && (
-          <img
+          <Image
+            width={64}
+            height={64}
             src={productImage}
             alt={productName}
             className="w-16 h-16 object-cover rounded"
@@ -204,4 +209,3 @@ export function ProductReviewForm({
     </form>
   );
 }
-

@@ -16,4 +16,3 @@ export function getInvoiceExpirationDate(days: number = 30): Date {
   date.setDate(date.getDate() + days);
   return date;
 }
-

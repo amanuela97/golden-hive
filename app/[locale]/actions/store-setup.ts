@@ -1,18 +1,11 @@
 "use server";
 
 import { db } from "@/db";
-import {
-  store,
-  storeMembers,
-  user,
-  roles,
-  userRoles,
-  markets,
-} from "@/db/schema";
+import { store, storeMembers, roles, userRoles } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { autoAssignMarketToUser, getDefaultMarket } from "./markets";
+import { autoAssignMarketToUser } from "./markets";
 import { getStoreIdForUser } from "./store-members";
 import { slugify, generateUniqueSlug } from "@/lib/slug-utils";
 import { storeSlugHistory } from "@/db/schema";

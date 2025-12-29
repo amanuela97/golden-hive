@@ -1,13 +1,13 @@
 export interface Product {
-  id: string
-  name: string
-  price: number
-  image: string
-  category: string
-  tags: string[]
-  description: string
-  shortDescription: string
-  inStock: boolean
+  id: string;
+  name: string;
+  price: number;
+  image: string;
+  category: string;
+  tags: string[];
+  description: string;
+  shortDescription: string;
+  inStock: boolean;
 }
 
 export const products: Product[] = [
@@ -19,7 +19,8 @@ export const products: Product[] = [
       "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/screencapture-mad-honey-store-shop-mad-honey-clinical-mad-honey-clinical-mad-honey-150gm-2025-10-17-23_13_42-yBDEdCHIu2LOUofXJtuTmGPKvG0JjH.png",
     category: "Clinical Mad Honey",
     tags: ["clinical", "organic"],
-    shortDescription: "Premium clinical grade mad honey from the Himalayan foothills",
+    shortDescription:
+      "Premium clinical grade mad honey from the Himalayan foothills",
     description: `Clinical Mad Honey is harvested from the lower Himalayan foothills at altitudes ranging from 8,200 to 11,500 feet (2,500 to 3,500 meters).
 
 It is recognized for its mildly potency along with sweet and enveloping taste. This variety is favored for its balanced effects, offering a gentle sense of relaxation and vitality and promoting relaxation.
@@ -35,7 +36,8 @@ Due to its spicier effect, Clinical mad honey can be consumed more frequently, m
       "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/screencapture-mad-honey-store-shop-mad-honey-clinical-mad-honey-clinical-mad-honey-150gm-2025-10-17-23_13_42-yBDEdCHIu2LOUofXJtuTmGPKvG0JjH.png",
     category: "Clinical Mad Honey",
     tags: ["clinical", "organic"],
-    shortDescription: "Premium clinical grade mad honey from the Himalayan foothills",
+    shortDescription:
+      "Premium clinical grade mad honey from the Himalayan foothills",
     description: `Clinical Mad Honey is harvested from the lower Himalayan foothills at altitudes ranging from 8,200 to 11,500 feet (2,500 to 3,500 meters).
 
 It is recognized for its mildly potency along with sweet and enveloping taste. This variety is favored for its balanced effects, offering a gentle sense of relaxation and vitality and promoting relaxation.`,
@@ -49,7 +51,8 @@ It is recognized for its mildly potency along with sweet and enveloping taste. T
       "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/screencapture-mad-honey-store-shop-mad-honey-clinical-mad-honey-clinical-mad-honey-150gm-2025-10-17-23_13_42-yBDEdCHIu2LOUofXJtuTmGPKvG0JjH.png",
     category: "Clinical Mad Honey",
     tags: ["clinical", "organic"],
-    shortDescription: "Premium clinical grade mad honey from the Himalayan foothills",
+    shortDescription:
+      "Premium clinical grade mad honey from the Himalayan foothills",
     description: `Clinical Mad Honey is harvested from the lower Himalayan foothills at altitudes ranging from 8,200 to 11,500 feet (2,500 to 3,500 meters).
 
 It is recognized for its mildly potency along with sweet and enveloping taste. This variety is favored for its balanced effects, offering a gentle sense of relaxation and vitality and promoting relaxation.`,
@@ -97,6 +100,6 @@ This premium variety offers enhanced potency and a rich, complex flavor profile.
 This variety is perfect for those seeking the most authentic and natural mad honey experience, with all the traditional benefits preserved.`,
     inStock: true,
   },
-]
+];
 
-export const relatedProducts: Product[] = products.slice(0, 4)
+export const relatedProducts: Product[] = products.slice(0, 4);

@@ -2,12 +2,15 @@
 
 import Image from "next/image";
 import { Card, CardContent } from "@/components/ui/card";
-import { PublicProduct } from "../actions/public-products";
+import { PublicProduct } from "@/app/[locale]/actions/public-products";
 import { MapPin, Globe, Heart } from "lucide-react";
 import { Link, useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import { useState, useEffect } from "react";
-import { toggleListingFavorite, isListingFavorite } from "../actions/favorites";
+import {
+  toggleListingFavorite,
+  isListingFavorite,
+} from "@/app/[locale]/actions/favorites";
 import { useSession } from "@/lib/auth-client";
 import {
   addGuestFavorite,
@@ -29,12 +32,9 @@ export function ProductCard({ product }: ProductCardProps) {
   const [isToggling, setIsToggling] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Safety check
-  if (!product || !product.id) {
-    return null;
-  }
-
   useEffect(() => {
+    if (!product.id) return;
+
     const checkFavoriteStatus = async () => {
       if (isAuthenticated) {
         const favorite = await isListingFavorite(product.id);
@@ -114,12 +114,12 @@ export function ProductCard({ product }: ProductCardProps) {
             >
               <Heart
                 className={`w-5 h-5 transition-all duration-200 ${
-                  isFavorite
-                    ? "fill-primary text-primary"
-                    : "text-gray-700"
+                  isFavorite ? "fill-primary text-primary" : "text-gray-700"
                 }`}
-                style={{ 
-                  filter: isFavorite ? "none" : "drop-shadow(0 1px 2px rgba(0,0,0,0.3))" 
+                style={{
+                  filter: isFavorite
+                    ? "none"
+                    : "drop-shadow(0 1px 2px rgba(0,0,0,0.3))",
                 }}
               />
             </button>
@@ -184,8 +184,7 @@ export function ProductCard({ product }: ProductCardProps) {
                         SAVE {product.currency} {savings.toFixed(2)}
                       </span>
                       <span className="text-xs text-muted-foreground mt-0.5">
-                        Regular {product.currency}{" "}
-                        {comparePrice.toFixed(2)}
+                        Regular {product.currency} {comparePrice.toFixed(2)}
                       </span>
                     </div>
                   );

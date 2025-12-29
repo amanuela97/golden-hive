@@ -1,7 +1,6 @@
 import {
   Discount,
   CartItem,
-  DiscountTarget,
   OrderDiscountResult,
   OrderItemDiscountAllocation,
   OrderItem,
@@ -122,13 +121,13 @@ function calculateItemDiscountAmount(
 
 /**
  * Evaluate a single discount against cart items.
- * 
+ *
  * IMPORTANT: This function evaluates ONE discount only.
  * - Each product item can only receive ONE discount (no stacking)
  * - If multiple discounts are eligible, use evaluateBestDiscountsPerItem() instead
  * - This function does NOT prevent stacking if called multiple times - the caller must ensure
  *   only one discount is evaluated/applied at a time
- * 
+ *
  * @param items - Cart items to evaluate discount for
  * @param discount - Single discount to evaluate
  * @param customerId - Optional customer ID for eligibility checking
@@ -173,10 +172,10 @@ export function evaluateAmountOffProductsDiscount(
 /**
  * Evaluate multiple discounts and apply only the best discount per product item.
  * This ensures discounts don't stack or compound unintentionally.
- * 
+ *
  * For each cart item, finds all eligible discounts and applies only the one
  * that gives the highest discount amount for that specific item.
- * 
+ *
  * @param items - Cart items to evaluate discounts for
  * @param discounts - Array of eligible discounts to evaluate
  * @param customerId - Optional customer ID for eligibility checking
@@ -242,7 +241,10 @@ export function evaluateBestDiscountsPerItem(
   // Determine primary discount (the one with highest total savings)
   // This is used as the main discountId in the result
   for (const [discountId, total] of discountTotals.entries()) {
-    if (!primaryDiscountId || total > (discountTotals.get(primaryDiscountId) || 0)) {
+    if (
+      !primaryDiscountId ||
+      total > (discountTotals.get(primaryDiscountId) || 0)
+    ) {
       primaryDiscountId = discountId;
     }
   }
@@ -362,11 +364,11 @@ function calculateOrderTotals(items: OrderItem[]) {
 
 /**
  * Create order from cart with discount application.
- * 
+ *
  * IMPORTANT: Only one discount is applied per product item.
  * If multiple discounts are eligible, only the best one (highest discount amount)
  * should be selected before calling this function.
- * 
+ *
  * This function does NOT evaluate multiple discounts - it applies the provided discount.
  * To evaluate multiple discounts and pick the best, use evaluateBestDiscountsPerItem first.
  */

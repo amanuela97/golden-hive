@@ -27,7 +27,6 @@ import { Package, Truck, ChevronDown, Star } from "lucide-react";
 import Image from "next/image";
 import { Link } from "@/i18n/navigation";
 import toast from "react-hot-toast";
-import { updateFulfillmentStatus } from "@/app/[locale]/actions/orders";
 import { fulfillOrder } from "@/app/[locale]/actions/orders-fulfillment";
 import { updateWorkflowStatus } from "@/app/[locale]/actions/orders-workflow";
 
@@ -52,6 +51,8 @@ interface OrderData {
   fulfillmentStatus: string;
   paymentStatus: string;
   shippingMethod: string | null;
+  workflowStatus?: string;
+  holdReason?: string | null;
   items: OrderItem[];
 }
 
@@ -206,7 +207,7 @@ export function FulfillmentCard({
 
     // Build fulfilledItems array from selected items
     const fulfilledItems = Object.entries(selectedItems)
-      .filter(([_, quantity]) => quantity > 0)
+      .filter(([, quantity]) => quantity > 0)
       .map(([orderItemId, quantity]) => ({
         orderItemId,
         quantity,
@@ -362,7 +363,9 @@ export function FulfillmentCard({
                         asChild
                         className="mt-2 gap-1"
                       >
-                        <Link href={`/review?order=${orderData.id}&product=${item.listingId}`}>
+                        <Link
+                          href={`/review?order=${orderData.id}&product=${item.listingId}`}
+                        >
                           <Star className="h-3 w-3" />
                           Review
                         </Link>
@@ -374,35 +377,39 @@ export function FulfillmentCard({
             </div>
           </div>
 
-          {canFulfill && !isFulfilled && !isArchived && !isCanceled && !isOnHold && (
-            <div className="flex gap-2">
-              <Button onClick={handleFulfillClick} className="flex-1">
-                Mark as fulfilled
-              </Button>
-              <Select
-                value=""
-                onValueChange={(value) => {
-                  if (value === "in_progress") {
-                    handleInProgressClick();
-                  } else if (value === "on_hold") {
-                    handleOnHoldClick();
-                  }
-                }}
-              >
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="More actions">
-                    <ChevronDown className="h-4 w-4" />
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="in_progress">
-                    Mark as in progress
-                  </SelectItem>
-                  <SelectItem value="on_hold">Mark as on hold</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          {canFulfill &&
+            !isFulfilled &&
+            !isArchived &&
+            !isCanceled &&
+            !isOnHold && (
+              <div className="flex gap-2">
+                <Button onClick={handleFulfillClick} className="flex-1">
+                  Mark as fulfilled
+                </Button>
+                <Select
+                  value=""
+                  onValueChange={(value) => {
+                    if (value === "in_progress") {
+                      handleInProgressClick();
+                    } else if (value === "on_hold") {
+                      handleOnHoldClick();
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="More actions">
+                      <ChevronDown className="h-4 w-4" />
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="in_progress">
+                      Mark as in progress
+                    </SelectItem>
+                    <SelectItem value="on_hold">Mark as on hold</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
         </CardContent>
       </Card>
 

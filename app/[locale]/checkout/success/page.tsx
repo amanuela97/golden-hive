@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CheckCircle2, Star } from "lucide-react";
@@ -33,7 +33,6 @@ interface OrderData {
 
 export default function CheckoutSuccessPage() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const { clearCart } = useCart();
   const sessionId = searchParams.get("session_id");
   const [orderData, setOrderData] = useState<OrderData | null>(null);
@@ -109,9 +108,10 @@ export default function CheckoutSuccessPage() {
   }
 
   const isPaid = orderData?.paymentStatus === "paid";
-  const reviewableItems = orderData?.items.filter(
-    (item) => item.listingId && item.listingSlug && isPaid
-  ) || [];
+  const reviewableItems =
+    orderData?.items.filter(
+      (item) => item.listingId && item.listingSlug && isPaid
+    ) || [];
 
   return (
     <div className="min-h-screen bg-background">
@@ -122,14 +122,13 @@ export default function CheckoutSuccessPage() {
               <div className="flex justify-center mb-4">
                 <CheckCircle2 className="h-16 w-16 text-green-500" />
               </div>
-              <CardTitle className="text-3xl">
-                Order Confirmed!
-              </CardTitle>
+              <CardTitle className="text-3xl">Order Confirmed!</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="text-center space-y-2">
                 <p className="text-muted-foreground">
-                  Thank you for your purchase! Your order has been confirmed and will be processed shortly.
+                  Thank you for your purchase! Your order has been confirmed and
+                  will be processed shortly.
                 </p>
                 {orderData?.orderNumber && (
                   <p className="text-lg font-semibold">
@@ -169,7 +168,9 @@ export default function CheckoutSuccessPage() {
                   </div>
                   {reviewableItems.length > 3 && (
                     <p className="text-xs text-muted-foreground text-center">
-                      {reviewableItems.length - 3} more item{reviewableItems.length - 3 > 1 ? "s" : ""} available for review
+                      {reviewableItems.length - 3} more item
+                      {reviewableItems.length - 3 > 1 ? "s" : ""} available for
+                      review
                     </p>
                   )}
                 </div>
@@ -196,4 +197,3 @@ export default function CheckoutSuccessPage() {
     </div>
   );
 }
-

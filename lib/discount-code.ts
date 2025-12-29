@@ -31,4 +31,3 @@ export async function generateUniqueDiscountCode(
 
   throw new Error("Failed to generate a unique discount code");
 }
-

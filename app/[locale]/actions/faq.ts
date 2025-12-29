@@ -7,9 +7,10 @@ import {
   faqSectionTranslations,
   faqItemTranslations,
 } from "@/db/schema";
-import { eq, asc, and } from "drizzle-orm";
+import { eq, asc, and, inArray } from "drizzle-orm";
 import { getCurrentAdmin } from "./admin";
 import { translateText } from "@/lib/translate";
+import { unstable_cache } from "next/cache";
 
 // Helper function to translate text to all locales
 async function translateToAllLocales(
@@ -657,13 +658,41 @@ export interface PublicFaqItem {
   answer: string;
 }
 
-// Get public FAQ data (for homepage display)
-export async function getPublicFaq(
-  locale: string = "en"
-): Promise<ActionResponse & { result?: PublicFaqSection[] }> {
-  try {
-    // Fetch all visible sections with translations
-    const sections = await db
+// Retry utility function with exponential backoff
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  delayMs: number = 1000
+): Promise<T> {
+  let lastError: Error | unknown;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries - 1) {
+        const delay = delayMs * Math.pow(2, attempt);
+        if (process.env.NODE_ENV === "development") {
+          console.warn(
+            `[getPublicFaq] Attempt ${attempt + 1} failed, retrying in ${delay}ms...`
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+// Internal function to fetch FAQ from database with retry logic
+async function fetchPublicFaqFromDB(
+  locale: string
+): Promise<PublicFaqSection[]> {
+  // Fetch all visible sections with translations
+  const sections = await withRetry(async () => {
+    return await db
       .select({
         id: faqSections.id,
         slug: faqSections.slug,
@@ -681,111 +710,175 @@ export async function getPublicFaq(
       )
       .where(eq(faqSections.isVisible, true))
       .orderBy(asc(faqSections.order));
+  }, 3, 1000);
 
-    // If no translations found for current locale, try English as fallback
-    const sectionsWithFallback = await Promise.all(
-      sections.map(async (section) => {
-        let title = section.title;
+  if (!sections || sections.length === 0) {
+    return [];
+  }
 
-        // If no translation for current locale, fetch English
-        if (!title && locale !== "en") {
-          const enSection = await db
+  const sectionIds = sections.map((s) => s.id);
+
+  // Batch fetch all English translations for sections (for fallback)
+  const enSectionTranslations =
+    locale !== "en"
+      ? await withRetry(async () => {
+          return await db
             .select({
+              sectionId: faqSectionTranslations.sectionId,
               title: faqSectionTranslations.title,
             })
             .from(faqSectionTranslations)
             .where(
               and(
-                eq(faqSectionTranslations.sectionId, section.id),
+                inArray(faqSectionTranslations.sectionId, sectionIds),
                 eq(faqSectionTranslations.locale, "en")
               )
-            )
-            .limit(1);
+            );
+        }, 2, 500)
+      : [];
 
-          title = enSection[0]?.title || null;
+  const enSectionMap = new Map(
+    enSectionTranslations.map((t) => [t.sectionId, t.title])
+  );
+
+  // Batch fetch all items for all sections
+  const allItems = await withRetry(async () => {
+    return await db
+      .select({
+        id: faqItems.id,
+        sectionId: faqItems.sectionId,
+        order: faqItems.order,
+        isVisible: faqItems.isVisible,
+        question: faqItemTranslations.question,
+        answer: faqItemTranslations.answer,
+      })
+      .from(faqItems)
+      .leftJoin(
+        faqItemTranslations,
+        and(
+          eq(faqItemTranslations.itemId, faqItems.id),
+          eq(faqItemTranslations.locale, locale)
+        )
+      )
+      .where(
+        and(
+          inArray(faqItems.sectionId, sectionIds),
+          eq(faqItems.isVisible, true)
+        )
+      )
+      .orderBy(asc(faqItems.order));
+  }, 3, 1000);
+
+  // Batch fetch English translations for items (for fallback)
+  const itemIds = allItems.map((item) => item.id);
+  const enItemTranslations =
+    locale !== "en" && itemIds.length > 0
+      ? await withRetry(async () => {
+          return await db
+            .select({
+              itemId: faqItemTranslations.itemId,
+              question: faqItemTranslations.question,
+              answer: faqItemTranslations.answer,
+            })
+            .from(faqItemTranslations)
+            .where(
+              and(
+                inArray(faqItemTranslations.itemId, itemIds),
+                eq(faqItemTranslations.locale, "en")
+              )
+            );
+        }, 2, 500)
+      : [];
+
+  const enItemMap = new Map(
+    enItemTranslations.map((t) => [
+      t.itemId,
+      { question: t.question, answer: t.answer },
+    ])
+  );
+
+  // Group items by section
+  const itemsBySection = new Map<number, typeof allItems>();
+  for (const item of allItems) {
+    if (!itemsBySection.has(item.sectionId)) {
+      itemsBySection.set(item.sectionId, []);
+    }
+    itemsBySection.get(item.sectionId)!.push(item);
+  }
+
+  // Build result with fallbacks
+  const sectionsWithFallback = sections.map((section) => {
+    let title = section.title;
+
+    // Fallback to English if needed
+    if (!title && locale !== "en") {
+      title = enSectionMap.get(section.id) || null;
+    }
+
+    // Get items for this section
+    const sectionItems = itemsBySection.get(section.id) || [];
+
+    // Process items with fallbacks
+    const itemsWithFallback = sectionItems
+      .map((item) => {
+        let question = item.question;
+        let answer = item.answer;
+
+        // Fallback to English if needed
+        if ((!question || !answer) && locale !== "en") {
+          const enItem = enItemMap.get(item.id);
+          question = question || enItem?.question || "";
+          answer = answer || enItem?.answer || "";
         }
 
-        // Fetch items for this section
-        const items = await db
-          .select({
-            id: faqItems.id,
-            order: faqItems.order,
-            isVisible: faqItems.isVisible,
-            question: faqItemTranslations.question,
-            answer: faqItemTranslations.answer,
-          })
-          .from(faqItems)
-          .leftJoin(
-            faqItemTranslations,
-            and(
-              eq(faqItemTranslations.itemId, faqItems.id),
-              eq(faqItemTranslations.locale, locale)
-            )
-          )
-          .where(
-            and(
-              eq(faqItems.sectionId, section.id),
-              eq(faqItems.isVisible, true)
-            )
-          )
-          .orderBy(asc(faqItems.order));
-
-        // Fallback to English for items if needed
-        const itemsWithFallback = await Promise.all(
-          items.map(async (item) => {
-            let question = item.question;
-            let answer = item.answer;
-
-            // If no translation for current locale, fetch English
-            if ((!question || !answer) && locale !== "en") {
-              const enItem = await db
-                .select({
-                  question: faqItemTranslations.question,
-                  answer: faqItemTranslations.answer,
-                })
-                .from(faqItemTranslations)
-                .where(
-                  and(
-                    eq(faqItemTranslations.itemId, item.id),
-                    eq(faqItemTranslations.locale, "en")
-                  )
-                )
-                .limit(1);
-
-              question = question || enItem[0]?.question || "";
-              answer = answer || enItem[0]?.answer || "";
-            }
-
-            return {
-              id: item.id,
-              question: question || "",
-              answer: answer || "",
-            };
-          })
-        );
-
         return {
-          id: section.id,
-          slug: section.slug,
-          title: title || "",
-          items: itemsWithFallback.filter(
-            (item) => item.question && item.answer
-          ),
+          id: item.id,
+          question: question || "",
+          answer: answer || "",
         };
       })
-    );
+      .filter((item) => item.question && item.answer);
+
+    return {
+      id: section.id,
+      slug: section.slug,
+      title: title || "",
+      items: itemsWithFallback,
+    };
+  });
+
+  return sectionsWithFallback.filter(
+    (section) => section.title && section.items.length > 0
+  );
+}
+
+// Get public FAQ data (for homepage display)
+export async function getPublicFaq(
+  locale: string = "en"
+): Promise<ActionResponse & { result?: PublicFaqSection[] }> {
+  try {
+    // Cache the result for 1 hour to reduce database load
+    const result = await unstable_cache(
+      async () => {
+        return await fetchPublicFaqFromDB(locale);
+      },
+      [`public-faq-${locale}`],
+      {
+        revalidate: 3600, // 1 hour cache
+        tags: ["public-faq"],
+      }
+    )();
 
     return {
       success: true,
-      result: sectionsWithFallback.filter(
-        (section) => section.title && section.items.length > 0
-      ),
+      result,
     };
   } catch (error) {
     console.error("Error fetching public FAQ:", error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to fetch FAQ",
+      result: [], // Return empty array instead of undefined
     };
   }
 }

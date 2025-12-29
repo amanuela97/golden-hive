@@ -5,10 +5,7 @@ import { db } from "@/db";
 import { userRoles, roles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getLocale } from "next-intl/server";
-import {
-  getAllFeedbacks,
-  deleteFeedback,
-} from "../../actions/feedbackActions";
+import { getAllFeedbacks, deleteFeedback } from "../../actions/feedbackActions";
 import { DashboardWrapper } from "../components/shared/DashboardWrapper";
 
 export default async function FeedbackPage() {

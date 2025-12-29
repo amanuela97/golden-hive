@@ -13,7 +13,7 @@ export default async function CategoryPage({
   params,
   searchParams,
 }: CategoryPageProps) {
-  const { category } = await params;
+  await params; // Destructure to satisfy params requirement
   const { page, id } = await searchParams;
   const currentPage = parseInt(page || "1", 10);
 

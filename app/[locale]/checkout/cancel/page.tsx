@@ -35,7 +35,8 @@ export default function CheckoutCancelPage() {
 
               <div className="space-y-4 pt-6 border-t">
                 <p className="text-sm text-muted-foreground text-center">
-                  If you encountered any issues, please try again or contact support.
+                  If you encountered any issues, please try again or contact
+                  support.
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4">

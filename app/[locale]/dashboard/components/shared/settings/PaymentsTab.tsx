@@ -4,11 +4,23 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CreditCard, CheckCircle2, AlertCircle, Loader2, ExternalLink } from "lucide-react";
-import { checkStripePaymentReadiness, createStripeAccountAndOnboarding, generateOnboardingLink, createStripeDashboardLink } from "@/app/[locale]/actions/stripe-connect";
+import {
+  CreditCard,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  ExternalLink,
+} from "lucide-react";
+import {
+  checkStripePaymentReadiness,
+  createStripeAccountAndOnboarding,
+  generateOnboardingLink,
+  createStripeDashboardLink,
+} from "@/app/[locale]/actions/stripe-connect";
 import { getStoreSetupStatus } from "@/app/[locale]/actions/store-setup";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import toast from "react-hot-toast";
+import { Link } from "@/i18n/navigation";
 
 export default function PaymentsTab() {
   const searchParams = useSearchParams();
@@ -31,11 +43,11 @@ export default function PaymentsTab() {
 
   useEffect(() => {
     loadStatus();
-    
+
     // Check for success or refresh parameters
     const success = searchParams.get("success");
     const refresh = searchParams.get("refresh");
-    
+
     if (success === "true") {
       toast.success("Stripe onboarding completed successfully!");
       // Reload status after a short delay
@@ -43,7 +55,7 @@ export default function PaymentsTab() {
         loadStatus();
       }, 1000);
     } else if (refresh === "true") {
-      toast.info("Please complete your Stripe onboarding");
+      toast("Please complete your Stripe onboarding");
     }
   }, [searchParams]);
 
@@ -146,7 +158,7 @@ export default function PaymentsTab() {
           <AlertDescription>
             Please set up your store first before connecting Stripe.
             <Button asChild variant="link" className="p-0 ml-1 h-auto">
-              <a href="/dashboard/settings/store">Go to Store Settings</a>
+              <Link href="/dashboard/settings/store">Go to Store Settings</Link>
             </Button>
           </AlertDescription>
         </Alert>
@@ -167,7 +179,8 @@ export default function PaymentsTab() {
                 Connect Stripe to Receive Payments
               </h4>
               <p className="text-gray-600 max-w-md mx-auto">
-                Connect your Stripe account to start accepting payments. You&apos;ll be redirected to Stripe to complete the setup.
+                Connect your Stripe account to start accepting payments.
+                You&apos;ll be redirected to Stripe to complete the setup.
               </p>
             </div>
             <div className="flex justify-center">
@@ -199,7 +212,8 @@ export default function PaymentsTab() {
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Complete Stripe Onboarding</AlertTitle>
               <AlertDescription>
-                Your Stripe account is connected but onboarding is not complete. You need to finish setup to receive payments.
+                Your Stripe account is connected but onboarding is not complete.
+                You need to finish setup to receive payments.
               </AlertDescription>
             </Alert>
             <div className="space-y-2">
@@ -209,8 +223,15 @@ export default function PaymentsTab() {
                 ) : (
                   <AlertCircle className="w-5 h-5 text-yellow-600" />
                 )}
-                <span className={paymentReadiness?.chargesEnabled ? "text-green-600" : "text-gray-600"}>
-                  Charges {paymentReadiness?.chargesEnabled ? "Enabled" : "Not Enabled"}
+                <span
+                  className={
+                    paymentReadiness?.chargesEnabled
+                      ? "text-green-600"
+                      : "text-gray-600"
+                  }
+                >
+                  Charges{" "}
+                  {paymentReadiness?.chargesEnabled ? "Enabled" : "Not Enabled"}
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -219,8 +240,15 @@ export default function PaymentsTab() {
                 ) : (
                   <AlertCircle className="w-5 h-5 text-yellow-600" />
                 )}
-                <span className={paymentReadiness?.payoutsEnabled ? "text-green-600" : "text-gray-600"}>
-                  Payouts {paymentReadiness?.payoutsEnabled ? "Enabled" : "Not Enabled"}
+                <span
+                  className={
+                    paymentReadiness?.payoutsEnabled
+                      ? "text-green-600"
+                      : "text-gray-600"
+                  }
+                >
+                  Payouts{" "}
+                  {paymentReadiness?.payoutsEnabled ? "Enabled" : "Not Enabled"}
                 </span>
               </div>
             </div>

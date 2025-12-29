@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { db } from "@/db";
-import { draftOrders, orders, orderEvents, orderPayments, orderItems, listing, store } from "@/db/schema";
+import {
+  draftOrders,
+  orders,
+  orderEvents,
+  orderPayments,
+  orderItems,
+  listing,
+  store,
+} from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { headers } from "next/headers";
 import { completeDraftOrderFromWebhook } from "@/app/[locale]/actions/draft-orders";
@@ -56,8 +64,11 @@ async function sendOrderConfirmationEmail(
       .map((item) => item.listingId)
       .filter((id): id is string => !!id);
 
-    let listingMap = new Map<string, { slug: string | null; storeId: string | null }>();
-    let storeMap = new Map<string, { slug: string | null }>();
+    const listingMap = new Map<
+      string,
+      { slug: string | null; storeId: string | null }
+    >();
+    const storeMap = new Map<string, { slug: string | null }>();
 
     if (listingIds.length > 0) {
       const listings = await db
@@ -110,10 +121,14 @@ async function sendOrderConfirmationEmail(
 
     // Calculate totals from all items if multi-store
     const subtotal = allOrderIds
-      ? allItems.reduce((sum, item) => sum + parseFloat(item.lineTotal || "0"), 0).toFixed(2)
+      ? allItems
+          .reduce((sum, item) => sum + parseFloat(item.lineTotal || "0"), 0)
+          .toFixed(2)
       : order.subtotalAmount;
     const total = allOrderIds
-      ? allItems.reduce((sum, item) => sum + parseFloat(item.lineTotal || "0"), 0).toFixed(2)
+      ? allItems
+          .reduce((sum, item) => sum + parseFloat(item.lineTotal || "0"), 0)
+          .toFixed(2)
       : order.totalAmount;
 
     await resend.emails.send({
@@ -126,8 +141,12 @@ async function sendOrderConfirmationEmail(
         customerName,
         customerEmail: order.customerEmail,
         items: allItems.map((item) => {
-          const listingInfo = item.listingId ? listingMap.get(item.listingId) : null;
-          const storeInfo = listingInfo?.storeId ? storeMap.get(listingInfo.storeId) : null;
+          const listingInfo = item.listingId
+            ? listingMap.get(item.listingId)
+            : null;
+          const storeInfo = listingInfo?.storeId
+            ? storeMap.get(listingInfo.storeId)
+            : null;
           return {
             title: item.title,
             quantity: item.quantity,
@@ -148,7 +167,10 @@ async function sendOrderConfirmationEmail(
         total: total,
         currency: order.currency,
         paymentStatus: order.paymentStatus === "paid" ? "paid" : "pending",
-        orderStatus: order.status === "completed" ? "fulfilled" : (order.status as "open" | "fulfilled" | "cancelled"),
+        orderStatus:
+          order.status === "completed"
+            ? "fulfilled"
+            : (order.status as "open" | "fulfilled" | "cancelled"),
         shippingAddress:
           order.shippingAddressLine1 ||
           order.shippingCity ||
@@ -443,21 +465,64 @@ export async function POST(req: NextRequest) {
         }
 
         console.log("✅ Multi-store transfers completed");
-        
+
+        // Generate invoices for all orders in background (don't await to avoid blocking)
+        if (orderIdsArray.length > 0) {
+          for (const orderId of orderIdsArray) {
+            // Generate invoice asynchronously
+            (async () => {
+              try {
+                const { generateInvoiceForOrder } = await import(
+                  "@/app/[locale]/actions/invoice"
+                );
+                console.log(
+                  `[Invoice] Generating invoice for order ${orderId}`
+                );
+                const invoiceResult = await generateInvoiceForOrder(orderId);
+                if (invoiceResult.success && invoiceResult.invoicePdfUrl) {
+                  console.log(
+                    `[Invoice] ✅ Invoice PDF generated: ${invoiceResult.invoicePdfUrl}`
+                  );
+                  console.log(
+                    `[Invoice] Invoice Number: ${invoiceResult.invoiceNumber}`
+                  );
+                } else {
+                  console.error(
+                    `[Invoice] ❌ Failed to generate invoice: ${invoiceResult.error}`
+                  );
+                }
+              } catch (error) {
+                console.error(
+                  `[Invoice] ❌ Exception generating invoice:`,
+                  error
+                );
+                if (error instanceof Error) {
+                  console.error(`[Invoice] Error message: ${error.message}`);
+                  console.error(`[Invoice] Error stack: ${error.stack}`);
+                }
+              }
+            })();
+          }
+        }
+
         // Send confirmation email for multi-store checkout (send one email with all orders)
         try {
           // Get all order IDs from the breakdown
           const allOrderIds = orderIdsArray;
           if (allOrderIds.length > 0) {
             // Send email for the first order (primary order) which will include all items
-            await sendOrderConfirmationEmail(allOrderIds[0], session.id, allOrderIds);
+            await sendOrderConfirmationEmail(
+              allOrderIds[0],
+              session.id,
+              allOrderIds
+            );
             console.log("✅ Confirmation email sent for multi-store checkout");
           }
         } catch (emailError) {
           console.error("❌ Failed to send confirmation email:", emailError);
           // Don't fail the webhook if email fails
         }
-        
+
         return NextResponse.json({ received: true });
       }
 
@@ -484,25 +549,25 @@ export async function POST(req: NextRequest) {
       if (draftId) {
         console.log("📝 Processing draft order payment:", draftId);
         // Handle invoice payment (draft order)
-        const draftData = await db
-          .select({
-            id: draftOrders.id,
-            currency: draftOrders.currency,
-            totalAmount: draftOrders.totalAmount,
-          })
-          .from(draftOrders)
-          .where(eq(draftOrders.id, draftId))
-          .limit(1);
+      const draftData = await db
+        .select({
+          id: draftOrders.id,
+          currency: draftOrders.currency,
+          totalAmount: draftOrders.totalAmount,
+        })
+        .from(draftOrders)
+        .where(eq(draftOrders.id, draftId))
+        .limit(1);
 
-        if (draftData.length === 0) {
+      if (draftData.length === 0) {
           console.error("❌ Draft order not found:", draftId);
-          return NextResponse.json(
-            { error: "Draft order not found" },
-            { status: 404 }
-          );
-        }
+        return NextResponse.json(
+          { error: "Draft order not found" },
+          { status: 404 }
+        );
+      }
 
-        const draft = draftData[0];
+      const draft = draftData[0];
         currency = draft.currency;
         console.log("✅ Draft order found:", {
           id: draft.id,
@@ -510,23 +575,23 @@ export async function POST(req: NextRequest) {
           totalAmount: draft.totalAmount,
         });
 
-        // Complete the draft order (convert to order)
+      // Complete the draft order (convert to order)
         console.log("🔄 Completing draft order...");
         const completeResult = await completeDraftOrderFromWebhook(
           draftId,
           true
         ); // markAsPaid = true
 
-        if (!completeResult.success) {
+      if (!completeResult.success) {
           console.error(
             "❌ Failed to complete draft order:",
             completeResult.error
           );
-          return NextResponse.json(
-            { error: "Failed to complete order" },
-            { status: 500 }
-          );
-        }
+        return NextResponse.json(
+          { error: "Failed to complete order" },
+          { status: 500 }
+        );
+      }
 
         finalOrderId = completeResult.orderId!;
         console.log("✅ Draft order completed! Order ID:", finalOrderId);
@@ -604,6 +669,35 @@ export async function POST(req: NextRequest) {
           })
           .where(eq(orders.id, orderId));
         console.log("✅ Order payment status updated");
+
+        // Generate invoice for regular order payment (don't await to avoid blocking)
+        (async () => {
+          try {
+            const { generateInvoiceForOrder } = await import(
+              "@/app/[locale]/actions/invoice"
+            );
+            console.log(`[Invoice] Generating invoice for order ${orderId}`);
+            const invoiceResult = await generateInvoiceForOrder(orderId);
+            if (invoiceResult.success && invoiceResult.invoicePdfUrl) {
+              console.log(
+                `[Invoice] ✅ Invoice PDF generated: ${invoiceResult.invoicePdfUrl}`
+              );
+              console.log(
+                `[Invoice] Invoice Number: ${invoiceResult.invoiceNumber}`
+              );
+            } else {
+              console.error(
+                `[Invoice] ❌ Failed to generate invoice: ${invoiceResult.error}`
+              );
+            }
+          } catch (error) {
+            console.error(`[Invoice] ❌ Exception generating invoice:`, error);
+            if (error instanceof Error) {
+              console.error(`[Invoice] Error message: ${error.message}`);
+              console.error(`[Invoice] Error stack: ${error.stack}`);
+            }
+          }
+        })();
       } else {
         return NextResponse.json(
           { error: "Invalid metadata" },

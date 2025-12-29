@@ -29,10 +29,10 @@ interface EditProductFormProps {
   isAdmin: boolean;
 }
 
-export default function EditProductForm({ 
+export default function EditProductForm({
   initialData,
   initialVariants = [],
-  isAdmin
+  isAdmin,
 }: EditProductFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();

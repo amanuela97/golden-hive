@@ -23,8 +23,6 @@ import {
 import {
   Mail,
   Send,
-  Users,
-  Filter,
   Plus,
   Eye,
   Edit,

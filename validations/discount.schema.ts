@@ -3,8 +3,7 @@ import { z } from "zod";
 /**
  * Helpers
  */
-const money = z.number().finite().nonnegative();
-const positiveMoney = z.number().finite().positive();
+const positiveMoney = z.number().positive();
 const positiveInt = z.number().int().positive();
 const isoDateString = z
   .string()

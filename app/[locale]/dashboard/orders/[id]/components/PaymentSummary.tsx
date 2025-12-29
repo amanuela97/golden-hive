@@ -1,12 +1,7 @@
 "use client";
 
 import React from "react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CreditCard } from "lucide-react";
 
 interface OrderData {
@@ -32,10 +27,7 @@ interface PaymentSummaryProps {
   userRole: "admin" | "seller" | "customer";
 }
 
-export function PaymentSummary({
-  orderData,
-  userRole,
-}: PaymentSummaryProps) {
+export function PaymentSummary({ orderData, userRole }: PaymentSummaryProps) {
   const isCustomer = userRole === "customer";
   const isPaid = orderData.paymentStatus === "paid";
   const isPartiallyRefunded = orderData.paymentStatus === "partially_refunded";
@@ -82,7 +74,9 @@ export function PaymentSummary({
                   <span className="text-muted-foreground">
                     {orderData.discount?.name || "Discount"}
                     {orderData.discount?.code && (
-                      <span className="ml-1 text-xs">({orderData.discount.code})</span>
+                      <span className="ml-1 text-xs">
+                        ({orderData.discount.code})
+                      </span>
                     )}
                     :
                   </span>
@@ -145,4 +139,3 @@ export function PaymentSummary({
     </Card>
   );
 }
-

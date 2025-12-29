@@ -14,7 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { resetPasswordAction } from "../actions/auth";
+import { resetPasswordAction } from "@/app/[locale]/actions/auth";
 import { ActionResponse, initialState } from "@/lib/types";
 
 export default function ResetPasswordForm() {

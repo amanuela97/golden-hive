@@ -1,10 +1,7 @@
 import { getPublicProducts } from "@/app/[locale]/actions/public-products";
 import { notFound } from "next/navigation";
 import { SubcategoryProductsClient } from "./SubcategoryProductsClient";
-import {
-  findCategoryById,
-  getDescendantTaxonomyIds,
-} from "@/lib/taxonomy";
+import { findCategoryById, getDescendantTaxonomyIds } from "@/lib/taxonomy";
 import { slugify } from "@/lib/slug-utils";
 
 interface SubcategoryPageProps {
@@ -16,7 +13,7 @@ export default async function SubcategoryPage({
   params,
   searchParams,
 }: SubcategoryPageProps) {
-  const { category, subcategory } = await params;
+  await params; // Destructure to satisfy params requirement
   const { page, id } = await searchParams;
   const currentPage = parseInt(page || "1", 10);
 
@@ -76,6 +73,11 @@ export default async function SubcategoryPage({
     ancestors: subcategoryData.ancestors || [],
   };
 
+  // Ensure parentCategory exists before rendering
+  if (!parentCategoryNode) {
+    notFound();
+  }
+
   return (
     <div className="container mx-auto px-4 py-8">
       <SubcategoryProductsClient
@@ -89,4 +91,3 @@ export default async function SubcategoryPage({
     </div>
   );
 }
-

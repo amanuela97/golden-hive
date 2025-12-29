@@ -202,8 +202,7 @@ export async function getMarket(marketId: string): Promise<{
     console.error("Error getting market:", error);
     return {
       success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to get market",
+      error: error instanceof Error ? error.message : "Failed to get market",
     };
   }
 }

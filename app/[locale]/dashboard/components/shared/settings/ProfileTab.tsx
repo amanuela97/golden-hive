@@ -10,7 +10,7 @@ import {
   updateUserProfile,
   getUserProfile,
   uploadProfileImage,
-} from "../../../../actions/auth";
+} from "@/app/[locale]/actions/auth";
 import toast from "react-hot-toast";
 import { CountrySelect } from "@/components/ui/country-select";
 import Image from "next/image";
@@ -239,7 +239,6 @@ export default function ProfileTab() {
 
   return (
     <div className="space-y-8">
-
       <Card className="p-8">
         <form onSubmit={handleSubmit} className="space-y-8">
           {/* Profile Image Section */}

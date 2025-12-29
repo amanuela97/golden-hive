@@ -7,6 +7,7 @@ import { CreditCard, AlertCircle } from "lucide-react";
 // Checkout is now handled via API route
 import toast from "react-hot-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import Image from "next/image";
 
 interface InvoicePaymentPageClientProps {
   draftData: {
@@ -67,8 +68,11 @@ export default function InvoicePaymentPageClient({
       } else {
         toast.error("Failed to get checkout URL");
       }
-    } catch (error) {
-      toast.error("Failed to process payment");
+    } catch (error: unknown) {
+      console.error("Error processing payment:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to process payment"
+      );
     } finally {
       setLoading(false);
     }
@@ -114,8 +118,12 @@ export default function InvoicePaymentPageClient({
                     className="flex gap-4 items-start py-3 border-b"
                   >
                     {item.imageUrl && (
-                      <img 
-                        src={item.imageUrl} 
+                      <Image
+                        width={80}
+                        height={80}
+                        quality={100}
+                        priority
+                        src={item.imageUrl}
                         alt={item.productName}
                         className="w-20 h-20 object-cover rounded-md flex-shrink-0"
                       />
@@ -198,4 +206,3 @@ export default function InvoicePaymentPageClient({
     </div>
   );
 }
-

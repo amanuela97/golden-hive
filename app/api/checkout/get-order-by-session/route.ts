@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { orders, orderItems, orderPayments, listing, store } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { orders, orderItems, listing, store } from "@/db/schema";
+import { inArray } from "drizzle-orm";
 import { stripe } from "@/lib/stripe";
 
 export async function GET(req: NextRequest) {
@@ -47,10 +47,7 @@ export async function GET(req: NextRequest) {
       .where(inArray(orders.id, orderIdsToFetch));
 
     if (ordersData.length === 0) {
-      return NextResponse.json(
-        { error: "Orders not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Orders not found" }, { status: 404 });
     }
 
     // Get primary order (first one)
@@ -76,8 +73,11 @@ export async function GET(req: NextRequest) {
       .map((item) => item.listingId)
       .filter((id): id is string => !!id);
 
-    let listingMap = new Map<string, { slug: string | null; storeId: string | null }>();
-    let storeMap = new Map<string, { slug: string | null }>();
+    const listingMap = new Map<
+      string,
+      { slug: string | null; storeId: string | null }
+    >();
+    const storeMap = new Map<string, { slug: string | null }>();
 
     if (listingIds.length > 0) {
       const listings = await db
@@ -118,8 +118,12 @@ export async function GET(req: NextRequest) {
 
     // Format items with review links
     const formattedItems = items.map((item) => {
-      const listingInfo = item.listingId ? listingMap.get(item.listingId) : null;
-      const storeInfo = listingInfo?.storeId ? storeMap.get(listingInfo.storeId) : null;
+      const listingInfo = item.listingId
+        ? listingMap.get(item.listingId)
+        : null;
+      const storeInfo = listingInfo?.storeId
+        ? storeMap.get(listingInfo.storeId)
+        : null;
       return {
         id: item.id,
         orderId: item.orderId, // Include orderId for each item (for multi-store orders)
@@ -159,4 +163,3 @@ export async function GET(req: NextRequest) {
     );
   }
 }
-

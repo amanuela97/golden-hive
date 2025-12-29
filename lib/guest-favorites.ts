@@ -129,7 +129,10 @@ export function removeGuestFavorite(
 /**
  * Check if an item is favorited
  */
-export function isGuestFavorite(type: "product" | "store", id: string): boolean {
+export function isGuestFavorite(
+  type: "product" | "store",
+  id: string
+): boolean {
   const favorites = getGuestFavorites();
   if (type === "product") {
     return favorites.products.some((f) => f.id === id);
@@ -160,4 +163,3 @@ export function getExpiryDate(): string {
     return "";
   }
 }
-

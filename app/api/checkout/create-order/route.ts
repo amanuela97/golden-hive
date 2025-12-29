@@ -73,7 +73,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Get storeId from line items (all items should be from the same store)
-    const listingIds = [...new Set(body.lineItems.map((item) => item.listingId))];
+    const listingIds = [
+      ...new Set(body.lineItems.map((item) => item.listingId)),
+    ];
     const listings = await db
       .select({ id: listing.id, storeId: listing.storeId })
       .from(listing)
@@ -89,9 +91,7 @@ export async function POST(req: NextRequest) {
     // Get unique store IDs
     const storeIds = [
       ...new Set(
-        listings
-          .map((l) => l.storeId)
-          .filter((id): id is string => id !== null)
+        listings.map((l) => l.storeId).filter((id): id is string => id !== null)
       ),
     ];
 
@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
     for (const item of body.lineItems) {
       const listing = listings.find((l) => l.id === item.listingId);
       if (!listing?.storeId) continue;
-      
+
       if (!itemsByStore.has(listing.storeId)) {
         itemsByStore.set(listing.storeId, []);
       }
@@ -127,9 +127,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const storesWithoutStripe = allStores.filter(
-      (s) => !s.stripeAccountId
-    );
+    const storesWithoutStripe = allStores.filter((s) => !s.stripeAccountId);
     if (storesWithoutStripe.length > 0) {
       return NextResponse.json(
         {
@@ -141,7 +139,11 @@ export async function POST(req: NextRequest) {
 
     // Create orders for each store in transaction
     return await db.transaction(async (tx) => {
-      const createdOrders: Array<{ orderId: string; orderNumber: string; storeId: string }> = [];
+      const createdOrders: Array<{
+        orderId: string;
+        orderNumber: string;
+        storeId: string;
+      }> = [];
 
       // Process each store separately
       for (const [storeId, storeLineItems] of itemsByStore.entries()) {
@@ -187,15 +189,22 @@ export async function POST(req: NextRequest) {
           (sum, item) => sum + parseFloat(item.unitPrice) * item.quantity,
           0
         );
-        
+
         // Calculate discount for this store's items based on item-level discounts
         // If item-level discount information is provided, use it; otherwise pro-rate
         let storeDiscount = 0;
-        if (body.lineItems.some((item) => item.discountAmount && parseFloat(item.discountAmount || "0") > 0)) {
+        if (
+          body.lineItems.some(
+            (item) =>
+              item.discountAmount && parseFloat(item.discountAmount || "0") > 0
+          )
+        ) {
           // Calculate discount from item-level discount amounts
           for (const item of storeLineItems) {
             const originalItem = body.lineItems.find(
-              (li) => li.listingId === item.listingId && li.variantId === item.variantId
+              (li) =>
+                li.listingId === item.listingId &&
+                li.variantId === item.variantId
             );
             if (originalItem?.discountAmount) {
               storeDiscount += parseFloat(originalItem.discountAmount);
@@ -207,18 +216,29 @@ export async function POST(req: NextRequest) {
             (sum, item) => sum + parseFloat(item.unitPrice) * item.quantity,
             0
           );
-          const storePercentage = totalSubtotal > 0 ? storeSubtotal / totalSubtotal : 1 / storeIds.length;
-          storeDiscount = parseFloat(body.discountAmount || "0") * storePercentage;
+          const storePercentage =
+            totalSubtotal > 0
+              ? storeSubtotal / totalSubtotal
+              : 1 / storeIds.length;
+          storeDiscount =
+            parseFloat(body.discountAmount || "0") * storePercentage;
         }
-        
+
         // Pro-rate shipping and tax based on store's subtotal percentage
         const totalSubtotal = body.lineItems.reduce(
           (sum, item) => sum + parseFloat(item.unitPrice) * item.quantity,
           0
         );
-        const storePercentage = totalSubtotal > 0 ? storeSubtotal / totalSubtotal : 1 / storeIds.length;
-        const storeShipping = (parseFloat(body.shippingAmount || "0") * storePercentage).toFixed(2);
-        const storeTax = (parseFloat(body.taxAmount || "0") * storePercentage).toFixed(2);
+        const storePercentage =
+          totalSubtotal > 0
+            ? storeSubtotal / totalSubtotal
+            : 1 / storeIds.length;
+        const storeShipping = (
+          parseFloat(body.shippingAmount || "0") * storePercentage
+        ).toFixed(2);
+        const storeTax = (
+          parseFloat(body.taxAmount || "0") * storePercentage
+        ).toFixed(2);
         const storeDiscountStr = storeDiscount.toFixed(2);
         const storeTotal = (
           storeSubtotal +
@@ -294,10 +314,11 @@ export async function POST(req: NextRequest) {
         // Collect unique discount IDs used by items in this store
         const storeDiscountIds = new Set<string>();
         let storeTotalDiscountAmount = 0;
-        
+
         for (const item of storeLineItems) {
           const originalItem = body.lineItems.find(
-            (li) => li.listingId === item.listingId && li.variantId === item.variantId
+            (li) =>
+              li.listingId === item.listingId && li.variantId === item.variantId
           );
           if (originalItem?.discountId && originalItem?.discountAmount) {
             const itemDiscountAmount = parseFloat(originalItem.discountAmount);
@@ -307,7 +328,7 @@ export async function POST(req: NextRequest) {
             }
           }
         }
-        
+
         // Create order discount records for each unique discount used
         // If multiple discounts are used, we'll create multiple orderDiscount records
         // But for now, we'll create one record with the total amount
@@ -368,16 +389,21 @@ export async function POST(req: NextRequest) {
             ? variants.find((v) => v.id === item.variantId)
             : null;
           const unitPrice = variant?.price || item.unitPrice;
-          const lineSubtotal = (parseFloat(unitPrice) * item.quantity).toFixed(2);
-          
+          const lineSubtotal = (parseFloat(unitPrice) * item.quantity).toFixed(
+            2
+          );
+
           // Get discount amount for this specific item
           const originalItem = body.lineItems.find(
-            (li) => li.listingId === item.listingId && li.variantId === item.variantId
+            (li) =>
+              li.listingId === item.listingId && li.variantId === item.variantId
           );
-          const itemDiscountAmount = originalItem?.discountAmount 
-            ? parseFloat(originalItem.discountAmount) 
+          const itemDiscountAmount = originalItem?.discountAmount
+            ? parseFloat(originalItem.discountAmount)
             : 0;
-          const lineTotal = (parseFloat(lineSubtotal) - itemDiscountAmount).toFixed(2);
+          const lineTotal = (
+            parseFloat(lineSubtotal) - itemDiscountAmount
+          ).toFixed(2);
 
           await tx.insert(orderItems).values({
             orderId: orderId,
@@ -431,12 +457,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to create order",
+          error instanceof Error ? error.message : "Failed to create order",
       },
       { status: 500 }
     );
   }
 }
-

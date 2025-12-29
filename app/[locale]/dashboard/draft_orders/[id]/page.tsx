@@ -165,7 +165,7 @@ export default async function DraftOrderPage({ params }: DraftOrderPageProps) {
     <DashboardWrapper userRole={roleName}>
       <DraftOrderPageClient
         draftId={draftId}
-        draftNumber={draftData.draftNumber}
+        draftNumber={Number(draftData.draftNumber)}
         customerEmail={draftData.customerEmail}
         userRole={roleName}
         initialData={initialData}

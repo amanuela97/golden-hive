@@ -31,7 +31,9 @@ export function DashboardHome({ userRole, stats }: DashboardHomeProps) {
       </div>
 
       {/* Setup Todo List - Only show for admin and seller */}
-      {(userRole === "admin" || userRole === "seller") && <DashboardSetupTodo />}
+      {(userRole === "admin" || userRole === "seller") && (
+        <DashboardSetupTodo />
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

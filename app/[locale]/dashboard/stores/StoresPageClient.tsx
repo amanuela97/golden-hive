@@ -44,8 +44,10 @@ export default function StoresPageClient({
           isApproved: filterApproved,
         });
         setStores(result);
-      } catch (error) {
-        toast.error("Failed to fetch stores");
+      } catch (error: unknown) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to fetch stores"
+        );
       } finally {
         setLoading(false);
       }
@@ -83,8 +85,10 @@ export default function StoresPageClient({
       } else {
         toast.error(result.error || "Failed to update approval");
       }
-    } catch (error) {
-      toast.error("Failed to update approval");
+    } catch (error: unknown) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update approval"
+      );
     } finally {
       setUpdatingIds((prev) => {
         const next = new Set(prev);

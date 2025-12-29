@@ -49,7 +49,6 @@ export default function OrderConfirmationEmail({
   currency,
   paymentStatus,
   orderStatus,
-  fulfillmentStatus = "unfulfilled",
   shippingAddress,
   orderUrl,
 }: OrderConfirmationEmailProps) {
@@ -81,10 +80,12 @@ export default function OrderConfirmationEmail({
       </div>
 
       <div style={{ marginBottom: "30px" }}>
-        <p style={{ color: "#333", margin: "0 0 10px 0" }}>Dear {customerName},</p>
+        <p style={{ color: "#333", margin: "0 0 10px 0" }}>
+          Dear {customerName},
+        </p>
         <p style={{ color: "#666", lineHeight: "1.6" }}>
-          We've received your order and are processing it now. You'll receive
-          another email when your order ships.
+          We&apos;ve received your order and are processing it now. You&apos;ll
+          receive another email when your order ships.
         </p>
       </div>
 
@@ -186,94 +187,95 @@ export default function OrderConfirmationEmail({
           </thead>
           <tbody>
             {items.map((item, idx) => {
-              const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+              const baseUrl =
+                process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
               // Use item's orderId if available (for multi-store orders), otherwise fall back to main orderId
               const itemOrderId = item.orderId || orderId;
               const reviewUrl = item.listingId
                 ? `${baseUrl}/review?order=${itemOrderId}&product=${item.listingId}`
                 : null;
-              
+
               return (
-              <tr key={idx}>
-                <td
-                  style={{
-                    padding: "12px",
-                    border: "1px solid #ddd",
-                    fontSize: "14px",
-                  }}
-                >
-                  <div>{item.title}</div>
-                  {item.sku && (
-                    <div
-                      style={{
-                        fontSize: "12px",
-                        color: "#666",
-                        marginTop: "4px",
-                      }}
-                    >
-                      SKU: {item.sku}
-                    </div>
-                  )}
-                </td>
-                <td
-                  style={{
-                    padding: "12px",
-                    textAlign: "center",
-                    border: "1px solid #ddd",
-                    fontSize: "14px",
-                  }}
-                >
-                  {item.quantity}
-                </td>
-                <td
-                  style={{
-                    padding: "12px",
-                    textAlign: "right",
-                    border: "1px solid #ddd",
-                    fontSize: "14px",
-                  }}
-                >
-                  {formatCurrency(item.unitPrice)}
-                </td>
-                <td
-                  style={{
-                    padding: "12px",
-                    textAlign: "right",
-                    border: "1px solid #ddd",
-                    fontSize: "14px",
-                    fontWeight: "bold",
-                  }}
-                >
-                  {formatCurrency(item.lineTotal)}
-                </td>
-                <td
-                  style={{
-                    padding: "12px",
-                    textAlign: "center",
-                    border: "1px solid #ddd",
-                    fontSize: "14px",
-                  }}
-                >
-                  {reviewUrl && paymentStatus === "paid" ? (
-                    <a
-                      href={reviewUrl}
-                      style={{
-                        color: "#007bff",
-                        textDecoration: "none",
-                        fontSize: "12px",
-                        fontWeight: "bold",
-                      }}
-                    >
-                      ⭐ Review
-                    </a>
-                  ) : (
-                    <span style={{ color: "#999", fontSize: "12px" }}>
-                      {paymentStatus === "paid" ? "—" : "After payment"}
-                    </span>
-                  )}
-                </td>
-              </tr>
-            );
+                <tr key={idx}>
+                  <td
+                    style={{
+                      padding: "12px",
+                      border: "1px solid #ddd",
+                      fontSize: "14px",
+                    }}
+                  >
+                    <div>{item.title}</div>
+                    {item.sku && (
+                      <div
+                        style={{
+                          fontSize: "12px",
+                          color: "#666",
+                          marginTop: "4px",
+                        }}
+                      >
+                        SKU: {item.sku}
+                      </div>
+                    )}
+                  </td>
+                  <td
+                    style={{
+                      padding: "12px",
+                      textAlign: "center",
+                      border: "1px solid #ddd",
+                      fontSize: "14px",
+                    }}
+                  >
+                    {item.quantity}
+                  </td>
+                  <td
+                    style={{
+                      padding: "12px",
+                      textAlign: "right",
+                      border: "1px solid #ddd",
+                      fontSize: "14px",
+                    }}
+                  >
+                    {formatCurrency(item.unitPrice)}
+                  </td>
+                  <td
+                    style={{
+                      padding: "12px",
+                      textAlign: "right",
+                      border: "1px solid #ddd",
+                      fontSize: "14px",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {formatCurrency(item.lineTotal)}
+                  </td>
+                  <td
+                    style={{
+                      padding: "12px",
+                      textAlign: "center",
+                      border: "1px solid #ddd",
+                      fontSize: "14px",
+                    }}
+                  >
+                    {reviewUrl && paymentStatus === "paid" ? (
+                      <a
+                        href={reviewUrl}
+                        style={{
+                          color: "#007bff",
+                          textDecoration: "none",
+                          fontSize: "12px",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        ⭐ Review
+                      </a>
+                    ) : (
+                      <span style={{ color: "#999", fontSize: "12px" }}>
+                        {paymentStatus === "paid" ? "—" : "After payment"}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
             })}
           </tbody>
         </table>
@@ -463,13 +465,15 @@ export default function OrderConfirmationEmail({
             ⭐ How was your experience?
           </h2>
           <p style={{ color: "#666", marginBottom: "15px", fontSize: "14px" }}>
-            We&apos;d love to hear your feedback! Leave a review for your purchase.
+            We&apos;d love to hear your feedback! Leave a review for your
+            purchase.
           </p>
           {items
             .filter((item) => item.listingId)
             .slice(0, 3)
             .map((item, idx) => {
-              const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+              const baseUrl =
+                process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
               // Use item's orderId if available (for multi-store orders), otherwise fall back to main orderId
               const itemOrderId = item.orderId || orderId;
               const reviewUrl = `${baseUrl}/review?order=${itemOrderId}&product=${item.listingId}`;
@@ -489,7 +493,10 @@ export default function OrderConfirmationEmail({
                     fontSize: "14px",
                   }}
                 >
-                  Review {item.title.length > 20 ? `${item.title.substring(0, 20)}...` : item.title}
+                  Review{" "}
+                  {item.title.length > 20
+                    ? `${item.title.substring(0, 20)}...`
+                    : item.title}
                 </a>
               );
             })}
@@ -543,4 +550,3 @@ export default function OrderConfirmationEmail({
     </div>
   );
 }
-

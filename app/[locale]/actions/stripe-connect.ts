@@ -48,7 +48,9 @@ export async function checkStripePaymentReadiness(): Promise<{
     }
 
     // Retrieve account from Stripe
-    const account = await stripe.accounts.retrieve(storeData[0].stripeAccountId);
+    const account = await stripe.accounts.retrieve(
+      storeData[0].stripeAccountId
+    );
 
     const chargesEnabled = account.charges_enabled || false;
     const payoutsEnabled = account.payouts_enabled || false;
@@ -60,7 +62,8 @@ export async function checkStripePaymentReadiness(): Promise<{
       .set({
         stripeChargesEnabled: chargesEnabled,
         stripePayoutsEnabled: payoutsEnabled,
-        stripeOnboardingComplete: detailsSubmitted && chargesEnabled && payoutsEnabled,
+        stripeOnboardingComplete:
+          detailsSubmitted && chargesEnabled && payoutsEnabled,
         updatedAt: new Date(),
       })
       .where(eq(store.id, storeId));
@@ -78,7 +81,10 @@ export async function checkStripePaymentReadiness(): Promise<{
       chargesEnabled: false,
       payoutsEnabled: false,
       detailsSubmitted: false,
-      error: error instanceof Error ? error.message : "Failed to check payment readiness",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to check payment readiness",
     };
   }
 }
@@ -152,7 +158,10 @@ export async function createStripeAccountAndOnboarding(): Promise<{
     console.error("Error creating Stripe account:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to create Stripe account",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to create Stripe account",
     };
   }
 }
@@ -205,7 +214,10 @@ export async function generateOnboardingLink(): Promise<{
     console.error("Error generating onboarding link:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to generate onboarding link",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to generate onboarding link",
     };
   }
 }
@@ -243,7 +255,9 @@ export async function createStripeDashboardLink(): Promise<{
       };
     }
 
-    const loginLink = await stripe.accounts.createLoginLink(storeData[0].stripeAccountId);
+    const loginLink = await stripe.accounts.createLoginLink(
+      storeData[0].stripeAccountId
+    );
 
     return {
       success: true,
@@ -253,8 +267,10 @@ export async function createStripeDashboardLink(): Promise<{
     console.error("Error creating Stripe dashboard link:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to create dashboard link",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to create dashboard link",
     };
   }
 }
-

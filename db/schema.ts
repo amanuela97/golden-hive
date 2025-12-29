@@ -106,6 +106,7 @@ export const storeVisibilityEnum = pgEnum("store_visibility", [
   "hidden",
 ]);
 
+// @ts-expect-error - Circular reference with markets table (resolved at runtime by Drizzle)
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -117,6 +118,7 @@ export const user = pgTable("user", {
   city: text("city"),
   country: text("country"),
   image: text("image"),
+  // @ts-expect-error - Circular reference with markets table (resolved at runtime by Drizzle)
   marketId: uuid("market_id").references(() => markets.id, {
     onDelete: "set null",
   }),
@@ -313,65 +315,73 @@ export const sellerDocumentation = pgTable(
 // LISTING (Base table in English)
 //////////////////////////////////////////////////////////
 
-export const listing = pgTable("listing", {
-  id: uuid("id").primaryKey(), // unique listing ID
-  producerId: text("producer_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
+export const listing = pgTable(
+  "listing",
+  {
+    id: uuid("id").primaryKey(), // unique listing ID
+    producerId: text("producer_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
 
-  // Basic product info
-  name: text("name").notNull(), // e.g. "Himalayan Mad Honey"
-  description: text("description"),
-  // Slug fields for SEO-friendly URLs
-  slug: text("slug").notNull(),
-  slugLower: text("slug_lower").notNull(),
-  storeId: uuid("store_id")
-    .references(() => store.id, {
-      onDelete: "set null",
-    })
-    .notNull(), // Reference to store table
-  categoryRuleId: uuid("category_rule_id").references(() => categoryRules.id, {
-    onDelete: "set null",
-  }), // Optional - only required if category has documentation rules
-  taxonomyCategoryId: text("taxonomy_category_id"), // Taxonomy category ID from JSON file
-  taxonomyCategoryName: text("taxonomy_category_name"), // Short name (e.g., "Honey") for display
-  imageUrl: text("image_url"),
-  gallery: text("gallery").array(),
-  tags: text("tags").array(),
+    // Basic product info
+    name: text("name").notNull(), // e.g. "Himalayan Mad Honey"
+    description: text("description"),
+    // Slug fields for SEO-friendly URLs
+    slug: text("slug").notNull(),
+    slugLower: text("slug_lower").notNull(),
+    storeId: uuid("store_id")
+      .references(() => store.id, {
+        onDelete: "set null",
+      })
+      .notNull(), // Reference to store table
+    categoryRuleId: uuid("category_rule_id").references(
+      () => categoryRules.id,
+      {
+        onDelete: "set null",
+      }
+    ), // Optional - only required if category has documentation rules
+    taxonomyCategoryId: text("taxonomy_category_id"), // Taxonomy category ID from JSON file
+    taxonomyCategoryName: text("taxonomy_category_name"), // Short name (e.g., "Honey") for display
+    imageUrl: text("image_url"),
+    gallery: text("gallery").array(),
+    tags: text("tags").array(),
 
-  // Pricing
-  price: numeric("price", { precision: 10, scale: 2 }).notNull(),
-  compareAtPrice: numeric("compare_at_price", {
-    precision: 10,
-    scale: 2,
-  }), // Optional compare-at price
-  currency: text("currency").default("NPR").notNull(),
-  unit: text("unit").default("kg"),
+    // Pricing
+    price: numeric("price", { precision: 10, scale: 2 }).notNull(),
+    compareAtPrice: numeric("compare_at_price", {
+      precision: 10,
+      scale: 2,
+    }), // Optional compare-at price
+    currency: text("currency").default("NPR").notNull(),
+    unit: text("unit").default("kg"),
 
-  // Status & visibility (Shopify-style)
-  status: listingStatusEnum("status").default("draft"),
-  isFeatured: boolean("is_featured").default(false),
-  marketType: marketTypeEnum("market_type").default("local"),
+    // Status & visibility (Shopify-style)
+    status: listingStatusEnum("status").default("draft"),
+    isFeatured: boolean("is_featured").default(false),
+    marketType: marketTypeEnum("market_type").default("local"),
 
-  // Published at (when it became active)
-  publishedAt: timestamp("published_at"),
+    // Published at (when it became active)
+    publishedAt: timestamp("published_at"),
 
-  // Timestamps
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    // Timestamps
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
 
-  // Optional metadata
-  ratingAverage: numeric("rating_average", { precision: 3, scale: 2 }).default(
-    "0"
-  ),
-  ratingCount: integer("rating_count").default(0),
-  salesCount: integer("sales_count").default(0),
-  originVillage: text("origin_village"),
-  harvestDate: timestamp("harvest_date"),
-}, (t) => [
-  uniqueIndex("listing_slug_lower_unique").on(t.slugLower),
-  index("listing_slug_idx").on(t.slug),
-]);
+    // Optional metadata
+    ratingAverage: numeric("rating_average", {
+      precision: 3,
+      scale: 2,
+    }).default("0"),
+    ratingCount: integer("rating_count").default(0),
+    salesCount: integer("sales_count").default(0),
+    originVillage: text("origin_village"),
+    harvestDate: timestamp("harvest_date"),
+  },
+  (t) => [
+    uniqueIndex("listing_slug_lower_unique").on(t.slugLower),
+    index("listing_slug_idx").on(t.slug),
+  ]
+);
 
 //////////////////////////////////////////////////////////
 // LISTING TRANSLATIONS TABLE
@@ -398,6 +408,7 @@ export const listingTranslations = pgTable("listing_translations", {
 // ===================================
 // MARKETS
 // ===================================
+// @ts-expect-error - Circular reference with user table (resolved at runtime by Drizzle)
 export const markets = pgTable("markets", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(), // "Europe", "United States"
@@ -409,6 +420,7 @@ export const markets = pgTable("markets", {
   roundingRule: text("rounding_rule").default("none"), // "none" | "0.99" | "nearest_0.05"
   status: marketStatusEnum("status").default("active").notNull(),
   isDefault: boolean("is_default").default(false).notNull(),
+  // @ts-expect-error - Circular reference with user table (resolved at runtime by Drizzle)
   createdBy: text("created_by").references(() => user.id, {
     onDelete: "set null",
   }), // User who created this market

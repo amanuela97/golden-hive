@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useDebounce } from "@/hooks/useDebounce";
-import { searchAll, SearchResult } from "../actions/search";
+import { searchAll, SearchResult } from "@/app/[locale]/actions/search";
 import { Search, Package, Store, Tag, Loader2 } from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
@@ -100,7 +100,8 @@ export function SearchSuggestions({
 
     if (isOpen) {
       document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
+      return () =>
+        document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [isOpen, onClose]);
 
@@ -134,7 +135,7 @@ export function SearchSuggestions({
   const stores = suggestions.filter((s) => s.type === "store");
   const categories = suggestions.filter((s) => s.type === "category");
 
-  if (!isOpen || (!debouncedQuery.trim() || debouncedQuery.length < 2)) {
+  if (!isOpen || !debouncedQuery.trim() || debouncedQuery.length < 2) {
     return null;
   }
 
@@ -212,7 +213,7 @@ export function SearchSuggestions({
               <div className="px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Products
               </div>
-              {products.map((product, idx) => {
+              {products.map((product) => {
                 const globalIndex = suggestions.indexOf(product);
                 return renderSuggestion(
                   product,
@@ -228,7 +229,7 @@ export function SearchSuggestions({
               <div className="px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Stores
               </div>
-              {stores.map((store, idx) => {
+              {stores.map((store) => {
                 const globalIndex = suggestions.indexOf(store);
                 return renderSuggestion(
                   store,
@@ -244,7 +245,7 @@ export function SearchSuggestions({
               <div className="px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Categories
               </div>
-              {categories.map((category, idx) => {
+              {categories.map((category) => {
                 const globalIndex = suggestions.indexOf(category);
                 return renderSuggestion(
                   category,
@@ -273,4 +274,3 @@ export function SearchSuggestions({
     </div>
   );
 }
-

@@ -1024,7 +1024,7 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
     // For admins, we need to group orders by checkout session to show unified orders
     // For stores, show individual orders (they only see their portion anyway)
     let totalCount: number;
-    
+
     if (isAdmin) {
       // Group orders by checkout session ID for admins
       // Get distinct checkout session IDs (or order IDs if no session)
@@ -1046,7 +1046,7 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
         );
 
       const sessionResult = await sessionQuery;
-      
+
       // Group by session ID (or use order ID if no session)
       const uniqueSessions = new Set<string>();
       for (const row of sessionResult) {
@@ -1109,7 +1109,7 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
       itemsCountExpression = sql<number>`COUNT(${orderItems.id})::int`;
     }
 
-    let data: any[];
+    let data: OrderRow[];
 
     if (isAdmin) {
       // For admins: Group orders by checkout session ID
@@ -1229,14 +1229,16 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
           ? "paid"
           : paymentStatuses.includes("failed")
             ? "failed"
-          : paymentStatuses.includes("refunded")
-            ? "refunded"
-            : "pending";
+            : paymentStatuses.includes("refunded")
+              ? "refunded"
+              : "pending";
         const overallFulfillmentStatus = fulfillmentStatuses.every(
           (s) => s === "fulfilled"
         )
           ? "fulfilled"
-          : fulfillmentStatuses.some((s) => s === "fulfilled" || s === "partial")
+          : fulfillmentStatuses.some(
+                (s) => s === "fulfilled" || s === "partial"
+              )
             ? "partial"
             : "unfulfilled";
 
@@ -1329,10 +1331,18 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
       success: true,
       data: data.map((row) => {
         // Derive warning flags
+        // Access shipping fields directly from row (they exist in the query result but not in OrderRow type)
+        const shippingAddressLine1 = (
+          row as unknown as { shippingAddressLine1?: string | null }
+        ).shippingAddressLine1;
+        const shippingCity = (
+          row as unknown as { shippingCity?: string | null }
+        ).shippingCity;
+        const shippingCountry = (
+          row as unknown as { shippingCountry?: string | null }
+        ).shippingCountry;
         const hasAddressWarning =
-          !row.shippingAddressLine1 ||
-          !row.shippingCity ||
-          !row.shippingCountry;
+          !shippingAddressLine1 || !shippingCity || !shippingCountry;
         const hasRiskWarning = false; // TODO: Implement risk detection logic
 
         return {
@@ -2556,6 +2566,7 @@ type OrderWithItems = Order & {
     Pick<
       OrderItem,
       | "id"
+      | "listingId"
       | "title"
       | "sku"
       | "quantity"
@@ -2566,6 +2577,7 @@ type OrderWithItems = Order & {
       | "currency"
     > & {
       imageUrl: string | null;
+      listingSlug: string | null;
       refundableQuantity: number; // Remaining quantity that can be refunded
     }
   >;
@@ -2761,6 +2773,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
           const refundableQty = Math.max(0, item.quantity - refundedQty);
           return {
             id: item.id,
+            listingId: item.listingId,
             title: item.title,
             sku: item.sku,
             quantity: item.quantity,
@@ -2770,6 +2783,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
             lineTotal: item.lineTotal,
             currency: item.currency,
             imageUrl: item.variantImageUrl || item.listingImageUrl || null,
+            listingSlug: item.listingSlug,
             refundableQuantity: refundableQty,
           };
         }),
@@ -3264,7 +3278,7 @@ export async function cancelOrder(input: {
           to: order.customerEmail!,
           subject: `Order #${order.orderNumber} Cancellation`,
           react: OrderCancellationEmail({
-            orderNumber: order.orderNumber,
+            orderNumber: Number(order.orderNumber),
             customerName,
             customerEmail: order.customerEmail!,
             cancellationReason: input.cancellationReason,
@@ -3535,7 +3549,7 @@ export async function sendInvoiceForOrder(input: {
       subject: `Invoice ${invoiceNumber || `#${order.orderNumber}`} - Payment Required`,
       react: OrderInvoiceEmail({
         invoiceNumber: invoiceNumber || "",
-        orderNumber: order.orderNumber,
+        orderNumber: Number(order.orderNumber),
         customerName,
         totalAmount: order.totalAmount,
         currency: order.currency,
@@ -3734,7 +3748,7 @@ export async function sendInvoicePdfForOrder(input: {
       subject: `Invoice ${invoiceNumber || `#${order.orderNumber}`} - ${order.customerEmail}`,
       react: OrderInvoicePdfEmail({
         invoiceNumber: invoiceNumber || `#${order.orderNumber}`,
-        orderNumber: order.orderNumber,
+        orderNumber: Number(order.orderNumber),
         customerName,
         totalAmount: order.totalAmount,
         currency: order.currency,
@@ -5037,7 +5051,7 @@ export async function processRefund(input: {
           to: order.customerEmail,
           subject: `Refund Processed - Order #${order.orderNumber}`,
           react: RefundConfirmationEmail({
-            orderNumber: order.orderNumber,
+            orderNumber: Number(order.orderNumber),
             invoiceNumber: order.invoiceNumber,
             customerName,
             refundAmount: refundAmount.toString(),

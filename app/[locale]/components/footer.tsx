@@ -72,6 +72,8 @@ export function Footer() {
             <ul className="space-y-2 text-sm">
               <li>
                 <Link
+                  target="_blank"
+                  rel="noopener noreferrer"
                   href="/about"
                   className="hover:text-white transition-colors"
                 >
@@ -80,6 +82,8 @@ export function Footer() {
               </li>
               <li>
                 <Link
+                  target="_blank"
+                  rel="noopener noreferrer"
                   href="/faq"
                   className="hover:text-white transition-colors"
                 >

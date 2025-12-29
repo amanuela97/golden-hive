@@ -44,7 +44,8 @@ export async function createProductAction(data: CreateListingData) {
     if (!isAdmin && !storeId) {
       return {
         success: false,
-        error: "Store not found. Please set up your store first in Settings > Store to add products.",
+        error:
+          "Store not found. Please set up your store first in Settings > Store to add products.",
       };
     }
 
@@ -221,8 +222,6 @@ export async function toggleProductStatusAction(id: string) {
 
 export async function toggleProductFeaturedAction(id: string) {
   try {
-    const user = await getCurrentUser();
-
     // Only admins can toggle featured status
     const session = await auth.api.getSession({
       headers: await headers(),
@@ -249,7 +248,10 @@ export async function toggleProductFeaturedAction(id: string) {
     const roleName = userRole[0].roleName.toLowerCase();
 
     if (roleName !== "admin") {
-      return { success: false, error: "Only admins can toggle featured status" };
+      return {
+        success: false,
+        error: "Only admins can toggle featured status",
+      };
     }
 
     // Verify the product exists
@@ -501,21 +503,30 @@ export async function importListingsFromCSVAction(csvContent: string) {
 
         // Use the existing createListing function to handle proper type conversion
         const { createListing } = await import("@/lib/listing");
+        // Generate slug from name if not provided
+        const nameStr = String(listingData.name || "");
+        const slug =
+          (listingData.slug as string | undefined) ||
+          nameStr
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/(^-|-$)/g, "");
         const newListing = await createListing({
-          name: listingData.name as string,
+          name: nameStr,
+          slug: slug,
           description: listingData.description as string,
-          category: listingData.category as string,
+          taxonomyCategoryId: listingData.category as string, // CSV uses 'category' but API expects 'taxonomyCategoryId'
           price: parseFloat(listingData.price as string),
           currency: listingData.currency as string,
-          stockQuantity: listingData.stockQuantity as number,
           unit: listingData.unit as string,
           producerId: user.id,
-          isActive: listingData.isActive as boolean,
+          status: listingData.isActive ? "active" : "draft", // Map isActive to status
           isFeatured: listingData.isFeatured as boolean,
           originVillage: listingData.originVillage as string,
           harvestDate: listingData.harvestDate as Date,
           imageUrl: listingData.imageUrl as string,
           gallery: listingData.gallery as string[],
+          tracksInventory: listingData.stockQuantity ? true : false, // Map stockQuantity to tracksInventory
         });
         importedListings.push(newListing);
       } catch (error) {

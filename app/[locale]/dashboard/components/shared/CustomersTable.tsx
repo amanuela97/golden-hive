@@ -89,9 +89,7 @@ export function CustomersTable({ data, onDataChange }: CustomersTableProps) {
         cell: ({ row }) => {
           const amount = parseFloat(row.original.totalSpent || "0");
           return (
-            <span className="text-sm font-medium">
-              {amount.toFixed(2)}
-            </span>
+            <span className="text-sm font-medium">{amount.toFixed(2)}</span>
           );
         },
       },
@@ -223,7 +221,11 @@ export function CustomersTable({ data, onDataChange }: CustomersTableProps) {
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          Showing {table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1} to{" "}
+          Showing{" "}
+          {table.getState().pagination.pageIndex *
+            table.getState().pagination.pageSize +
+            1}{" "}
+          to{" "}
           {Math.min(
             (table.getState().pagination.pageIndex + 1) *
               table.getState().pagination.pageSize,
@@ -255,4 +257,3 @@ export function CustomersTable({ data, onDataChange }: CustomersTableProps) {
     </div>
   );
 }
-

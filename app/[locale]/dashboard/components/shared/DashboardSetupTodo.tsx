@@ -58,15 +58,22 @@ export function DashboardSetupTodo() {
 
   // Show if anything is missing
   const storeComplete = status.hasStore;
-  const stripeComplete = status.hasStripeAccount && status.stripeChargesEnabled && status.stripePayoutsEnabled;
-  
+  const stripeComplete =
+    status.hasStripeAccount &&
+    status.stripeChargesEnabled &&
+    status.stripePayoutsEnabled;
+
   // Don't show if everything is set up
   if (storeComplete && stripeComplete) {
     console.log("DashboardSetupTodo - Everything is set up, hiding component");
     return null;
   }
-  
-  console.log("DashboardSetupTodo - Showing component", { storeComplete, stripeComplete, status });
+
+  console.log("DashboardSetupTodo - Showing component", {
+    storeComplete,
+    stripeComplete,
+    status,
+  });
 
   return (
     <Card className="p-6 mb-6">
@@ -81,7 +88,11 @@ export function DashboardSetupTodo() {
           <div className="flex-1">
             <Link
               href="/dashboard/settings/store"
-              className={storeComplete ? "text-green-600" : "text-gray-700 hover:text-gray-900"}
+              className={
+                storeComplete
+                  ? "text-green-600"
+                  : "text-gray-700 hover:text-gray-900"
+              }
             >
               <div className="flex items-center gap-2">
                 <Store className="w-4 h-4" />
@@ -89,7 +100,9 @@ export function DashboardSetupTodo() {
               </div>
             </Link>
             {!storeComplete && (
-              <p className="text-sm text-gray-500 ml-6">Required to add products and start selling</p>
+              <p className="text-sm text-gray-500 ml-6">
+                Required to add products and start selling
+              </p>
             )}
           </div>
         </div>
@@ -102,7 +115,11 @@ export function DashboardSetupTodo() {
           <div className="flex-1">
             <Link
               href="/dashboard/settings/payments"
-              className={stripeComplete ? "text-green-600" : "text-gray-700 hover:text-gray-900"}
+              className={
+                stripeComplete
+                  ? "text-green-600"
+                  : "text-gray-700 hover:text-gray-900"
+              }
             >
               <div className="flex items-center gap-2">
                 <CreditCard className="w-4 h-4" />
@@ -110,7 +127,9 @@ export function DashboardSetupTodo() {
               </div>
             </Link>
             {!stripeComplete && (
-              <p className="text-sm text-gray-500 ml-6">Required to sell products and get paid</p>
+              <p className="text-sm text-gray-500 ml-6">
+                Required to sell products and get paid
+              </p>
             )}
           </div>
         </div>
@@ -118,4 +137,3 @@ export function DashboardSetupTodo() {
     </Card>
   );
 }
-

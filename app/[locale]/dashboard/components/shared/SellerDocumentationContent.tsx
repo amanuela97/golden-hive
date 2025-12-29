@@ -2,14 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   getDocumentationTypesWithStatus,
   uploadSellerDocumentation,
 } from "../../../actions/documentation";
-import { CheckCircle, XCircle, Clock, Upload, FileText } from "lucide-react";
+import { CheckCircle, XCircle, Clock, FileText } from "lucide-react";
 import toast from "react-hot-toast";
 import { Badge } from "@/components/ui/badge";
 
@@ -184,7 +183,8 @@ export default function SellerDocumentationContent({
                     </a>
                     {docType.submittedAt && (
                       <p className="text-xs text-muted-foreground mt-1">
-                        Submitted: {new Date(docType.submittedAt).toLocaleDateString()}
+                        Submitted:{" "}
+                        {new Date(docType.submittedAt).toLocaleDateString()}
                       </p>
                     )}
                   </div>
@@ -192,7 +192,8 @@ export default function SellerDocumentationContent({
 
                 <div>
                   <Label htmlFor={`file-${docType.id}`}>
-                    {docType.status === "not_uploaded" ? "Upload" : "Replace"} Document
+                    {docType.status === "not_uploaded" ? "Upload" : "Replace"}{" "}
+                    Document
                   </Label>
                   <div className="flex items-center gap-2 mt-2">
                     <Input
@@ -200,7 +201,10 @@ export default function SellerDocumentationContent({
                       type="file"
                       accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
                       onChange={(e) =>
-                        handleFileUpload(docType.id, e.target.files?.[0] || null)
+                        handleFileUpload(
+                          docType.id,
+                          e.target.files?.[0] || null
+                        )
                       }
                       disabled={uploading === docType.id}
                     />
@@ -225,4 +229,3 @@ export default function SellerDocumentationContent({
     </div>
   );
 }
-

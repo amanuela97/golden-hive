@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/db";
-import { storeMembers, store, user, roles, userRoles } from "@/db/schema";
-import { eq, and, or } from "drizzle-orm";
+import { storeMembers, store, roles, userRoles } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
@@ -162,11 +162,13 @@ export async function getAllStores(): Promise<{
       return { success: false, error: "Only admins can view all stores" };
     }
 
-    const stores = await db.select({
-      id: store.id,
-      storeName: store.storeName,
-      logoUrl: store.logoUrl,
-    }).from(store);
+    const stores = await db
+      .select({
+        id: store.id,
+        storeName: store.storeName,
+        logoUrl: store.logoUrl,
+      })
+      .from(store);
 
     return {
       success: true,
@@ -214,4 +216,3 @@ export async function userHasStore(): Promise<{
     return { hasStore: false };
   }
 }
-

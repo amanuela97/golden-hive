@@ -61,10 +61,14 @@ export function TaxonomyCategorySelector({
     if (!newQuery && value) {
       onChange("");
     }
-    
+
     // If user is typing and the query matches the selected category's display label,
     // don't clear it - let them search
-    if (newQuery && selectedCategory?.displayLabel && newQuery === selectedCategory.displayLabel) {
+    if (
+      newQuery &&
+      selectedCategory?.displayLabel &&
+      newQuery === selectedCategory.displayLabel
+    ) {
       // User is starting to type - clear the selection to allow new search
       if (newQuery.length < selectedCategory.displayLabel.length) {
         onChange("");
@@ -72,7 +76,7 @@ export function TaxonomyCategorySelector({
     }
   };
 
-  const handleSelectCategory = (categoryId: string, categoryLabel: string) => {
+  const handleSelectCategory = (categoryId: string) => {
     onChange(categoryId);
     // Clear search query when selecting - the input will show the selected category's display label
     setSearchQuery("");
@@ -118,8 +122,8 @@ export function TaxonomyCategorySelector({
           id="taxonomy-category-selector"
           type="text"
           value={
-            searchQuery !== "" 
-              ? searchQuery 
+            searchQuery !== ""
+              ? searchQuery
               : selectedCategory?.displayLabel || ""
           }
           onChange={handleInputChange}
@@ -140,9 +144,7 @@ export function TaxonomyCategorySelector({
               <button
                 key={category.value}
                 type="button"
-                onClick={() =>
-                  handleSelectCategory(category.value, category.label)
-                }
+                onClick={() => handleSelectCategory(category.value)}
                 className="w-full text-left px-4 py-2 hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
               >
                 <div className="text-sm">{category.label}</div>

@@ -20,8 +20,9 @@ interface CategoryProductsClientProps {
 function buildBreadcrumbs(
   category: CategoryProductsClientProps["category"]
 ): Array<{ name: string; id: string; isCurrent: boolean }> {
-  const breadcrumbs: Array<{ name: string; id: string; isCurrent: boolean }> = [];
-  
+  const breadcrumbs: Array<{ name: string; id: string; isCurrent: boolean }> =
+    [];
+
   // Add all ancestors
   if (category.ancestors && category.ancestors.length > 0) {
     for (const ancestor of category.ancestors) {
@@ -32,14 +33,14 @@ function buildBreadcrumbs(
       });
     }
   }
-  
+
   // Add current category
   breadcrumbs.push({
     name: category.name,
     id: category.id,
     isCurrent: true,
   });
-  
+
   return breadcrumbs;
 }
 
@@ -54,11 +55,13 @@ function buildCategoryUrl(
     // Fallback: just use the category name
     return `/c/${slugify(categoryName)}?id=${encodeURIComponent(categoryId)}`;
   }
-  
+
   // Split full_name and build path up to the ancestor's position
   const parts = fullName.split(" > ");
-  const pathParts = parts.slice(0, ancestorIndex + 1).map((part) => slugify(part));
-  
+  const pathParts = parts
+    .slice(0, ancestorIndex + 1)
+    .map((part) => slugify(part));
+
   return `/c/${pathParts.join("/")}?id=${encodeURIComponent(categoryId)}`;
 }
 
@@ -86,7 +89,9 @@ export function CategoryProductsClient({
         <nav className="flex items-center gap-2 text-sm flex-wrap">
           {breadcrumbs.map((crumb, index) => (
             <div key={index} className="flex items-center gap-2">
-              {index > 0 && <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+              {index > 0 && (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              )}
               {crumb.isCurrent ? (
                 <span className="text-muted-foreground">{crumb.name}</span>
               ) : (

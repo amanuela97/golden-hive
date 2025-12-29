@@ -2,13 +2,13 @@
 
 import { db } from "@/db";
 import { orders, orderEvents, orderItems, listing } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
 /**
  * Update workflow status (operational flags, per inst.md)
- * 
+ *
  * This function handles "in_progress" and "on_hold" workflow statuses.
  * These are operational flags that do NOT affect:
  * - Payment status
@@ -16,7 +16,7 @@ import { headers } from "next/headers";
  * - Inventory (available / committed / on-hand)
  * - Stripe actions
  * - Order lifecycle status
- * 
+ *
  * Rules:
  * - "in_progress": Informational only, doesn't block anything
  * - "on_hold": Blocks fulfillment, but allows refunds and cancellations
@@ -91,7 +91,8 @@ export async function updateWorkflowStatus(input: {
         if (!hasStoreItems) {
           return {
             success: false,
-            error: "You don't have permission to update this order's workflow status",
+            error:
+              "You don't have permission to update this order's workflow status",
           };
         }
       }
@@ -149,4 +150,3 @@ export async function updateWorkflowStatus(input: {
     };
   }
 }
-

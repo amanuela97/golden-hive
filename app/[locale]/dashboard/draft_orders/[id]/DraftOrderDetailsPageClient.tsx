@@ -182,7 +182,10 @@ export default function DraftOrderDetailsPageClient({
           // Refresh draft data
           const refreshResult = await getDraftOrder(draftData.id);
           if (refreshResult.success && refreshResult.data) {
-            setDraftData(refreshResult.data);
+            setDraftData({
+              ...refreshResult.data,
+              draftNumber: Number(refreshResult.data.draftNumber),
+            });
           }
         } else {
           toast.error(result.error || "Failed to update item quantity");
@@ -241,7 +244,10 @@ export default function DraftOrderDetailsPageClient({
           // Refresh draft data
           const refreshResult = await getDraftOrder(draftData.id);
           if (refreshResult.success && refreshResult.data) {
-            setDraftData(refreshResult.data);
+            setDraftData({
+              ...refreshResult.data,
+              draftNumber: Number(refreshResult.data.draftNumber),
+            });
           }
         } else {
           toast.error(result.error || "Failed to remove item");
@@ -326,7 +332,10 @@ export default function DraftOrderDetailsPageClient({
             // Refresh draft data
             const refreshResult = await getDraftOrder(draftData.id);
             if (refreshResult.success && refreshResult.data) {
-              setDraftData(refreshResult.data);
+              setDraftData({
+                ...refreshResult.data,
+                draftNumber: Number(refreshResult.data.draftNumber),
+              });
             }
           } else {
             toast.error(result.error || "Failed to add product");

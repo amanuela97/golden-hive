@@ -45,8 +45,11 @@ export default function MarketFormClient({
       } else {
         toast.error(result.error || "Failed to update market");
       }
-    } catch (error) {
-      console.error("Update market error:", error);
+    } catch (error: unknown) {
+      console.error(
+        "Update market error:",
+        error instanceof Error ? error.message : "Unknown error"
+      );
       toast.error("Failed to update market");
     } finally {
       setIsLoading(false);
@@ -61,4 +64,3 @@ export default function MarketFormClient({
     />
   );
 }
-

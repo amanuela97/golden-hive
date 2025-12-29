@@ -44,18 +44,18 @@ export function ReviewPageClient({
 
   if (!productData && !storeData) {
     let errorMessage = "Please provide a product or store ID in the URL.";
-    
+
     if (hasProductParam && !productData) {
-      errorMessage = "The product you're trying to review is not in this order, or the product ID is invalid.";
+      errorMessage =
+        "The product you're trying to review is not in this order, or the product ID is invalid.";
     } else if (hasStoreParam && !storeData) {
-      errorMessage = "The store you're trying to review is not associated with this order, or the store ID is invalid.";
+      errorMessage =
+        "The store you're trying to review is not associated with this order, or the store ID is invalid.";
     }
-    
+
     return (
       <Card className="p-6">
-        <p className="text-muted-foreground">
-          {errorMessage}
-        </p>
+        <p className="text-muted-foreground">{errorMessage}</p>
       </Card>
     );
   }

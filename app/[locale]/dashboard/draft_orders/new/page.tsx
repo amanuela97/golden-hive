@@ -44,8 +44,8 @@ export default async function NewDraftOrderPage() {
 
   return (
     <DashboardWrapper userRole={roleName}>
-      <CreateOrderForm 
-        userRole={roleName} 
+      <CreateOrderForm
+        userRole={roleName}
         cancelRedirectPath="/dashboard/draft_orders"
       />
     </DashboardWrapper>

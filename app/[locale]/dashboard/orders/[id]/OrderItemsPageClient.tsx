@@ -16,7 +16,6 @@ import { useRouter } from "@/i18n/navigation";
 import { Link } from "@/i18n/navigation";
 import { format } from "date-fns";
 import Image from "next/image";
-import { Button } from "@/components/ui/button";
 
 interface OrderItem {
   id: string;
@@ -61,9 +60,10 @@ export default function OrderItemsPageClient({
 }: OrderItemsPageClientProps) {
   const router = useRouter();
 
-  const customerName = orderData.customerFirstName || orderData.customerLastName
-    ? `${orderData.customerFirstName || ""} ${orderData.customerLastName || ""}`.trim()
-    : orderData.customerEmail || "N/A";
+  const customerName =
+    orderData.customerFirstName || orderData.customerLastName
+      ? `${orderData.customerFirstName || ""} ${orderData.customerLastName || ""}`.trim()
+      : orderData.customerEmail || "N/A";
 
   return (
     <div className="space-y-6">
@@ -134,7 +134,9 @@ export default function OrderItemsPageClient({
             {orderData.customerEmail && (
               <div>
                 <span className="text-muted-foreground">Email:</span>
-                <span className="ml-2 font-medium">{orderData.customerEmail}</span>
+                <span className="ml-2 font-medium">
+                  {orderData.customerEmail}
+                </span>
               </div>
             )}
           </div>
@@ -169,11 +171,12 @@ export default function OrderItemsPageClient({
                 const unitPrice = parseFloat(item.unitPrice);
                 const lineSubtotal = parseFloat(item.lineSubtotal);
                 const lineTotal = parseFloat(item.lineTotal);
-                const canReview = orderData.paymentStatus === "paid" && item.listingId;
+                const canReview =
+                  orderData.paymentStatus === "paid" && item.listingId;
                 const reviewUrl = canReview
                   ? `/review?order=${orderData.id}&product=${item.listingId}`
                   : null;
-                
+
                 return (
                   <TableRow key={item.id}>
                     <TableCell>
@@ -189,7 +192,9 @@ export default function OrderItemsPageClient({
                         </div>
                       ) : (
                         <div className="h-16 w-16 rounded-md border bg-muted flex items-center justify-center">
-                          <span className="text-xs text-muted-foreground">No image</span>
+                          <span className="text-xs text-muted-foreground">
+                            No image
+                          </span>
                         </div>
                       )}
                     </TableCell>
@@ -197,7 +202,9 @@ export default function OrderItemsPageClient({
                     <TableCell className="text-muted-foreground">
                       {item.sku || "N/A"}
                     </TableCell>
-                    <TableCell className="text-right">{item.quantity}</TableCell>
+                    <TableCell className="text-right">
+                      {item.quantity}
+                    </TableCell>
                     <TableCell className="text-right">
                       {item.currency} {unitPrice.toFixed(2)}
                     </TableCell>
@@ -222,7 +229,9 @@ export default function OrderItemsPageClient({
                             </Link>
                           </Button>
                         ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <span className="text-xs text-muted-foreground">
+                            —
+                          </span>
                         )}
                       </TableCell>
                     )}
@@ -262,8 +271,7 @@ export default function OrderItemsPageClient({
           <div className="flex justify-between text-sm">
             <span className="text-muted-foreground">Tax:</span>
             <span className="font-medium">
-              {orderData.currency}{" "}
-              {parseFloat(orderData.taxAmount).toFixed(2)}
+              {orderData.currency} {parseFloat(orderData.taxAmount).toFixed(2)}
             </span>
           </div>
           <div className="flex justify-between text-lg font-semibold pt-3 border-t">
@@ -278,4 +286,3 @@ export default function OrderItemsPageClient({
     </div>
   );
 }
-

@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "@/i18n/navigation";
 import { getGuestFavorites, getExpiryDate } from "@/lib/guest-favorites";
-import { getPublicProducts } from "@/app/[locale]/actions/public-products";
+import {
+  getPublicProducts,
+  type PublicProduct,
+} from "@/app/[locale]/actions/public-products";
 import { listPublicStores } from "@/app/[locale]/actions/storefront";
 import { ProductCard } from "@/app/[locale]/components/product-card";
 import { StoreCard } from "@/app/[locale]/stores/components/StoreCard";
@@ -12,17 +14,27 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Heart, AlertCircle } from "lucide-react";
 import Link from "next/link";
 
+interface PublicStore {
+  id: string;
+  storeName: string;
+  slug: string;
+  logoUrl: string | null;
+  ratingAvg: string | number;
+  ratingCount: number;
+  followerCount: number;
+  bannerUrl?: string;
+}
+
 export function GuestFavoritesClient() {
-  const router = useRouter();
-  const [products, setProducts] = useState<any[]>([]);
-  const [stores, setStores] = useState<any[]>([]);
+  const [products, setProducts] = useState<PublicProduct[]>([]);
+  const [stores, setStores] = useState<PublicStore[]>([]);
   const [loading, setLoading] = useState(true);
   const expiryDate = getExpiryDate();
 
   useEffect(() => {
     async function loadFavorites() {
       const favorites = getGuestFavorites();
-      
+
       if (favorites.products.length === 0 && favorites.stores.length === 0) {
         setLoading(false);
         return;
@@ -32,10 +44,13 @@ export function GuestFavoritesClient() {
         // Load products
         if (favorites.products.length > 0) {
           const productIds = favorites.products.map((f) => f.id);
-          const productsResult = await getPublicProducts({ limit: 1000, locale: "en" });
-          const filteredProducts = productsResult.result?.filter((p) =>
-            productIds.includes(p.id)
-          ) || [];
+          const productsResult = await getPublicProducts({
+            limit: 1000,
+            locale: "en",
+          });
+          const filteredProducts =
+            productsResult.result?.filter((p) => productIds.includes(p.id)) ||
+            [];
           setProducts(filteredProducts);
         }
 
@@ -97,7 +112,7 @@ export function GuestFavoritesClient() {
         <div className="text-center py-12">
           <Heart className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
           <p className="text-muted-foreground mb-4">
-            You haven't favorited any products or stores yet.
+            You haven&apos;t favorited any products or stores yet.
           </p>
           <div className="flex gap-4 justify-center">
             <Button asChild>
@@ -152,4 +167,3 @@ export function GuestFavoritesClient() {
     </div>
   );
 }
-

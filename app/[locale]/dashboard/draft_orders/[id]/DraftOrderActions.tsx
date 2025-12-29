@@ -17,11 +17,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  MoreVertical,
-  Copy,
-  Trash2,
-} from "lucide-react";
+import { MoreVertical, Copy, Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
 import {
   duplicateDraftOrder,
@@ -44,7 +40,6 @@ export default function DraftOrderActions({
   draftId,
   draftNumber,
   customerEmail,
-  userRole,
   isFormModified = false,
   onSave,
   onCancel,
@@ -66,8 +61,12 @@ export default function DraftOrderActions({
       } else {
         toast.error(result.error || "Failed to duplicate draft order");
       }
-    } catch (error) {
-      toast.error("Failed to duplicate draft order");
+    } catch (error: unknown) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to duplicate draft order"
+      );
     } finally {
       setLoading(false);
     }
@@ -84,8 +83,10 @@ export default function DraftOrderActions({
       } else {
         toast.error(result.error || "Failed to delete draft order");
       }
-    } catch (error) {
-      toast.error("Failed to delete draft order");
+    } catch (error: unknown) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete draft order"
+      );
     } finally {
       setLoading(false);
       setShowDeleteDialog(false);
@@ -122,7 +123,11 @@ export default function DraftOrderActions({
               </Button>
             </>
           )}
-          <Button variant="outline" onClick={handleDuplicate} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={handleDuplicate}
+            disabled={loading}
+          >
             <Copy className="h-4 w-4 mr-2" />
             Duplicate
           </Button>
@@ -163,7 +168,11 @@ export default function DraftOrderActions({
             >
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={loading}>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={loading}
+            >
               Delete
             </Button>
           </DialogFooter>
@@ -172,4 +181,3 @@ export default function DraftOrderActions({
     </>
   );
 }
-

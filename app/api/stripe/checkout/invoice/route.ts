@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { db } from "@/db";
-import { draftOrders, draftOrderItems, store, listing, listingVariants } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { store } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { getDraftOrderByToken } from "@/app/[locale]/actions/invoice-payment";
 
 export async function POST(req: NextRequest) {
@@ -52,7 +52,8 @@ export async function POST(req: NextRequest) {
     if (!storeInfo.stripeAccountId) {
       return NextResponse.json(
         {
-          error: "Store has not connected Stripe account. Please contact support.",
+          error:
+            "Store has not connected Stripe account. Please contact support.",
         },
         { status: 400 }
       );
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
       storeId: storeInfo.id,
       invoiceToken: token,
     });
-    
+
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: lineItems,
@@ -139,5 +140,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
-

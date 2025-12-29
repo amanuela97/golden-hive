@@ -2,8 +2,17 @@
  * Utility functions for generating URL-friendly slugs
  */
 
-import { store, storeSlugHistory, listing, listingSlugHistory } from "@/db/schema";
+import {
+  store,
+  storeSlugHistory,
+  listing,
+  listingSlugHistory,
+} from "@/db/schema";
 import { eq, or } from "drizzle-orm";
+import { db } from "@/db";
+
+// Type for database instance (can be db or transaction)
+type DbInstance = Parameters<Parameters<typeof db.transaction>[0]>[0] | typeof db;
 
 /**
  * Convert a string to a URL-friendly slug
@@ -26,12 +35,11 @@ export function slugify(text: string): string {
  * @returns A unique slug
  */
 export async function generateUniqueSlug(
-  db: any,
+  dbInstance: DbInstance,
   baseSlug: string,
   storeId?: string
 ): Promise<string> {
   const normalized = slugify(baseSlug);
-  const slugLower = normalized.toLowerCase();
 
   // Try up to 50 variations
   for (let i = 0; i < 50; i++) {
@@ -39,7 +47,7 @@ export async function generateUniqueSlug(
     const candidateLower = candidate.toLowerCase();
 
     // Check store table
-    const existingStore = await db
+    const existingStore = await dbInstance
       .select({ id: store.id })
       .from(store)
       .where(eq(store.slugLower, candidateLower))
@@ -54,7 +62,7 @@ export async function generateUniqueSlug(
     }
 
     // Also check slug history
-    const existingHistory = await db
+    const existingHistory = await dbInstance
       .select()
       .from(storeSlugHistory)
       .where(
@@ -83,12 +91,11 @@ export async function generateUniqueSlug(
  * @returns A unique slug
  */
 export async function generateUniqueListingSlug(
-  db: any,
+  dbInstance: DbInstance,
   baseSlug: string,
   listingId?: string
 ): Promise<string> {
   const normalized = slugify(baseSlug);
-  const slugLower = normalized.toLowerCase();
 
   // Try up to 50 variations
   for (let i = 0; i < 50; i++) {
@@ -96,7 +103,7 @@ export async function generateUniqueListingSlug(
     const candidateLower = candidate.toLowerCase();
 
     // Check listing table
-    const existingListing = await db
+    const existingListing = await dbInstance
       .select({ id: listing.id })
       .from(listing)
       .where(eq(listing.slugLower, candidateLower))
@@ -111,7 +118,7 @@ export async function generateUniqueListingSlug(
     }
 
     // Also check slug history
-    const existingHistory = await db
+    const existingHistory = await dbInstance
       .select()
       .from(listingSlugHistory)
       .where(
@@ -130,4 +137,3 @@ export async function generateUniqueListingSlug(
   // Fallback: append timestamp if all variations are taken
   return `${normalized}-${Date.now()}`;
 }
-

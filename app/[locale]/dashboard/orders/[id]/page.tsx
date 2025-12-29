@@ -64,7 +64,7 @@ export default async function OrderDetailPage({
   }
 
   const { id } = await params;
-  
+
   // Validate order ID format
   if (!id || typeof id !== "string" || id.length !== 36) {
     return (
@@ -82,7 +82,8 @@ export default async function OrderDetailPage({
               <div>
                 <h2 className="text-2xl font-semibold mb-2">Order Not Found</h2>
                 <p className="text-muted-foreground">
-                  The order ID is invalid or incorrect. Please check the order ID and try again.
+                  The order ID is invalid or incorrect. Please check the order
+                  ID and try again.
                 </p>
               </div>
             </div>
@@ -110,7 +111,43 @@ export default async function OrderDetailPage({
               <div>
                 <h2 className="text-2xl font-semibold mb-2">Order Not Found</h2>
                 <p className="text-muted-foreground">
-                  {result.error || "The order does not exist or you don't have permission to view it."}
+                  {result.error ||
+                    "The order does not exist or you don&apos;t have permission to view it."}
+                </p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </DashboardWrapper>
+    );
+  }
+
+  // Convert orderNumber from string to number for the component
+  const orderData = result.data
+    ? {
+        ...result.data,
+        orderNumber: Number(result.data.orderNumber),
+      }
+    : null;
+
+  if (!orderData) {
+    return (
+      <DashboardWrapper userRole={roleName}>
+        <div className="space-y-6">
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/dashboard/orders">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Orders
+            </Link>
+          </Button>
+          <Card className="p-12">
+            <div className="flex flex-col items-center justify-center text-center space-y-4">
+              <AlertCircle className="h-16 w-16 text-muted-foreground" />
+              <div>
+                <h2 className="text-2xl font-semibold mb-2">Order Not Found</h2>
+                <p className="text-muted-foreground">
+                  The order does not exist or you don&apos;t have permission to
+                  view it.
                 </p>
               </div>
             </div>
@@ -122,8 +159,7 @@ export default async function OrderDetailPage({
 
   return (
     <DashboardWrapper userRole={roleName}>
-      <OrderDetailsPageClient orderData={result.data} userRole={roleName} />
+      <OrderDetailsPageClient orderData={orderData} userRole={roleName} />
     </DashboardWrapper>
   );
 }
-

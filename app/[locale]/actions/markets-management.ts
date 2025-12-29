@@ -1,39 +1,11 @@
 "use server";
 
 import { db } from "@/db";
-import { markets, user, userRoles, roles } from "@/db/schema";
-import { eq, and, sql, desc, asc, like, or, ne } from "drizzle-orm";
+import { markets, userRoles, roles } from "@/db/schema";
+import { eq, and, desc, asc, like, or, ne } from "drizzle-orm";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { ActionResponse } from "@/lib/types";
-
-/**
- * Helper function to check if user is admin
- */
-async function checkIsAdmin(userId: string): Promise<boolean> {
-  const adminRole = await db
-    .select()
-    .from(roles)
-    .where(eq(roles.name, "Admin"))
-    .limit(1);
-
-  if (adminRole.length === 0) {
-    return false;
-  }
-
-  const userRole = await db
-    .select()
-    .from(userRoles)
-    .where(
-      and(
-        eq(userRoles.userId, userId),
-        eq(userRoles.roleId, adminRole[0].id)
-      )
-    )
-    .limit(1);
-
-  return userRole.length > 0;
-}
 
 /**
  * List markets owned by the current user (admin or seller)
@@ -69,13 +41,25 @@ export async function listMarkets(search?: string): Promise<
       .where(eq(userRoles.userId, session.user.id))
       .limit(1);
 
-    const roleName = userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
+    const roleName =
+      userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
     if (roleName !== "seller" && roleName !== "admin") {
       return { success: false, error: "Unauthorized - Admin or Seller only" };
     }
 
     // Build query with ownership filter
-    let query = db
+    const conditions = [eq(markets.createdBy, session.user.id)];
+
+    if (search && search.trim()) {
+      conditions.push(
+        or(
+          like(markets.name, `%${search.trim()}%`),
+          like(markets.currency, `%${search.trim()}%`)
+        )!
+      );
+    }
+
+    const result = await db
       .select({
         id: markets.id,
         name: markets.name,
@@ -86,21 +70,8 @@ export async function listMarkets(search?: string): Promise<
         isDefault: markets.isDefault,
       })
       .from(markets)
-      .where(eq(markets.createdBy, session.user.id));
-
-    if (search && search.trim()) {
-      query = query.where(
-        and(
-          eq(markets.createdBy, session.user.id),
-          or(
-            like(markets.name, `%${search.trim()}%`),
-            like(markets.currency, `%${search.trim()}%`)
-          )
-        )
-      ) as typeof query;
-    }
-
-    const result = await query.orderBy(desc(markets.isDefault), asc(markets.name));
+      .where(and(...conditions))
+      .orderBy(desc(markets.isDefault), asc(markets.name));
 
     // Parse countries safely
     const parsedResult = result.map((market) => {
@@ -175,7 +146,8 @@ export async function getMarketById(marketId: string): Promise<
       .where(eq(userRoles.userId, session.user.id))
       .limit(1);
 
-    const roleName = userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
+    const roleName =
+      userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
     if (roleName !== "seller" && roleName !== "admin") {
       return { success: false, error: "Unauthorized - Admin or Seller only" };
     }
@@ -185,15 +157,15 @@ export async function getMarketById(marketId: string): Promise<
       .select()
       .from(markets)
       .where(
-        and(
-          eq(markets.id, marketId),
-          eq(markets.createdBy, session.user.id)
-        )
+        and(eq(markets.id, marketId), eq(markets.createdBy, session.user.id))
       )
       .limit(1);
 
     if (result.length === 0) {
-      return { success: false, error: "Market not found or you don't have permission to view it" };
+      return {
+        success: false,
+        error: "Market not found or you don't have permission to view it",
+      };
     }
 
     const market = result[0];
@@ -254,7 +226,10 @@ export async function getExchangeRate(
     const rate = data.rates[currency];
 
     if (!rate) {
-      return { success: false, error: `Exchange rate not found for ${currency}` };
+      return {
+        success: false,
+        error: `Exchange rate not found for ${currency}`,
+      };
     }
 
     return { success: true, rate };
@@ -298,7 +273,8 @@ export async function createMarket(input: {
       .where(eq(userRoles.userId, session.user.id))
       .limit(1);
 
-    const roleName = userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
+    const roleName =
+      userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
     if (roleName !== "seller" && roleName !== "admin") {
       return { success: false, error: "Unauthorized - Admin or Seller only" };
     }
@@ -339,9 +315,10 @@ export async function createMarket(input: {
       })
       .returning();
 
+    const insertedMarket = Array.isArray(result) ? result[0] : result;
     return {
       success: true,
-      marketId: result[0]?.id || "",
+      marketId: insertedMarket?.id || "",
     };
   } catch (error) {
     console.error("Error creating market:", error);
@@ -383,7 +360,8 @@ export async function updateMarket(
       .where(eq(userRoles.userId, session.user.id))
       .limit(1);
 
-    const roleName = userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
+    const roleName =
+      userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
     if (roleName !== "seller" && roleName !== "admin") {
       return { success: false, error: "Unauthorized - Admin or Seller only" };
     }
@@ -393,15 +371,15 @@ export async function updateMarket(
       .select()
       .from(markets)
       .where(
-        and(
-          eq(markets.id, marketId),
-          eq(markets.createdBy, session.user.id)
-        )
+        and(eq(markets.id, marketId), eq(markets.createdBy, session.user.id))
       )
       .limit(1);
 
     if (currentMarket.length === 0) {
-      return { success: false, error: "Market not found or you don't have permission to edit it" };
+      return {
+        success: false,
+        error: "Market not found or you don't have permission to edit it",
+      };
     }
 
     // If changing status to draft, check if there's at least one other active market
@@ -409,18 +387,14 @@ export async function updateMarket(
       const activeMarkets = await db
         .select({ id: markets.id })
         .from(markets)
-        .where(
-          and(
-            eq(markets.status, "active"),
-            ne(markets.id, marketId)
-          )
-        )
+        .where(and(eq(markets.status, "active"), ne(markets.id, marketId)))
         .limit(1);
 
       if (activeMarkets.length === 0) {
         return {
           success: false,
-          error: "Cannot set market to draft. At least one active market is required.",
+          error:
+            "Cannot set market to draft. At least one active market is required.",
         };
       }
     }
@@ -448,7 +422,15 @@ export async function updateMarket(
         );
     }
 
-    const updateData: any = {};
+    const updateData: {
+      name?: string;
+      currency?: string;
+      countries?: string[];
+      roundingRule?: string;
+      status?: "active" | "draft";
+      isDefault?: boolean;
+      exchangeRate?: string;
+    } = {};
     if (input.name !== undefined) updateData.name = input.name.trim();
     if (input.currency !== undefined) updateData.currency = input.currency;
     if (input.countries !== undefined) updateData.countries = input.countries;
@@ -492,7 +474,8 @@ export async function deleteMarket(marketId: string): Promise<ActionResponse> {
       .where(eq(userRoles.userId, session.user.id))
       .limit(1);
 
-    const roleName = userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
+    const roleName =
+      userRole.length > 0 ? userRole[0].roleName.toLowerCase() : "";
     if (roleName !== "seller" && roleName !== "admin") {
       return { success: false, error: "Unauthorized - Admin or Seller only" };
     }
@@ -502,15 +485,15 @@ export async function deleteMarket(marketId: string): Promise<ActionResponse> {
       .select()
       .from(markets)
       .where(
-        and(
-          eq(markets.id, marketId),
-          eq(markets.createdBy, session.user.id)
-        )
+        and(eq(markets.id, marketId), eq(markets.createdBy, session.user.id))
       )
       .limit(1);
 
     if (market.length === 0) {
-      return { success: false, error: "Market not found or you don't have permission to delete it" };
+      return {
+        success: false,
+        error: "Market not found or you don't have permission to delete it",
+      };
     }
 
     // Check if this is the user's only market
@@ -544,7 +527,8 @@ export async function deleteMarket(marketId: string): Promise<ActionResponse> {
       if (activeUserMarkets.length === 0) {
         return {
           success: false,
-          error: "Cannot delete market. You must have at least one active market.",
+          error:
+            "Cannot delete market. You must have at least one active market.",
         };
       }
     }
@@ -560,4 +544,3 @@ export async function deleteMarket(marketId: string): Promise<ActionResponse> {
     };
   }
 }
-

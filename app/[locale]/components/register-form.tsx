@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { ActionResponse, initialState } from "@/lib/types";
 import { useRouter } from "@/i18n/navigation";
-import { registerAction } from "../actions/auth";
+import { registerAction } from "@/app/[locale]/actions/auth";
 import { UserRole } from "@/lib/roles";
 import { useTranslations } from "next-intl";
 export default function RegisterForm() {

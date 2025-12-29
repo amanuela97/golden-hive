@@ -34,14 +34,17 @@ export default function OrderCancellationEmail({
           Order #{orderNumber} Cancelled
         </h1>
         <p style={{ color: "#666", margin: 0, fontSize: "14px" }}>
-          We're sorry to inform you that your order has been cancelled.
+          We&apos;re sorry to inform you that your order has been cancelled.
         </p>
       </div>
 
       <div style={{ marginBottom: "30px" }}>
-        <p style={{ color: "#333", margin: "0 0 10px 0" }}>Dear {customerName},</p>
+        <p style={{ color: "#333", margin: "0 0 10px 0" }}>
+          Dear {customerName},
+        </p>
         <p style={{ color: "#666", lineHeight: "1.6" }}>
-          We regret to inform you that your order #{orderNumber} has been cancelled.
+          We regret to inform you that your order #{orderNumber} has been
+          cancelled.
         </p>
       </div>
 
@@ -145,9 +148,9 @@ export default function OrderCancellationEmail({
           Refund Information
         </p>
         <p style={{ margin: "5px 0 0 0", color: "#666", fontSize: "14px" }}>
-          If you were charged for this order, a refund will be processed according
-          to our refund policy. Please allow 5-10 business days for the refund to
-          appear in your account.
+          If you were charged for this order, a refund will be processed
+          according to our refund policy. Please allow 5-10 business days for
+          the refund to appear in your account.
         </p>
       </div>
 
@@ -161,7 +164,8 @@ export default function OrderCancellationEmail({
         }}
       >
         <p style={{ margin: "0 0 10px 0" }}>
-          If you have any questions about this cancellation, please contact us at{" "}
+          If you have any questions about this cancellation, please contact us
+          at{" "}
           <a
             href="mailto:support@goldenhive.com"
             style={{ color: "#007bff", textDecoration: "none" }}
@@ -177,4 +181,3 @@ export default function OrderCancellationEmail({
     </div>
   );
 }
-

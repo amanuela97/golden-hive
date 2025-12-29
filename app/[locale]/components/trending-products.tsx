@@ -1,5 +1,5 @@
 import { getTrendingProductsData } from "@/app/[locale]/actions/homepage";
-import { ProductCard } from "./product-card";
+import { ProductCard } from "@/app/[locale]/components/product-card";
 import { Button } from "@/components/ui/button";
 import { Link } from "@/i18n/navigation";
 import { Badge } from "@/components/ui/badge";

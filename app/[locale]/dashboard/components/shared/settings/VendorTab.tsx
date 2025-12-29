@@ -16,17 +16,18 @@ import {
   Edit,
   Trash2,
 } from "lucide-react";
-import { upsertStore, getStore } from "../../../../actions/store";
+import { upsertStore, getStore } from "@/app/[locale]/actions/store";
 import {
   getAllInventoryLocations,
   createInventoryLocation,
   updateInventoryLocation,
   deleteInventoryLocation,
   type InventoryLocationData,
-} from "../../../../actions/inventory";
+} from "@/app/[locale]/actions/inventory";
 import toast from "react-hot-toast";
 import { FileUploader } from "react-drag-drop-files";
 import type { InventoryLocation } from "@/db/schema";
+import Image from "next/image";
 
 const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP"];
 
@@ -207,7 +208,7 @@ export default function StoreTab() {
       address: location.address || "",
       phone: location.phone || "",
       fulfillmentRules: location.fulfillmentRules || "",
-      isActive: location.isActive,
+      isActive: location.isActive ?? true,
     });
   };
 
@@ -321,7 +322,9 @@ export default function StoreTab() {
               <div className="space-y-4">
                 {logoPreview && (
                   <div className="relative w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg overflow-hidden">
-                    <img
+                    <Image
+                      width={128}
+                      height={128}
                       src={logoPreview}
                       alt="Logo preview"
                       className="w-full h-full object-cover"

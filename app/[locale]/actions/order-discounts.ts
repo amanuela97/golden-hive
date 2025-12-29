@@ -4,7 +4,12 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
-import { discounts, discountTargets, discountCustomers, listing } from "@/db/schema";
+import {
+  discounts,
+  discountTargets,
+  discountCustomers,
+  listing,
+} from "@/db/schema";
 import { eq, and, or, sql, desc, inArray } from "drizzle-orm";
 import {
   evaluateAmountOffProductsDiscount,
@@ -71,7 +76,7 @@ export async function getAutomaticDiscountsForCheckout(
 }> {
   try {
     const now = new Date();
-    
+
     // Find all active discounts (both with and without codes)
     // We need to check all discounts to see which ones apply to cart items
     const discountData = await db
@@ -193,7 +198,7 @@ export async function getAutomaticDiscountsForCheckout(
 
       // First check if discount applies to any items in cart (product targeting)
       // Only show discount if it would apply to at least one item
-      const appliesToAnyItem = items.some((item) => 
+      const appliesToAnyItem = items.some((item) =>
         discountAppliesToItem(fullDiscount, item)
       );
 
@@ -206,7 +211,7 @@ export async function getAutomaticDiscountsForCheckout(
       const applicableItems = items.filter((item) =>
         discountAppliesToItem(fullDiscount, item)
       );
-      
+
       const subtotal = applicableItems.reduce(
         (sum, item) => sum + item.price * item.quantity,
         0
@@ -228,11 +233,17 @@ export async function getAutomaticDiscountsForCheckout(
       } else if (!isCustomerEligible(fullDiscount, customerId)) {
         canApply = false;
         reason = "Not eligible for this discount";
-      } else if (fullDiscount.minPurchaseAmount && subtotal < fullDiscount.minPurchaseAmount) {
+      } else if (
+        fullDiscount.minPurchaseAmount &&
+        subtotal < fullDiscount.minPurchaseAmount
+      ) {
         canApply = false;
         reason = `Minimum purchase of ${fullDiscount.currency || "€"}${fullDiscount.minPurchaseAmount} required`;
         missingAmount = fullDiscount.minPurchaseAmount - subtotal;
-      } else if (fullDiscount.minPurchaseQuantity && totalQuantity < fullDiscount.minPurchaseQuantity) {
+      } else if (
+        fullDiscount.minPurchaseQuantity &&
+        totalQuantity < fullDiscount.minPurchaseQuantity
+      ) {
         canApply = false;
         reason = `Minimum quantity of ${fullDiscount.minPurchaseQuantity} items required`;
         missingQuantity = fullDiscount.minPurchaseQuantity - totalQuantity;
@@ -246,7 +257,7 @@ export async function getAutomaticDiscountsForCheckout(
           fullDiscount,
           customerId
         );
-        
+
         if (!result) {
           // This shouldn't happen if appliesToAnyItem is true, but keep as safety check
           canApply = false;
@@ -265,7 +276,9 @@ export async function getAutomaticDiscountsForCheckout(
           ? parseFloat(discount.minPurchaseAmount)
           : null,
         minPurchaseQuantity: discount.minPurchaseQuantity,
-        customerEligibilityType: discount.customerEligibilityType as "all" | "specific",
+        customerEligibilityType: discount.customerEligibilityType as
+          | "all"
+          | "specific",
         evaluationResult: {
           totalAmount: result?.totalAmount || 0,
           canApply,
@@ -282,7 +295,9 @@ export async function getAutomaticDiscountsForCheckout(
     return {
       success: false,
       error:
-        error instanceof Error ? error.message : "Failed to get automatic discounts",
+        error instanceof Error
+          ? error.message
+          : "Failed to get automatic discounts",
     };
   }
 }
@@ -291,9 +306,7 @@ export async function getAutomaticDiscountsForCheckout(
  * Get discount by code for public checkout (no auth required)
  * Returns discount details including eligibility and minimum requirements
  */
-export async function getDiscountByCodeForCheckout(
-  code: string
-): Promise<{
+export async function getDiscountByCodeForCheckout(code: string): Promise<{
   success: boolean;
   discount?: {
     id: string;
@@ -314,7 +327,7 @@ export async function getDiscountByCodeForCheckout(
 }> {
   try {
     const now = new Date();
-    
+
     // Find discount by code
     const discountData = await db
       .select()
@@ -361,7 +374,9 @@ export async function getDiscountByCodeForCheckout(
           ? parseFloat(discount.minPurchaseAmount)
           : null,
         minPurchaseQuantity: discount.minPurchaseQuantity,
-        customerEligibilityType: discount.customerEligibilityType as "all" | "specific",
+        customerEligibilityType: discount.customerEligibilityType as
+          | "all"
+          | "specific",
         eligibleCustomerIds,
         isActive: discount.isActive,
         startsAt: discount.startsAt,
@@ -372,8 +387,7 @@ export async function getDiscountByCodeForCheckout(
     console.error("Error getting discount by code:", error);
     return {
       success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to get discount",
+      error: error instanceof Error ? error.message : "Failed to get discount",
     };
   }
 }
@@ -548,12 +562,14 @@ export async function getDiscountForOrder(discountId: string): Promise<{
       minPurchaseAmount: discount.minPurchaseAmount
         ? parseFloat(discount.minPurchaseAmount)
         : null,
-      minPurchaseQuantity: discount.minPurchaseQuantity,
+      minPurchaseQuantity: discount.minPurchaseQuantity ?? null,
       customerEligibilityType: discount.customerEligibilityType as
         | "all"
         | "specific",
       targets: discountTargetsArray,
       eligibleCustomerIds,
+      ownerType: discount.ownerType as "admin" | "seller",
+      ownerId: discount.ownerId || null,
     };
 
     return { success: true, discount: fullDiscount };
@@ -596,6 +612,12 @@ export async function findBestDiscountForCheckout(
     value: number;
     currency: string | null;
     totalAmount: number;
+    allocations?: Array<{
+      cartItemId: string;
+      discountId: string;
+      amount: number;
+    }>;
+    appliedDiscountNames?: string[];
     eligibilityInfo?: {
       customerEligibilityType: "all" | "specific";
       minPurchaseAmount: number | null;
@@ -606,7 +628,7 @@ export async function findBestDiscountForCheckout(
 }> {
   try {
     const now = new Date();
-    
+
     // Get all active discounts
     // If excludeDiscountsWithCodes is true, only get discounts without codes (for auto-apply)
     const conditions = [
@@ -614,15 +636,15 @@ export async function findBestDiscountForCheckout(
       sql`(${discounts.startsAt} IS NULL OR ${discounts.startsAt} <= ${now})`,
       sql`(${discounts.endsAt} IS NULL OR ${discounts.endsAt} >= ${now})`,
     ];
-    
+
     if (excludeDiscountId) {
       conditions.push(sql`${discounts.id} != ${excludeDiscountId}`);
     }
-    
+
     if (excludeDiscountsWithCodes) {
       conditions.push(sql`${discounts.code} IS NULL`);
     }
-    
+
     const discountData = await db
       .select()
       .from(discounts)
@@ -761,11 +783,14 @@ export async function findBestDiscountForCheckout(
     const discountValueTypesMap = new Map<string, "fixed" | "percentage">();
     const discountValuesMap = new Map<string, number>();
     const discountCurrenciesMap = new Map<string, string | null>();
-    
+
     for (const discount of discountData) {
       discountNamesMap.set(discount.id, discount.name);
       discountCodesMap.set(discount.id, discount.code);
-      discountValueTypesMap.set(discount.id, discount.valueType as "fixed" | "percentage");
+      discountValueTypesMap.set(
+        discount.id,
+        discount.valueType as "fixed" | "percentage"
+      );
       discountValuesMap.set(discount.id, parseFloat(discount.value));
       discountCurrenciesMap.set(discount.id, discount.currency);
     }
@@ -795,20 +820,23 @@ export async function findBestDiscountForCheckout(
       success: true,
       bestDiscount: {
         discountId: bestEvaluation.discount.id,
-        discountName: appliedDiscountNames.length > 1 
-          ? appliedDiscountNames.join(", ") 
-          : bestEvaluation.discountName,
+        discountName:
+          appliedDiscountNames.length > 1
+            ? appliedDiscountNames.join(", ")
+            : bestEvaluation.discountName,
         discountCode: bestEvaluation.discountCode,
         valueType: bestEvaluation.discount.valueType,
         value: bestEvaluation.discount.value,
         currency: bestEvaluation.discount.currency || null,
         totalAmount: bestEvaluation.result!.totalAmount,
         allocations: bestResult.allocations,
-        appliedDiscountNames: appliedDiscountNames, // All discount names that are applied
+        appliedDiscountNames: appliedDiscountNames,
         eligibilityInfo: {
-          customerEligibilityType: bestEvaluation.discount.customerEligibilityType,
-          minPurchaseAmount: bestEvaluation.discount.minPurchaseAmount,
-          minPurchaseQuantity: bestEvaluation.discount.minPurchaseQuantity,
+          customerEligibilityType:
+            bestEvaluation.discount.customerEligibilityType,
+          minPurchaseAmount: bestEvaluation.discount.minPurchaseAmount ?? null,
+          minPurchaseQuantity:
+            bestEvaluation.discount.minPurchaseQuantity ?? null,
         },
       },
     };
@@ -917,8 +945,8 @@ export async function evaluateDiscountForCheckout(
         validationError: "Customer is not eligible for this discount",
         eligibilityInfo: {
           customerEligibilityType: discount.customerEligibilityType,
-          minPurchaseAmount: discount.minPurchaseAmount,
-          minPurchaseQuantity: discount.minPurchaseQuantity,
+          minPurchaseAmount: discount.minPurchaseAmount ?? null,
+          minPurchaseQuantity: discount.minPurchaseQuantity ?? null,
         },
       };
     }
@@ -933,8 +961,8 @@ export async function evaluateDiscountForCheckout(
           validationError: `Minimum purchase of ${discount.currency || ""} ${minAmount} not met`,
           eligibilityInfo: {
             customerEligibilityType: discount.customerEligibilityType,
-            minPurchaseAmount: discount.minPurchaseAmount,
-            minPurchaseQuantity: discount.minPurchaseQuantity,
+            minPurchaseAmount: discount.minPurchaseAmount ?? null,
+            minPurchaseQuantity: discount.minPurchaseQuantity ?? null,
           },
         };
       }
@@ -944,8 +972,8 @@ export async function evaluateDiscountForCheckout(
           validationError: `Minimum quantity of ${minQuantity} items not met`,
           eligibilityInfo: {
             customerEligibilityType: discount.customerEligibilityType,
-            minPurchaseAmount: discount.minPurchaseAmount,
-            minPurchaseQuantity: discount.minPurchaseQuantity,
+            minPurchaseAmount: discount.minPurchaseAmount ?? null,
+            minPurchaseQuantity: discount.minPurchaseQuantity ?? null,
           },
         };
       }
@@ -954,8 +982,8 @@ export async function evaluateDiscountForCheckout(
         validationError: "Minimum purchase requirements not met",
         eligibilityInfo: {
           customerEligibilityType: discount.customerEligibilityType,
-          minPurchaseAmount: discount.minPurchaseAmount,
-          minPurchaseQuantity: discount.minPurchaseQuantity,
+          minPurchaseAmount: discount.minPurchaseAmount ?? null,
+          minPurchaseQuantity: discount.minPurchaseQuantity ?? null,
         },
       };
     }
@@ -973,8 +1001,8 @@ export async function evaluateDiscountForCheckout(
         validationError: "Discount does not apply to any items in the cart",
         eligibilityInfo: {
           customerEligibilityType: discount.customerEligibilityType,
-          minPurchaseAmount: discount.minPurchaseAmount,
-          minPurchaseQuantity: discount.minPurchaseQuantity,
+          minPurchaseAmount: discount.minPurchaseAmount ?? null,
+          minPurchaseQuantity: discount.minPurchaseQuantity ?? null,
         },
       };
     }
@@ -1006,8 +1034,8 @@ export async function evaluateDiscountForCheckout(
       },
       eligibilityInfo: {
         customerEligibilityType: discount.customerEligibilityType,
-        minPurchaseAmount: discount.minPurchaseAmount,
-        minPurchaseQuantity: discount.minPurchaseQuantity,
+        minPurchaseAmount: discount.minPurchaseAmount ?? null,
+        minPurchaseQuantity: discount.minPurchaseQuantity ?? null,
       },
     };
   } catch (error) {
@@ -1225,6 +1253,8 @@ export async function evaluateDiscount(
         customerEligibilityType: "all",
         targets: [customDiscount.targets],
         eligibleCustomerIds: [],
+        ownerType: "admin",
+        ownerId: null,
       };
     } else {
       return {

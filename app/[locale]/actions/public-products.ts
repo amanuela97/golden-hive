@@ -1,8 +1,16 @@
 "use server";
 
 import { db } from "@/db";
-import { listing, listingTranslations, listingVariants, inventoryItems, inventoryLevels, store, listingSlugHistory } from "@/db/schema";
+import {
+  listing,
+  listingTranslations,
+  listingVariants,
+  inventoryItems,
+  inventoryLevels,
+  store,
+} from "@/db/schema";
 import { eq, and, desc, inArray, sql } from "drizzle-orm";
+import { unstable_cache } from "next/cache";
 
 export interface PublicProduct {
   id: string;
@@ -52,14 +60,19 @@ export interface ActionResponse {
 }
 
 // Get all public products with optional filtering
-export async function getPublicProducts(
-  options?: {
-    locale?: string;
-    categoryIds?: string[];
-    limit?: number;
-    page?: number;
+export async function getPublicProducts(options?: {
+  locale?: string;
+  categoryIds?: string[];
+  limit?: number;
+  page?: number;
+}): Promise<
+  ActionResponse & {
+    result?: PublicProduct[];
+    total?: number;
+    totalPages?: number;
+    currentPage?: number;
   }
-): Promise<ActionResponse & { result?: PublicProduct[]; total?: number; totalPages?: number; currentPage?: number }> {
+> {
   const locale = options?.locale || "en";
   const limit = options?.limit || 1000;
   const page = options?.page || 1;
@@ -79,25 +92,33 @@ export async function getPublicProducts(
       })
       .from(listing)
       .limit(10);
-    
+
     console.log(`Total listings in database: ${allListings.length}`);
     if (allListings.length > 0) {
-      const statusCounts = allListings.reduce((acc, l) => {
-        acc[l.status || "null"] = (acc[l.status || "null"] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
+      const statusCounts = allListings.reduce(
+        (acc, l) => {
+          acc[l.status || "null"] = (acc[l.status || "null"] || 0) + 1;
+          return acc;
+        },
+        {} as Record<string, number>
+      );
       console.log("Status distribution:", statusCounts);
-      console.log("Sample listings:", allListings.slice(0, 3).map(l => ({ id: l.id, name: l.name, status: l.status })));
+      console.log(
+        "Sample listings:",
+        allListings
+          .slice(0, 3)
+          .map((l) => ({ id: l.id, name: l.name, status: l.status }))
+      );
     }
 
     // Build where conditions for both count and select queries
     // Ensure categoryIds is always an array
-    const categoryIds = options?.categoryIds 
-      ? Array.isArray(options.categoryIds) 
-        ? options.categoryIds 
+    const categoryIds = options?.categoryIds
+      ? Array.isArray(options.categoryIds)
+        ? options.categoryIds
         : [options.categoryIds]
       : undefined;
-    
+
     const whereConditions = and(
       eq(listing.status, "active"),
       eq(store.isApproved, true), // Only show products from approved stores
@@ -179,11 +200,11 @@ export async function getPublicProducts(
       categoryName: p.categoryName,
       imageUrl: p.imageUrl,
       gallery: p.gallery,
-        tags: p.tags || p.tagsFallback,
-        price: p.price || "0", // Ensure price is always a string
-        compareAtPrice: p.compareAtPrice,
-        currency: p.currency || "NPR",
-        stockQuantity: null, // Stock quantity is calculated from inventory levels
+      tags: p.tags || p.tagsFallback,
+      price: p.price || "0", // Ensure price is always a string
+      compareAtPrice: p.compareAtPrice,
+      currency: p.currency || "NPR",
+      stockQuantity: null, // Stock quantity is calculated from inventory levels
       unit: p.unit || "kg",
       isActive: p.status === "active", // Compare status field
       isFeatured: p.isFeatured ?? false,
@@ -228,6 +249,35 @@ export async function getPublicProductBySlug(
     const validLocale = locale || "en";
     const slugLower = slug.toLowerCase();
 
+    // Cache key for this product
+    const cacheKey = `product-${slugLower}-${validLocale}`;
+
+    // Use unstable_cache for performance
+    return await unstable_cache(
+      async () => {
+        return await fetchProductBySlug(slugLower, validLocale);
+      },
+      [cacheKey],
+      {
+        revalidate: 3600, // 1 hour cache
+        tags: [`product-${slugLower}`, "products"],
+      }
+    )();
+  } catch (error) {
+    console.error("Error fetching product by slug:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to fetch product",
+    };
+  }
+}
+
+// Internal function to fetch product (used by cache)
+async function fetchProductBySlug(
+  slugLower: string,
+  validLocale: string
+): Promise<ActionResponse & { result?: PublicProduct }> {
+  try {
     const result = await db
       .select({
         id: listing.id,
@@ -271,7 +321,9 @@ export async function getPublicProductBySlug(
         )
       )
       .leftJoin(store, eq(listing.storeId, store.id))
-      .where(and(eq(listing.slugLower, slugLower), eq(listing.status, "active")))
+      .where(
+        and(eq(listing.slugLower, slugLower), eq(listing.status, "active"))
+      )
       .limit(1);
 
     if (result.length === 0) {
@@ -300,7 +352,9 @@ export async function getPublicProductBySlug(
           return {
             success: false,
             error: "Product moved",
-            result: { redirect: `/products/${historyResult[0].slug}` } as any,
+            result: {
+              redirect: `/products/${historyResult[0].slug}`,
+            } as PublicProduct & { redirect: string },
           };
         }
       }
@@ -363,6 +417,44 @@ export async function getRelatedProducts(
     // Ensure locale is valid
     const validLocale = locale || "en";
 
+    // Cache related products for 1 hour
+    const cacheKey = `related-products-${productId}-${categoryId || "none"}-${validLocale}-${limit}`;
+
+    return await unstable_cache(
+      async () => {
+        return await fetchRelatedProducts(
+          productId,
+          categoryId,
+          validLocale,
+          limit
+        );
+      },
+      [cacheKey],
+      {
+        revalidate: 3600, // 1 hour cache
+        tags: [`related-products-${productId}`, "products"],
+      }
+    )();
+  } catch (error) {
+    console.error("Error fetching related products:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch related products",
+    };
+  }
+}
+
+// Internal function to fetch related products (used by cache)
+async function fetchRelatedProducts(
+  productId: string,
+  categoryId: string | null,
+  validLocale: string,
+  limit: number
+): Promise<ActionResponse & { result?: PublicProduct[] }> {
+  try {
     // Build where conditions
     const whereConditions = [eq(listing.status, "active")];
 
@@ -502,6 +594,9 @@ export async function getFeaturedProducts(
         salesCount: listing.salesCount,
         createdAt: listing.createdAt,
         updatedAt: listing.updatedAt,
+        // Store information
+        storeName: store.storeName,
+        storeSlug: store.slug,
         // Fallback fields
         nameFallback: listing.name,
         descriptionFallback: listing.description,
@@ -565,19 +660,61 @@ export async function getFeaturedProducts(
 }
 
 // Get variants for a public product
-export async function getPublicProductVariants(
-  listingId: string
-): Promise<ActionResponse & { result?: Array<{
-  id: string;
-  title: string;
-  sku: string | null;
-  price: string | null;
-  currency: string | null;
-  compareAtPrice: string | null;
-  imageUrl: string | null;
-  options: Record<string, string> | null;
-  available: number | null;
-}> }> {
+export async function getPublicProductVariants(listingId: string): Promise<
+  ActionResponse & {
+    result?: Array<{
+      id: string;
+      title: string;
+      sku: string | null;
+      price: string | null;
+      currency: string | null;
+      compareAtPrice: string | null;
+      imageUrl: string | null;
+      options: Record<string, string> | null;
+      available: number | null;
+    }>;
+  }
+> {
+  try {
+    // Cache variants for 1 hour
+    const cacheKey = `product-variants-${listingId}`;
+
+    return await unstable_cache(
+      async () => {
+        return await fetchProductVariants(listingId);
+      },
+      [cacheKey],
+      {
+        revalidate: 3600, // 1 hour cache
+        tags: [`product-variants-${listingId}`, "products"],
+      }
+    )();
+  } catch (error) {
+    console.error("Error fetching public product variants:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to fetch variants",
+    };
+  }
+}
+
+// Internal function to fetch variants (used by cache)
+async function fetchProductVariants(listingId: string): Promise<
+  ActionResponse & {
+    result?: Array<{
+      id: string;
+      title: string;
+      sku: string | null;
+      price: string | null;
+      currency: string | null;
+      compareAtPrice: string | null;
+      imageUrl: string | null;
+      options: Record<string, string> | null;
+      available: number | null;
+    }>;
+  }
+> {
   try {
     const variants = await db
       .select({
@@ -621,7 +758,8 @@ export async function getPublicProductVariants(
     console.error("Error fetching public product variants:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to fetch variants",
+      error:
+        error instanceof Error ? error.message : "Failed to fetch variants",
     };
   }
 }

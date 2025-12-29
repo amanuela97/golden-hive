@@ -7,7 +7,6 @@ import {
   updateCategoryRule,
   deleteCategoryRule,
   getCategoryRuleById,
-  getCategoryRuleWithDocumentation,
   type CreateCategoryRuleData,
   type UpdateCategoryRuleData,
 } from "../actions/category-rules";
@@ -42,7 +41,9 @@ export function useCreateCategoryRule() {
   return useMutation({
     mutationFn: (data: CreateCategoryRuleData) => createCategoryRule(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: categoryRuleQueryKeys.categoryRules });
+      queryClient.invalidateQueries({
+        queryKey: categoryRuleQueryKeys.categoryRules,
+      });
       toast.success("Category rule created successfully");
     },
     onError: (error: Error) => {
@@ -63,7 +64,9 @@ export function useUpdateCategoryRule() {
       ruleData: UpdateCategoryRuleData;
     }) => updateCategoryRule(ruleId, ruleData),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: categoryRuleQueryKeys.categoryRules });
+      queryClient.invalidateQueries({
+        queryKey: categoryRuleQueryKeys.categoryRules,
+      });
       toast.success("Category rule updated successfully");
     },
     onError: (error: Error) => {
@@ -78,7 +81,9 @@ export function useDeleteCategoryRule() {
   return useMutation({
     mutationFn: deleteCategoryRule,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: categoryRuleQueryKeys.categoryRules });
+      queryClient.invalidateQueries({
+        queryKey: categoryRuleQueryKeys.categoryRules,
+      });
       toast.success("Category rule deleted successfully");
     },
     onError: (error: Error) => {
@@ -86,4 +91,3 @@ export function useDeleteCategoryRule() {
     },
   });
 }
-

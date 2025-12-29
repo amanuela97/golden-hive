@@ -22,7 +22,8 @@ export default async function InvoicePaymentPage({
         <div className="text-center">
           <h1 className="text-2xl font-bold mb-4">Invoice Not Found</h1>
           <p className="text-muted-foreground">
-            {draftResult.error || "This invoice link is invalid or has expired."}
+            {draftResult.error ||
+              "This invoice link is invalid or has expired."}
           </p>
         </div>
       </div>
@@ -31,10 +32,12 @@ export default async function InvoicePaymentPage({
 
   return (
     <InvoicePaymentPageClient
-      draftData={draftResult.data}
+      draftData={{
+        ...draftResult.data,
+        draftNumber: Number(draftResult.data.draftNumber),
+      }}
       token={token}
       canceled={canceled === "true"}
     />
   );
 }
-

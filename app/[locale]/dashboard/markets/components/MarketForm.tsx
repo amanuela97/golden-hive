@@ -89,8 +89,11 @@ export default function MarketForm({
             toast.error(result.error || "Failed to fetch exchange rate");
           }
         })
-        .catch((error) => {
-          console.error("Error fetching exchange rate:", error);
+        .catch((error: unknown) => {
+          console.error(
+            "Error fetching exchange rate:",
+            error instanceof Error ? error.message : "Unknown error"
+          );
           toast.error("Failed to fetch exchange rate");
         })
         .finally(() => {
@@ -98,7 +101,6 @@ export default function MarketForm({
         });
     }
   }, [currency, initialData]);
-
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,11 +165,7 @@ export default function MarketForm({
             <div>
               <Label>Exchange Rate (to EUR)</Label>
               <div className="flex items-center gap-2">
-                <Input
-                  value={exchangeRate}
-                  readOnly
-                  className="bg-muted"
-                />
+                <Input value={exchangeRate} readOnly className="bg-muted" />
                 {fetchingRate && (
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 )}
@@ -227,7 +225,8 @@ export default function MarketForm({
               }}
             />
             <p className="text-sm text-muted-foreground mt-2">
-              {selectedCountries.length} country{selectedCountries.length !== 1 ? "s" : ""} selected
+              {selectedCountries.length} country
+              {selectedCountries.length !== 1 ? "s" : ""} selected
             </p>
           </div>
 
@@ -249,10 +248,7 @@ export default function MarketForm({
 
           <div>
             <Label htmlFor="roundingRule">Rounding Rule</Label>
-            <ShadcnSelect
-              value={roundingRule}
-              onValueChange={setRoundingRule}
-            >
+            <ShadcnSelect value={roundingRule} onValueChange={setRoundingRule}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -294,4 +290,3 @@ export default function MarketForm({
     </form>
   );
 }
-

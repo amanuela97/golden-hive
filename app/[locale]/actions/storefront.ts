@@ -18,7 +18,6 @@ import {
 import { eq, and, desc, asc, sql, inArray, or, gte, lte } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { notFound } from "next/navigation";
 
 /**
  * Get store by slug (with redirect logic for old slugs)
@@ -205,12 +204,7 @@ export async function getStorefrontData(slug: string) {
   const listings = await db
     .select()
     .from(listing)
-    .where(
-      and(
-        eq(listing.storeId, storeData.id),
-        eq(listing.status, "active")
-      )
-    )
+    .where(and(eq(listing.storeId, storeData.id), eq(listing.status, "active")))
     .orderBy(desc(listing.createdAt))
     .limit(12);
 
@@ -291,7 +285,7 @@ export async function getStoreListings(
   }
 
   // Sort order - always use array for consistency
-  let orderByArray: any[];
+  let orderByArray: (ReturnType<typeof asc> | ReturnType<typeof desc>)[];
   switch (sortBy) {
     case "price-low":
       orderByArray = [asc(listing.price)];
@@ -407,10 +401,7 @@ export async function toggleStoreFollow(storeId: string): Promise<{
       .select()
       .from(storeFollow)
       .where(
-        and(
-          eq(storeFollow.storeId, storeId),
-          eq(storeFollow.userId, userId)
-        )
+        and(eq(storeFollow.storeId, storeId), eq(storeFollow.userId, userId))
       )
       .limit(1);
 
@@ -518,15 +509,17 @@ export async function createStoreReview(
 
     // Verify order (if orderId provided)
     if (data.orderId) {
+      const { customers } = await import("@/db/schema");
       const order = await db
         .select()
         .from(orders)
         .innerJoin(orderItems, eq(orders.id, orderItems.orderId))
         .innerJoin(listing, eq(orderItems.listingId, listing.id))
+        .leftJoin(customers, eq(orders.customerId, customers.id))
         .where(
           and(
             eq(orders.id, data.orderId),
-            eq(orders.userId, userId),
+            eq(customers.userId, userId),
             eq(orders.paymentStatus, "paid"),
             eq(listing.storeId, storeId)
           )
@@ -541,14 +534,16 @@ export async function createStoreReview(
       }
     } else {
       // Verify user has at least one paid order from this store
+      const { customers } = await import("@/db/schema");
       const order = await db
         .select()
         .from(orders)
         .innerJoin(orderItems, eq(orders.id, orderItems.orderId))
         .innerJoin(listing, eq(orderItems.listingId, listing.id))
+        .leftJoin(customers, eq(orders.customerId, customers.id))
         .where(
           and(
-            eq(orders.userId, userId),
+            eq(customers.userId, userId),
             eq(orders.paymentStatus, "paid"),
             eq(listing.storeId, storeId)
           )
@@ -565,13 +560,28 @@ export async function createStoreReview(
 
     // Create review and update aggregates in transaction
     return await db.transaction(async (tx) => {
+      // orderId and body are required in schema
+      if (!data.orderId) {
+        return {
+          success: false,
+          error: "Order ID is required for store review",
+        };
+      }
+      if (!data.body) {
+        return {
+          success: false,
+          error: "Review body is required",
+        };
+      }
+
       await tx.insert(storeReview).values({
         storeId,
-        userId,
+        userId: userId || null,
         rating: data.rating,
         title: data.title || null,
-        body: data.body || null,
-        orderId: data.orderId || null,
+        body: data.body.trim(),
+        orderId: data.orderId,
+        verified: true,
       });
 
       // Update aggregates
@@ -587,7 +597,6 @@ export async function createStoreReview(
       if (storeData.length > 0) {
         const newCount = storeData[0].ratingCount + 1;
         const newSum = storeData[0].ratingSum + data.rating;
-        const newAvg = newSum / newCount;
 
         await tx
           .update(store)
@@ -609,4 +618,3 @@ export async function createStoreReview(
     };
   }
 }
-

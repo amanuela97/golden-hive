@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -11,7 +10,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CustomersTable } from "./CustomersTable";
-import { listCustomers, getStoresForFilter } from "@/app/[locale]/actions/customers";
+import {
+  listCustomers,
+  getStoresForFilter,
+} from "@/app/[locale]/actions/customers";
 import type { CustomerRow } from "@/app/[locale]/actions/customers";
 import toast from "react-hot-toast";
 import { Search } from "lucide-react";
@@ -156,4 +158,3 @@ export default function CustomersPageClient({
     </div>
   );
 }
-

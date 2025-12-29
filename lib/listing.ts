@@ -19,7 +19,7 @@ import { eq, and, sql, inArray, isNotNull } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { translateText } from "./translate";
 import { findCategoryById } from "./taxonomy";
-import { generateUniqueListingSlug, slugify } from "./slug-utils";
+import { generateUniqueListingSlug } from "./slug-utils";
 import { listingSlugHistory } from "@/db/schema";
 
 // Helper function to translate text to all locales
@@ -789,7 +789,7 @@ export async function getListings(): Promise<Listing[]> {
 /**
  * Get all listings with user information for admin management (uses English translations)
  */
-export async function getAllListingsWithUsers(p0: {
+export async function getAllListingsWithUsers(_params: {
   page: number;
   pageSize: number;
 }): Promise<
@@ -1011,7 +1011,7 @@ export async function getAllListingsWithUsers(p0: {
  */
 export async function getListingsByProducer(
   producerId: string,
-  p0: { page: number; pageSize: number }
+  _params: { page: number; pageSize: number }
 ): Promise<Listing[]> {
   try {
     // Fetch listings with English translations (seller dashboard uses English)
@@ -1043,6 +1043,8 @@ export async function getListingsByProducer(
         salesCount: listing.salesCount,
         createdAt: listing.createdAt,
         updatedAt: listing.updatedAt,
+        slug: listing.slug,
+        slugLower: listing.slugLower,
         // Fallback fields from base table
         nameFallback: listing.name,
         descriptionFallback: listing.description,
@@ -1150,6 +1152,8 @@ export async function getListingsByProducer(
         salesCount: r.salesCount,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
+        slug: r.slug,
+        slugLower: r.slugLower,
         variantCount: inventory.variantCount,
         totalStock: inventory.totalStock,
       };
@@ -1228,9 +1232,16 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
 
     // Handle slug update if provided
     let slugUpdate: { slug: string; slugLower: string } | undefined = undefined;
-    if (updateData.slug !== undefined && updateData.slug !== existingListing.slug) {
+    if (
+      updateData.slug !== undefined &&
+      updateData.slug !== existingListing.slug
+    ) {
       // Generate unique slug
-      const uniqueSlug = await generateUniqueListingSlug(db, updateData.slug, id);
+      const uniqueSlug = await generateUniqueListingSlug(
+        db,
+        updateData.slug,
+        id
+      );
       const slugLower = uniqueSlug.toLowerCase();
       slugUpdate = { slug: uniqueSlug, slugLower };
 

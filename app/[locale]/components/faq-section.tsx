@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import { ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
-import type { PublicFaqSection, PublicFaqItem } from "../actions/faq";
+import type {
+  PublicFaqSection,
+  PublicFaqItem,
+} from "@/app/[locale]/actions/faq";
 import { useTranslations } from "next-intl";
 
 interface FaqSectionProps {

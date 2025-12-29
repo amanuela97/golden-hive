@@ -25,14 +25,14 @@ export function useCurrencyConversion() {
         const response = await fetch(
           "https://api.exchangerate-api.com/v4/latest/USD"
         );
-        
+
         if (response.ok) {
           const data = await response.json();
           // Convert the API response to our format
           const convertedRates: Record<string, number> = {
             USD: 1,
           };
-          
+
           // Map common currencies
           const currencyMap: Record<string, string> = {
             EUR: "EUR",
@@ -42,7 +42,7 @@ export function useCurrencyConversion() {
             CNY: "CNY",
             USD: "USD",
           };
-          
+
           for (const [key, apiKey] of Object.entries(currencyMap)) {
             if (data.rates[apiKey]) {
               convertedRates[key] = data.rates[apiKey];
@@ -51,7 +51,7 @@ export function useCurrencyConversion() {
               convertedRates[key] = fallbackRates[key] || 1;
             }
           }
-          
+
           setRates(convertedRates);
         } else {
           // Use fallback rates if API fails
@@ -67,10 +67,10 @@ export function useCurrencyConversion() {
     };
 
     fetchRates();
-    
+
     // Refresh rates every hour
     const interval = setInterval(fetchRates, 60 * 60 * 1000);
-    
+
     return () => clearInterval(interval);
   }, []);
 
@@ -104,4 +104,3 @@ export function useCurrencyConversion() {
 
   return { rates, convertCurrency, loading };
 }
-

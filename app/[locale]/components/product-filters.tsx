@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 // Categories are now handled via taxonomy - no longer using old category system
-import { ProductFilters as ProductFiltersType } from "../actions/public-products";
+import { ProductFilters as ProductFiltersType } from "@/app/[locale]/actions/public-products";
 import { useTranslations } from "next-intl";
 import { TaxonomyCategory } from "@/lib/taxonomy";
 

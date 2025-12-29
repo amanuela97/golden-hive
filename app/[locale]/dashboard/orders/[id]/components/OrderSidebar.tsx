@@ -1,12 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -64,7 +59,10 @@ export function OrderSidebar({
   const [noteValue, setNoteValue] = useState(orderData.internalNote || "");
 
   const tags = orderData.tags
-    ? orderData.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
+    ? orderData.tags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean)
     : [];
 
   const formatAddress = (
@@ -87,9 +85,9 @@ export function OrderSidebar({
   const handleSaveNote = async () => {
     try {
       // TODO: Implement updateInternalNote server action
-      toast.info("Note saving functionality coming soon");
+      toast("Note saving functionality coming soon");
       setEditingNote(false);
-    } catch (error) {
+    } catch {
       toast.error("Failed to save note");
     }
   };
@@ -184,7 +182,11 @@ export function OrderSidebar({
           <div>
             <p className="text-sm font-medium mb-2">Shipping Address</p>
             <div className="text-sm text-muted-foreground whitespace-pre-line">
-              {orderData.shippingName && <p className="font-medium text-foreground">{orderData.shippingName}</p>}
+              {orderData.shippingName && (
+                <p className="font-medium text-foreground">
+                  {orderData.shippingName}
+                </p>
+              )}
               {orderData.shippingPhone && <p>{orderData.shippingPhone}</p>}
               {formatAddress(
                 orderData.shippingAddressLine1,
@@ -199,7 +201,11 @@ export function OrderSidebar({
           <div>
             <p className="text-sm font-medium mb-2">Billing Address</p>
             <div className="text-sm text-muted-foreground whitespace-pre-line">
-              {orderData.billingName && <p className="font-medium text-foreground">{orderData.billingName}</p>}
+              {orderData.billingName && (
+                <p className="font-medium text-foreground">
+                  {orderData.billingName}
+                </p>
+              )}
               {orderData.billingPhone && <p>{orderData.billingPhone}</p>}
               {formatAddress(
                 orderData.billingAddressLine1,
@@ -254,4 +260,3 @@ export function OrderSidebar({
     </div>
   );
 }
-

@@ -40,17 +40,15 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function HomePage() {
   return (
     <div className="min-h-screen flex flex-col">
-      <main>
-        <Suspense fallback={<NewArrivalsSkeleton />}>
-          <NewArrivals />
-        </Suspense>
-        <Suspense fallback={<TrendingProductsSkeleton />}>
-          <TrendingProducts />
-        </Suspense>
-        <Suspense fallback={<FeaturedStoresSkeleton />}>
-          <FeaturedStores />
-        </Suspense>
-      </main>
+      <Suspense fallback={<NewArrivalsSkeleton />}>
+        <NewArrivals />
+      </Suspense>
+      <Suspense fallback={<TrendingProductsSkeleton />}>
+        <TrendingProducts />
+      </Suspense>
+      <Suspense fallback={<FeaturedStoresSkeleton />}>
+        <FeaturedStores />
+      </Suspense>
     </div>
   );
 }

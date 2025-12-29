@@ -27,7 +27,11 @@ export async function FeaturedStores() {
             </p>
           </div>
           {stores.length >= 4 && (
-            <Button variant="ghost" asChild className="hover:shadow-md transition-all">
+            <Button
+              variant="ghost"
+              asChild
+              className="hover:shadow-md transition-all"
+            >
               <Link href="/stores?sort=newest">View More</Link>
             </Button>
           )}
@@ -38,7 +42,10 @@ export async function FeaturedStores() {
               <div
                 key={store.id}
                 className="animate-in fade-in slide-in-from-bottom-4"
-                style={{ animationDelay: `${idx * 100}ms`, animationFillMode: "both" }}
+                style={{
+                  animationDelay: `${idx * 100}ms`,
+                  animationFillMode: "both",
+                }}
               >
                 <StoreCard
                   store={{

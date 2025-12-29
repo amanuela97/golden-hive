@@ -48,7 +48,10 @@ export function SendDraftInvoiceDialog({
 
   // Debug logging
   useEffect(() => {
-    console.log("SendDraftInvoiceDialog - storeOwnerEmail prop:", storeOwnerEmail);
+    console.log(
+      "SendDraftInvoiceDialog - storeOwnerEmail prop:",
+      storeOwnerEmail
+    );
     console.log("SendDraftInvoiceDialog - fromEmail state:", fromEmail);
   }, [storeOwnerEmail, fromEmail]);
 
@@ -93,8 +96,10 @@ export function SendDraftInvoiceDialog({
     }
 
     // Use storeOwnerEmail if available and user hasn't edited, otherwise use fromEmail
-    const emailToUse = userEditedFromEmail ? fromEmail : (storeOwnerEmail || fromEmail);
-    
+    const emailToUse = userEditedFromEmail
+      ? fromEmail
+      : storeOwnerEmail || fromEmail;
+
     if (!emailToUse || !emailToUse.includes("@")) {
       toast.error("Please enter a valid 'From' email address");
       return;
@@ -111,10 +116,16 @@ export function SendDraftInvoiceDialog({
     }
     try {
       // Use storeOwnerEmail if available and user hasn't edited, otherwise use fromEmail
-      const emailToUse = userEditedFromEmail ? fromEmail : (storeOwnerEmail || fromEmail);
-      
-      console.log("Sending invoice with:", { draftId, toEmail, fromEmail: emailToUse });
-      
+      const emailToUse = userEditedFromEmail
+        ? fromEmail
+        : storeOwnerEmail || fromEmail;
+
+      console.log("Sending invoice with:", {
+        draftId,
+        toEmail,
+        fromEmail: emailToUse,
+      });
+
       const result = await sendInvoice(
         draftId,
         toEmail,
@@ -153,11 +164,17 @@ export function SendDraftInvoiceDialog({
       }
     } catch (error) {
       console.error("Send invoice error:", error);
-      const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred";
-      
+      const errorMessage =
+        error instanceof Error ? error.message : "An unexpected error occurred";
+
       // Check if it's a Next.js server action error
-      if (errorMessage.includes("unexpected response") || errorMessage.includes("Failed to fetch")) {
-        toast.error("Failed to send invoice: Server communication error. Please try again.");
+      if (
+        errorMessage.includes("unexpected response") ||
+        errorMessage.includes("Failed to fetch")
+      ) {
+        toast.error(
+          "Failed to send invoice: Server communication error. Please try again."
+        );
       } else {
         toast.error(`Failed to send invoice: ${errorMessage}`);
       }
@@ -178,8 +195,8 @@ export function SendDraftInvoiceDialog({
             {draftId && draftNumber
               ? `Send invoice #${draftNumber} to the customer. The invoice will include a payment link.`
               : draftId
-              ? "Send invoice to the customer. The invoice will include a payment link."
-              : "Save the draft order first, then send the invoice."}
+                ? "Send invoice to the customer. The invoice will include a payment link."
+                : "Save the draft order first, then send the invoice."}
           </DialogDescription>
         </DialogHeader>
 
@@ -197,7 +214,9 @@ export function SendDraftInvoiceDialog({
               <Input
                 id="from-email"
                 type="email"
-                value={userEditedFromEmail ? fromEmail : (storeOwnerEmail || fromEmail)}
+                value={
+                  userEditedFromEmail ? fromEmail : storeOwnerEmail || fromEmail
+                }
                 onChange={(e) => {
                   setFromEmail(e.target.value);
                   setUserEditedFromEmail(true);
@@ -257,4 +276,3 @@ export function SendDraftInvoiceDialog({
     </Dialog>
   );
 }
-

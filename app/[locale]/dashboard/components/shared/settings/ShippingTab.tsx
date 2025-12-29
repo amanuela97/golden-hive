@@ -5,12 +5,11 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Truck } from "lucide-react";
 import { CountrySelect } from "@/components/ui/country-select";
 import {
   saveShippingBillingInfo,
   getShippingBillingInfo,
-} from "../../../../actions/shipping-billing";
+} from "@/app/[locale]/actions/shipping-billing";
 import toast from "react-hot-toast";
 
 export default function ShippingTab() {

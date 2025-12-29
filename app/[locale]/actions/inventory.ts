@@ -2,7 +2,13 @@
 
 import { ActionResponse } from "@/lib/types";
 import { db } from "@/db";
-import { inventoryLocations, store, storeMembers, userRoles, roles } from "@/db/schema";
+import {
+  inventoryLocations,
+  store,
+  storeMembers,
+  userRoles,
+  roles,
+} from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -72,7 +78,7 @@ export async function getInventoryLocations(
         .from(store)
         .where(eq(store.id, storeId))
         .limit(1);
-      
+
       if (storeCheck.length > 0) {
         finalStoreId = storeId;
       }
@@ -109,15 +115,14 @@ export async function getInventoryLocations(
         // Non-admin users need a store
         return {
           success: false,
-          error:
-            "Store not found. Please set up your store information first.",
+          error: "Store not found. Please set up your store information first.",
         };
       }
     }
 
     // Build query conditions
     const conditions = [eq(inventoryLocations.isActive, true)];
-    
+
     // If we have a finalStoreId, filter by it. Admins without finalStoreId see all locations.
     if (finalStoreId) {
       conditions.push(eq(inventoryLocations.storeId, finalStoreId));
@@ -137,7 +142,10 @@ export async function getInventoryLocations(
 
     return {
       success: true,
-      result: locations,
+      result: locations.map((loc) => ({
+        ...loc,
+        isActive: loc.isActive ?? true,
+      })),
     };
   } catch (error) {
     console.error("Error fetching inventory locations:", error);
@@ -196,7 +204,7 @@ export async function createInventoryLocation(
         fulfillmentRules: data.fulfillmentRules?.trim() || null,
         isActive: data.isActive ?? true,
       })
-      .returning({ id: inventoryLocations.id });
+      .returning();
 
     return {
       success: true,
@@ -276,7 +284,10 @@ export async function getAllInventoryLocations(): Promise<
 
     return {
       success: true,
-      result: locations,
+      result: locations.map((loc) => ({
+        ...loc,
+        isActive: loc.isActive ?? true,
+      })),
     };
   } catch (error) {
     console.error("Error fetching inventory locations:", error);

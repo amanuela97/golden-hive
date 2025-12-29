@@ -62,12 +62,15 @@ export function OrderTimeline({
     if (eventType === "payment") {
       const paymentFields: Record<string, unknown> = {};
       if (metadata.amount !== undefined) paymentFields.amount = metadata.amount;
-      if (metadata.currency !== undefined) paymentFields.currency = metadata.currency;
+      if (metadata.currency !== undefined)
+        paymentFields.currency = metadata.currency;
       if (metadata.fee !== undefined) paymentFields.fee = metadata.fee;
       if (metadata.stripe_checkout_session !== undefined) {
-        paymentFields.stripe_checkout_session = metadata.stripe_checkout_session;
+        paymentFields.stripe_checkout_session =
+          metadata.stripe_checkout_session;
       }
-      if (metadata.provider !== undefined) paymentFields.provider = metadata.provider;
+      if (metadata.provider !== undefined)
+        paymentFields.provider = metadata.provider;
       return Object.keys(paymentFields).length > 0 ? paymentFields : null;
     }
 
@@ -181,7 +184,10 @@ export function OrderTimeline({
           ) : (
             visibleEvents.map((event) => {
               const isExpanded = expandedEvents.has(event.id);
-              const filteredMetadata = filterSensitiveMetadata(event.metadata, event.type);
+              const filteredMetadata = filterSensitiveMetadata(
+                event.metadata,
+                event.type
+              );
               const hasMetadata =
                 filteredMetadata && Object.keys(filteredMetadata).length > 0;
 
@@ -230,21 +236,35 @@ export function OrderTimeline({
                               // Format key for display (convert snake_case to Title Case)
                               const displayKey = key
                                 .split("_")
-                                .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                                .map(
+                                  (word) =>
+                                    word.charAt(0).toUpperCase() + word.slice(1)
+                                )
                                 .join(" ");
-                              
+
                               // Format value for display
                               let displayValue: string;
-                              if (event.type === "payment" && key === "amount" && filteredMetadata.currency) {
+                              if (
+                                event.type === "payment" &&
+                                key === "amount" &&
+                                filteredMetadata.currency
+                              ) {
                                 displayValue = `${filteredMetadata.currency} ${parseFloat(String(value)).toFixed(2)}`;
-                              } else if (event.type === "payment" && key === "fee" && filteredMetadata.currency) {
+                              } else if (
+                                event.type === "payment" &&
+                                key === "fee" &&
+                                filteredMetadata.currency
+                              ) {
                                 displayValue = `${filteredMetadata.currency} ${parseFloat(String(value)).toFixed(2)}`;
-                              } else if (typeof value === "object" && value !== null) {
+                              } else if (
+                                typeof value === "object" &&
+                                value !== null
+                              ) {
                                 displayValue = JSON.stringify(value, null, 2);
                               } else {
                                 displayValue = String(value);
                               }
-                              
+
                               return (
                                 <div key={index} className="space-y-1">
                                   <p className="text-xs font-semibold text-foreground">

@@ -5,6 +5,18 @@ import { getProductReviews } from "../../actions/reviews";
 import { ProductReviewDisplay } from "../../components/reviews/ProductReviewDisplay";
 import { StarRating } from "../../components/reviews/StarRating";
 
+interface ProductReview {
+  id: string;
+  rating: number;
+  title: string | null;
+  comment: string;
+  verified: boolean;
+  createdAt: Date;
+  reviewerName: string;
+  reviewerEmail: string | null;
+  isGuest: boolean;
+}
+
 interface ProductReviewsProps {
   listingId: string;
   ratingAverage: string | null;
@@ -16,7 +28,7 @@ export function ProductReviews({
   ratingAverage,
   ratingCount,
 }: ProductReviewsProps) {
-  const [reviews, setReviews] = useState<any[]>([]);
+  const [reviews, setReviews] = useState<ProductReview[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,7 +36,12 @@ export function ProductReviews({
       try {
         const reviewsData = await getProductReviews(listingId);
         if (reviewsData.success) {
-          setReviews(reviewsData.reviews || []);
+          setReviews(
+            (reviewsData.reviews || []).map((r) => ({
+              ...r,
+              comment: r.comment || "",
+            }))
+          );
         }
       } catch (error) {
         console.error("Error fetching reviews:", error);
@@ -60,9 +77,7 @@ export function ProductReviews({
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <StarRating value={Math.round(avgRating)} readonly size="lg" />
-              <span className="text-2xl font-bold">
-                {avgRating.toFixed(1)}
-              </span>
+              <span className="text-2xl font-bold">{avgRating.toFixed(1)}</span>
             </div>
             <span className="text-muted-foreground">
               ({count} {count === 1 ? "review" : "reviews"})
@@ -74,4 +89,3 @@ export function ProductReviews({
     </div>
   );
 }
-

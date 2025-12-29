@@ -172,7 +172,11 @@ export function HeroForm({
               {imagePreview ? (
                 <div className="relative">
                   {previewType === "file" ? (
-                    <img
+                    <Image
+                      width={500}
+                      height={500}
+                      quality={100}
+                      priority
                       src={imagePreview}
                       alt="Preview"
                       className="w-full h-64 object-cover rounded-lg border"

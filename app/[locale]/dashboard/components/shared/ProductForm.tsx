@@ -25,19 +25,20 @@ import type { CreateListingData, UpdateListingData } from "@/lib/listing";
 import { Save, ArrowLeft, Image as ImageIcon, X } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import toast from "react-hot-toast";
-import { InputTags } from "../../../components/input-tags";
-import { checkSellerDocumentationForCategory } from "../../../actions/documentation";
+import { InputTags } from "@/app/[locale]/components/input-tags";
+import { checkSellerDocumentationForCategory } from "@/app/[locale]/actions/documentation";
 import { useSession } from "@/lib/auth-client";
-import { TaxonomyCategorySelector } from "./TaxonomyCategorySelector";
-import { ProductVariants } from "./product-variants";
+import { TaxonomyCategorySelector } from "@/app/[locale]/dashboard/components/shared/TaxonomyCategorySelector";
+import { ProductVariants } from "@/app/[locale]/dashboard/components/shared/product-variants";
 import { FileUploader } from "react-drag-drop-files";
-import { getCategoryRuleByTaxonomyId } from "../../../actions/category-rules";
-import { getInventoryLocations } from "../../../actions/inventory";
+import { getCategoryRuleByTaxonomyId } from "@/app/[locale]/actions/category-rules";
+import { getInventoryLocations } from "@/app/[locale]/actions/inventory";
 import type { VariantData } from "@/lib/listing";
 import { getCategoryAttributes, type TaxonomyAttribute } from "@/lib/taxonomy";
-import { getStore } from "../../../actions/store";
-import { getStoreIdForUser } from "../../../actions/store-members";
+import { getStore } from "@/app/[locale]/actions/store";
+import { getStoreIdForUser } from "@/app/[locale]/actions/store-members";
 import { slugify } from "@/lib/slug-utils";
+import Image from "next/image";
 
 const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP", "JFIF"];
 
@@ -740,11 +741,11 @@ export default function ProductForm({
             price: parseFloat(variant.price) || formData.price,
             currency: (variant.currency || "NPR") as "EUR" | "USD" | "NPR",
             compareAtPrice: undefined,
-            // Only set imageUrl if it's an existing URL (not base64, not a File)
+            // Only set imageUrl if it's an existing URL (not base64)
             imageUrl:
               imageUrl &&
-              !imageUrl.startsWith("data:") &&
-              !(imageUrl instanceof File)
+              typeof imageUrl === "string" &&
+              !imageUrl.startsWith("data:")
                 ? imageUrl
                 : undefined,
             options: variant.options,
@@ -894,11 +895,11 @@ export default function ProductForm({
             price: parseFloat(variant.price) || formData.price,
             currency: (variant.currency || "NPR") as "EUR" | "USD" | "NPR",
             compareAtPrice: undefined,
-            // Only set imageUrl if it's an existing URL (not base64, not a File)
+            // Only set imageUrl if it's an existing URL (not base64)
             imageUrl:
               imageUrl &&
-              !imageUrl.startsWith("data:") &&
-              !(imageUrl instanceof File)
+              typeof imageUrl === "string" &&
+              !imageUrl.startsWith("data:")
                 ? imageUrl
                 : undefined,
             options: variant.options,
@@ -1009,12 +1010,12 @@ export default function ProductForm({
               <p className="text-sm text-yellow-700">
                 <strong>Store setup required:</strong> You must set up your
                 store first before creating products. Please go to{" "}
-                <a
+                <Link
                   href="/dashboard/settings/store"
                   className="underline font-medium hover:text-yellow-800"
                 >
                   Settings &gt; Store
-                </a>{" "}
+                </Link>{" "}
                 to configure your store currency and unit system.
               </p>
             </div>
@@ -1425,7 +1426,9 @@ export default function ProductForm({
               <div className="space-y-4">
                 {mainImagePreview && (
                   <div className="relative w-full h-48 rounded-lg overflow-hidden bg-gray-100">
-                    <img
+                    <Image
+                      width={192}
+                      height={128}
                       src={mainImagePreview}
                       alt="Preview"
                       className="w-full h-full object-cover"
@@ -1473,7 +1476,9 @@ export default function ProductForm({
                     {galleryUrls.map((url, index) => (
                       <div key={index} className="relative group">
                         <div className="relative w-full h-24 rounded-lg overflow-hidden bg-gray-100">
-                          <img
+                          <Image
+                            width={192}
+                            height={128}
                             src={url}
                             alt={`Gallery ${index + 1}`}
                             className="w-full h-full object-cover"
@@ -1497,7 +1502,9 @@ export default function ProductForm({
                     {galleryPreviews.map((preview, index) => (
                       <div key={index} className="relative group">
                         <div className="relative w-full h-24 rounded-lg overflow-hidden bg-gray-100">
-                          <img
+                          <Image
+                            width={192}
+                            height={128}
                             src={preview}
                             alt={`Preview ${index + 1}`}
                             className="w-full h-full object-cover"

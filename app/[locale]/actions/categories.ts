@@ -2,10 +2,10 @@
 
 import { db } from "@/db";
 import { categories } from "@/db/schema";
-import { eq, and, isNull, ilike, or } from "drizzle-orm";
+import { eq, isNull, ilike } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { slugify } from "@/lib/slug-utils";
-import { TaxonomyCategory, findCategoryById } from "@/lib/taxonomy";
+import { TaxonomyCategory } from "@/lib/taxonomy";
 
 export interface CategoryNode {
   id: string;

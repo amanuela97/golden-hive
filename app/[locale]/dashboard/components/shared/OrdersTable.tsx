@@ -21,21 +21,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { ArrowUpDown, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  AlertCircle,
+} from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { formatDistanceToNow } from "date-fns";
 import toast from "react-hot-toast";
-import {
-  archiveOrders,
-  unarchiveOrders,
-} from "@/app/[locale]/actions/orders";
+import { archiveOrders, unarchiveOrders } from "@/app/[locale]/actions/orders";
 import { Checkbox } from "@/components/ui/checkbox";
 
 interface OrdersTableProps {
@@ -82,8 +78,6 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
     ],
     []
   );
-
-
 
   const getPaymentStatusColor = (status: string) => {
     const colors: Record<string, string> = {
@@ -156,11 +150,15 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
         id: "warning",
         header: "",
         cell: ({ row }) => {
-          const hasWarning = row.original.hasAddressWarning || row.original.hasRiskWarning;
+          const hasWarning =
+            row.original.hasAddressWarning || row.original.hasRiskWarning;
           if (!hasWarning) return null;
           return (
             <div className="flex items-center">
-              <AlertCircle className="h-4 w-4 text-yellow-500" title="Warning: Address or risk issue" />
+              <AlertCircle
+                className="h-4 w-4 text-yellow-500"
+                aria-label="Warning: Address or risk issue"
+              />
             </div>
           );
         },
@@ -343,8 +341,8 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
                 status
               )}`}
             >
-              {orderStatusOptions.find((opt) => opt.value === status)
-                ?.label || status}
+              {orderStatusOptions.find((opt) => opt.value === status)?.label ||
+                status}
             </span>
           );
         },
@@ -372,11 +370,7 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
         ),
       },
     ],
-    [
-      paymentStatusOptions,
-      fulfillmentStatusOptions,
-      orderStatusOptions,
-    ]
+    [paymentStatusOptions, fulfillmentStatusOptions, orderStatusOptions]
   );
 
   const table = useReactTable({
@@ -402,9 +396,9 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
   // Orders cannot be deleted - delete functionality removed
 
   const selectedCount = Object.keys(rowSelection).length;
-  const selectedRows = table.getRowModel().rows.filter((row) =>
-    rowSelection[row.id]
-  );
+  const selectedRows = table
+    .getRowModel()
+    .rows.filter((row) => rowSelection[row.id]);
   const selectedOrders = selectedRows.map((row) => row.original);
 
   // Determine available bulk actions based on selected orders
@@ -414,7 +408,13 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
     const actions: Array<{
       label: string;
       action: () => void;
-      variant: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
+      variant:
+        | "default"
+        | "destructive"
+        | "outline"
+        | "secondary"
+        | "ghost"
+        | "link";
       condition: boolean;
     }> = [];
 
@@ -430,7 +430,7 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
       actions.push({
         label: "Cancel orders",
         action: () => {
-          toast.info("Bulk cancel not yet implemented");
+          toast.success("Bulk cancel not yet implemented");
         },
         variant: "outline",
         condition: true,
@@ -452,7 +452,7 @@ export function OrdersTable({ data, onDataChange }: OrdersTableProps) {
       actions.push({
         label: "Mark as fulfilled",
         action: () => {
-          toast.info("Bulk fulfill not yet implemented");
+          toast.success("Bulk fulfill not yet implemented");
         },
         variant: "default",
         condition: true,

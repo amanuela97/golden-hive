@@ -38,12 +38,48 @@ import { StoreReviewDisplay } from "../../components/reviews/StoreReviewDisplay"
 
 interface StorefrontClientProps {
   data: {
-    store: any;
+    store: {
+      id: string;
+      storeName: string;
+      logoUrl: string | null;
+      ratingAvg: string | number;
+      ratingCount: number;
+      followerCount: number;
+    };
     banners: Array<{ id: string; url: string; alt?: string }>;
-    about: any;
-    policies: any;
-    listings: any[];
-    reviews: any[];
+    about: {
+      title?: string | null;
+      description?: string | null;
+      imageUrl?: string | null;
+    } | null;
+    policies: {
+      shipping?: string | null;
+      returns?: string | null;
+      cancellations?: string | null;
+      customOrders?: string | null;
+      privacy?: string | null;
+      additional?: string | null;
+    } | null;
+    listings: Array<{
+      id: string;
+      slug: string | null;
+      name: string;
+      imageUrl: string | null;
+      price: string | number;
+      currency: string;
+    }>;
+    reviews: Array<{
+      id: string;
+      rating: number;
+      title: string | null;
+      body: string;
+      verified: boolean;
+      createdAt: Date;
+      reviewerName: string;
+      reviewerEmail: string | null;
+      isGuest: boolean;
+      userId?: string | null;
+    }>;
   };
   initialFollowing: boolean;
 }
@@ -97,7 +133,7 @@ export function StorefrontClient({
         setListings(result.listings);
         setListingsTotalPages(result.totalPages);
         setListingsTotalCount(result.totalCount);
-      } catch (error) {
+      } catch {
         toast.error("Failed to load products");
       } finally {
         setListingsLoading(false);
@@ -116,9 +152,22 @@ export function StorefrontClient({
           page: reviewsPage,
           limit: 10,
         });
-        setReviews(result.reviews);
+        setReviews(
+          result.reviews.map((r) => ({
+            id: r.id,
+            rating: r.rating,
+            title: r.title,
+            body: r.body,
+            verified: false, // Store reviews don't have verified field in the query
+            createdAt: r.createdAt,
+            reviewerName: r.userName ?? "Anonymous",
+            reviewerEmail: null, // Store reviews don't have email in the query
+            isGuest: false, // Store reviews are always from users (innerJoin with user)
+            userId: null, // Not available in the query
+          }))
+        );
         setReviewsTotalPages(result.totalPages);
-      } catch (error) {
+      } catch {
         toast.error("Failed to load reviews");
       } finally {
         setReviewsLoading(false);
@@ -162,7 +211,9 @@ export function StorefrontClient({
 
   // Smooth scroll to section
   const scrollToSection = (sectionId: string) => {
-    const sectionMap: { [key: string]: React.RefObject<HTMLDivElement> } = {
+    const sectionMap: {
+      [key: string]: React.RefObject<HTMLDivElement | null>;
+    } = {
       items: itemsRef,
       reviews: reviewsRef,
       about: aboutRef,
@@ -191,7 +242,7 @@ export function StorefrontClient({
           result.following ? "Following store" : "Unfollowed store"
         );
       }
-    } catch (error) {
+    } catch {
       toast.error("Failed to update follow status");
     }
   };
@@ -221,21 +272,6 @@ export function StorefrontClient({
     setSortBy(value as typeof sortBy);
     setListingsPage(1); // Reset to first page on sort change
   };
-
-  // Calculate price range from listings
-  const priceRange = listings.reduce(
-    (acc, listing) => {
-      const price = parseFloat(listing.price.toString());
-      return {
-        min: Math.min(acc.min, price),
-        max: Math.max(acc.max, price),
-      };
-    },
-    { min: Infinity, max: -Infinity }
-  );
-
-  const actualMinPrice = priceRange.min === Infinity ? 0 : priceRange.min;
-  const actualMaxPrice = priceRange.max === -Infinity ? 1000 : priceRange.max;
 
   return (
     <div className="min-h-screen bg-background">
@@ -392,196 +428,205 @@ export function StorefrontClient({
             <div className="col-span-4">
               <div className="flex items-center justify-between mb-6">
                 <div className="text-sm text-muted-foreground">
-                  {listingsTotalCount} {listingsTotalCount === 1 ? "item" : "items"}
+                  {listingsTotalCount}{" "}
+                  {listingsTotalCount === 1 ? "item" : "items"}
                 </div>
               </div>
 
-          {/* Search and Filters */}
-          <div className="mb-6 space-y-4">
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder="Search products..."
-                value={searchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                className="pl-10 pr-10"
-              />
-              {searchQuery && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                  onClick={() => handleSearchChange("")}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              )}
-            </div>
+              {/* Search and Filters */}
+              <div className="mb-6 space-y-4">
+                {/* Search */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    type="text"
+                    placeholder="Search products..."
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    className="pl-10 pr-10"
+                  />
+                  {searchQuery && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                      onClick={() => handleSearchChange("")}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
 
-            {/* Filters and Sort */}
-            <div className="flex flex-wrap gap-4 items-end">
-              {/* Price Range */}
-              <div className="flex gap-2 items-center">
-                <label className="text-sm font-medium">Price:</label>
-                <Input
-                  type="number"
-                  placeholder="Min"
-                  value={minPrice || ""}
-                  onChange={(e) =>
-                    handlePriceFilterChange(
-                      e.target.value,
-                      maxPrice?.toString() || ""
-                    )
-                  }
-                  className="w-24"
-                  min="0"
-                />
-                <span className="text-muted-foreground">-</span>
-                <Input
-                  type="number"
-                  placeholder="Max"
-                  value={maxPrice || ""}
-                  onChange={(e) =>
-                    handlePriceFilterChange(
-                      minPrice?.toString() || "",
-                      e.target.value
-                    )
-                  }
-                  className="w-24"
-                  min="0"
-                />
-              </div>
-
-              {/* Sort */}
-              <Select value={sortBy} onValueChange={handleSortChange}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Sort by" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="relevance">Relevance</SelectItem>
-                  <SelectItem value="newest">Newest</SelectItem>
-                  <SelectItem value="price-low">Price: Low to High</SelectItem>
-                  <SelectItem value="price-high">Price: High to Low</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Clear Filters */}
-              {(searchQuery || minPrice || maxPrice) && (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setSearchQuery("");
-                    setMinPrice(undefined);
-                    setMaxPrice(undefined);
-                    setListingsPage(1);
-                  }}
-                >
-                  Clear Filters
-                </Button>
-              )}
-            </div>
-          </div>
-
-          {/* Products Grid */}
-          {listingsLoading ? (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground">Loading products...</p>
-            </div>
-          ) : listings.length === 0 ? (
-            <p className="text-muted-foreground">No products found.</p>
-          ) : (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-                {listings.map((listing) => (
-                  <Link
-                    key={listing.id}
-                    href={`/products/${listing.slug || listing.id}`}
-                    className="group"
-                  >
-                    <Card className="overflow-hidden hover:shadow-lg transition-shadow">
-                      {listing.imageUrl && (
-                        <div className="relative w-full h-48 bg-gray-200">
-                          <Image
-                            src={listing.imageUrl}
-                            alt={listing.name}
-                            fill
-                            className="object-cover group-hover:scale-105 transition-transform"
-                          />
-                        </div>
-                      )}
-                      <div className="p-4">
-                        <h3 className="font-semibold mb-2 line-clamp-2">
-                          {listing.name}
-                        </h3>
-                        <p className="text-lg font-bold">
-                          {listing.currency} {listing.price}
-                        </p>
-                      </div>
-                    </Card>
-                  </Link>
-                ))}
-              </div>
-
-              {/* Pagination for Listings */}
-              {listingsTotalPages > 1 && (
-                <div className="flex items-center justify-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setListingsPage((p) => Math.max(1, p - 1))}
-                    disabled={listingsPage === 1}
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    Previous
-                  </Button>
-                  <div className="flex items-center gap-1">
-                    {Array.from(
-                      { length: Math.min(5, listingsTotalPages) },
-                      (_, i) => {
-                        let pageNum;
-                        if (listingsTotalPages <= 5) {
-                          pageNum = i + 1;
-                        } else if (listingsPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (listingsPage >= listingsTotalPages - 2) {
-                          pageNum = listingsTotalPages - 4 + i;
-                        } else {
-                          pageNum = listingsPage - 2 + i;
-                        }
-                        return (
-                          <Button
-                            key={pageNum}
-                            variant={
-                              listingsPage === pageNum ? "default" : "outline"
-                            }
-                            size="sm"
-                            onClick={() => setListingsPage(pageNum)}
-                          >
-                            {pageNum}
-                          </Button>
-                        );
+                {/* Filters and Sort */}
+                <div className="flex flex-wrap gap-4 items-end">
+                  {/* Price Range */}
+                  <div className="flex gap-2 items-center">
+                    <label className="text-sm font-medium">Price:</label>
+                    <Input
+                      type="number"
+                      placeholder="Min"
+                      value={minPrice || ""}
+                      onChange={(e) =>
+                        handlePriceFilterChange(
+                          e.target.value,
+                          maxPrice?.toString() || ""
+                        )
                       }
-                    )}
+                      className="w-24"
+                      min="0"
+                    />
+                    <span className="text-muted-foreground">-</span>
+                    <Input
+                      type="number"
+                      placeholder="Max"
+                      value={maxPrice || ""}
+                      onChange={(e) =>
+                        handlePriceFilterChange(
+                          minPrice?.toString() || "",
+                          e.target.value
+                        )
+                      }
+                      className="w-24"
+                      min="0"
+                    />
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setListingsPage((p) =>
-                        Math.min(listingsTotalPages, p + 1)
-                      )
-                    }
-                    disabled={listingsPage === listingsTotalPages}
-                  >
-                    Next
-                    <ChevronRight className="w-4 h-4" />
-                  </Button>
+
+                  {/* Sort */}
+                  <Select value={sortBy} onValueChange={handleSortChange}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Sort by" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="relevance">Relevance</SelectItem>
+                      <SelectItem value="newest">Newest</SelectItem>
+                      <SelectItem value="price-low">
+                        Price: Low to High
+                      </SelectItem>
+                      <SelectItem value="price-high">
+                        Price: High to Low
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {/* Clear Filters */}
+                  {(searchQuery || minPrice || maxPrice) && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setSearchQuery("");
+                        setMinPrice(undefined);
+                        setMaxPrice(undefined);
+                        setListingsPage(1);
+                      }}
+                    >
+                      Clear Filters
+                    </Button>
+                  )}
                 </div>
+              </div>
+
+              {/* Products Grid */}
+              {listingsLoading ? (
+                <div className="text-center py-12">
+                  <p className="text-muted-foreground">Loading products...</p>
+                </div>
+              ) : listings.length === 0 ? (
+                <p className="text-muted-foreground">No products found.</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+                    {listings.map((listing) => (
+                      <Link
+                        key={listing.id}
+                        href={`/products/${listing.slug || listing.id}`}
+                        className="group"
+                      >
+                        <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+                          {listing.imageUrl && (
+                            <div className="relative w-full h-48 bg-gray-200">
+                              <Image
+                                src={listing.imageUrl}
+                                alt={listing.name}
+                                fill
+                                className="object-cover group-hover:scale-105 transition-transform"
+                              />
+                            </div>
+                          )}
+                          <div className="p-4">
+                            <h3 className="font-semibold mb-2 line-clamp-2">
+                              {listing.name}
+                            </h3>
+                            <p className="text-lg font-bold">
+                              {listing.currency} {listing.price}
+                            </p>
+                          </div>
+                        </Card>
+                      </Link>
+                    ))}
+                  </div>
+
+                  {/* Pagination for Listings */}
+                  {listingsTotalPages > 1 && (
+                    <div className="flex items-center justify-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setListingsPage((p) => Math.max(1, p - 1))
+                        }
+                        disabled={listingsPage === 1}
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        Previous
+                      </Button>
+                      <div className="flex items-center gap-1">
+                        {Array.from(
+                          { length: Math.min(5, listingsTotalPages) },
+                          (_, i) => {
+                            let pageNum;
+                            if (listingsTotalPages <= 5) {
+                              pageNum = i + 1;
+                            } else if (listingsPage <= 3) {
+                              pageNum = i + 1;
+                            } else if (listingsPage >= listingsTotalPages - 2) {
+                              pageNum = listingsTotalPages - 4 + i;
+                            } else {
+                              pageNum = listingsPage - 2 + i;
+                            }
+                            return (
+                              <Button
+                                key={pageNum}
+                                variant={
+                                  listingsPage === pageNum
+                                    ? "default"
+                                    : "outline"
+                                }
+                                size="sm"
+                                onClick={() => setListingsPage(pageNum)}
+                              >
+                                {pageNum}
+                              </Button>
+                            );
+                          }
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setListingsPage((p) =>
+                            Math.min(listingsTotalPages, p + 1)
+                          )
+                        }
+                        disabled={listingsPage === listingsTotalPages}
+                      >
+                        Next
+                        <ChevronRight className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
+                </>
               )}
-            </>
-          )}
             </div>
           </div>
         </div>
@@ -605,67 +650,70 @@ export function StorefrontClient({
                 <p className="text-muted-foreground">No reviews yet.</p>
               ) : (
                 <>
-                  <StoreReviewDisplay
-                    reviews={reviews}
-                    storeId={data.store.id}
-                  />
+                  <StoreReviewDisplay reviews={reviews} />
 
                   {/* Pagination for Reviews */}
                   {reviewsTotalPages > 1 && (
-                <div className="flex items-center justify-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setReviewsPage((p) => Math.max(1, p - 1))}
-                    disabled={reviewsPage === 1}
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    Previous
-                  </Button>
-                  <div className="flex items-center gap-1">
-                    {Array.from(
-                      { length: Math.min(5, reviewsTotalPages) },
-                      (_, i) => {
-                        let pageNum;
-                        if (reviewsTotalPages <= 5) {
-                          pageNum = i + 1;
-                        } else if (reviewsPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (reviewsPage >= reviewsTotalPages - 2) {
-                          pageNum = reviewsTotalPages - 4 + i;
-                        } else {
-                          pageNum = reviewsPage - 2 + i;
+                    <div className="flex items-center justify-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setReviewsPage((p) => Math.max(1, p - 1))
                         }
-                        return (
-                          <Button
-                            key={pageNum}
-                            variant={
-                              reviewsPage === pageNum ? "default" : "outline"
+                        disabled={reviewsPage === 1}
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        Previous
+                      </Button>
+                      <div className="flex items-center gap-1">
+                        {Array.from(
+                          { length: Math.min(5, reviewsTotalPages) },
+                          (_, i) => {
+                            let pageNum;
+                            if (reviewsTotalPages <= 5) {
+                              pageNum = i + 1;
+                            } else if (reviewsPage <= 3) {
+                              pageNum = i + 1;
+                            } else if (reviewsPage >= reviewsTotalPages - 2) {
+                              pageNum = reviewsTotalPages - 4 + i;
+                            } else {
+                              pageNum = reviewsPage - 2 + i;
                             }
-                            size="sm"
-                            onClick={() => setReviewsPage(pageNum)}
-                          >
-                            {pageNum}
-                          </Button>
-                        );
-                      }
-                    )}
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setReviewsPage((p) => Math.min(reviewsTotalPages, p + 1))
-                    }
-                    disabled={reviewsPage === reviewsTotalPages}
-                  >
-                    Next
-                    <ChevronRight className="w-4 h-4" />
-                  </Button>
-                </div>
+                            return (
+                              <Button
+                                key={pageNum}
+                                variant={
+                                  reviewsPage === pageNum
+                                    ? "default"
+                                    : "outline"
+                                }
+                                size="sm"
+                                onClick={() => setReviewsPage(pageNum)}
+                              >
+                                {pageNum}
+                              </Button>
+                            );
+                          }
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setReviewsPage((p) =>
+                            Math.min(reviewsTotalPages, p + 1)
+                          )
+                        }
+                        disabled={reviewsPage === reviewsTotalPages}
+                      >
+                        Next
+                        <ChevronRight className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
+                </>
               )}
-            </>
-          )}
             </div>
           </div>
         </div>
@@ -682,24 +730,26 @@ export function StorefrontClient({
                 <h2 className="text-2xl font-bold">About</h2>
               </div>
               <div className="col-span-4">
-            {data.about.imageUrl && (
-              <div className="relative w-full h-64 mb-4 rounded-lg overflow-hidden">
-                <Image
-                  src={data.about.imageUrl}
-                  alt={data.about.title || "About"}
-                  fill
-                  className="object-cover"
-                />
-              </div>
-            )}
-            {data.about.title && (
-              <h3 className="text-xl font-semibold mb-2">{data.about.title}</h3>
-            )}
-            {data.about.description && (
-              <p className="text-muted-foreground whitespace-pre-line">
-                {data.about.description}
-              </p>
-            )}
+                {data.about.imageUrl && (
+                  <div className="relative w-full h-64 mb-4 rounded-lg overflow-hidden">
+                    <Image
+                      src={data.about.imageUrl}
+                      alt={data.about.title || "About"}
+                      fill
+                      className="object-cover"
+                    />
+                  </div>
+                )}
+                {data.about.title && (
+                  <h3 className="text-xl font-semibold mb-2">
+                    {data.about.title}
+                  </h3>
+                )}
+                {data.about.description && (
+                  <p className="text-muted-foreground whitespace-pre-line">
+                    {data.about.description}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -717,56 +767,56 @@ export function StorefrontClient({
                 <h2 className="text-2xl font-bold">Policies</h2>
               </div>
               <div className="col-span-4">
-            <Accordion type="single" collapsible className="w-full">
-              {data.policies.shipping && (
-                <AccordionItem value="shipping">
-                  <AccordionTrigger>Shipping Policy</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.shipping}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.returns && (
-                <AccordionItem value="returns">
-                  <AccordionTrigger>Returns & Refunds</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.returns}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.cancellations && (
-                <AccordionItem value="cancellations">
-                  <AccordionTrigger>Cancellations</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.cancellations}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.customOrders && (
-                <AccordionItem value="custom-orders">
-                  <AccordionTrigger>Custom Orders</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.customOrders}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.privacy && (
-                <AccordionItem value="privacy">
-                  <AccordionTrigger>Privacy Policy</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.privacy}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {data.policies.additional && (
-                <AccordionItem value="additional">
-                  <AccordionTrigger>Additional Policies</AccordionTrigger>
-                  <AccordionContent className="whitespace-pre-line">
-                    {data.policies.additional}
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-            </Accordion>
+                <Accordion type="single" collapsible className="w-full">
+                  {data.policies.shipping && (
+                    <AccordionItem value="shipping">
+                      <AccordionTrigger>Shipping Policy</AccordionTrigger>
+                      <AccordionContent className="whitespace-pre-line">
+                        {data.policies.shipping}
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+                  {data.policies.returns && (
+                    <AccordionItem value="returns">
+                      <AccordionTrigger>Returns & Refunds</AccordionTrigger>
+                      <AccordionContent className="whitespace-pre-line">
+                        {data.policies.returns}
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+                  {data.policies.cancellations && (
+                    <AccordionItem value="cancellations">
+                      <AccordionTrigger>Cancellations</AccordionTrigger>
+                      <AccordionContent className="whitespace-pre-line">
+                        {data.policies.cancellations}
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+                  {data.policies.customOrders && (
+                    <AccordionItem value="custom-orders">
+                      <AccordionTrigger>Custom Orders</AccordionTrigger>
+                      <AccordionContent className="whitespace-pre-line">
+                        {data.policies.customOrders}
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+                  {data.policies.privacy && (
+                    <AccordionItem value="privacy">
+                      <AccordionTrigger>Privacy Policy</AccordionTrigger>
+                      <AccordionContent className="whitespace-pre-line">
+                        {data.policies.privacy}
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+                  {data.policies.additional && (
+                    <AccordionItem value="additional">
+                      <AccordionTrigger>Additional Policies</AccordionTrigger>
+                      <AccordionContent className="whitespace-pre-line">
+                        {data.policies.additional}
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+                </Accordion>
               </div>
             </div>
           </div>

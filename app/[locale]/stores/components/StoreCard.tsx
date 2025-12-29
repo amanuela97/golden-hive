@@ -61,7 +61,7 @@ export function StoreCard({ store }: StoreCardProps) {
     e.stopPropagation();
 
     const previousFollowing = isFollowing;
-    
+
     setIsToggling(true);
     try {
       if (isAuthenticated) {
@@ -140,12 +140,12 @@ export function StoreCard({ store }: StoreCardProps) {
           >
             <Heart
               className={`w-5 h-5 transition-all duration-200 ${
-                isFollowing
-                  ? "fill-primary text-primary"
-                  : "text-gray-700"
+                isFollowing ? "fill-primary text-primary" : "text-gray-700"
               }`}
-              style={{ 
-                filter: isFollowing ? "none" : "drop-shadow(0 1px 2px rgba(0,0,0,0.3))" 
+              style={{
+                filter: isFollowing
+                  ? "none"
+                  : "drop-shadow(0 1px 2px rgba(0,0,0,0.3))",
               }}
             />
           </button>
@@ -185,4 +185,3 @@ export function StoreCard({ store }: StoreCardProps) {
     </Card>
   );
 }
-

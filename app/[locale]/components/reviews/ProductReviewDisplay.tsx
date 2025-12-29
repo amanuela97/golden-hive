@@ -4,7 +4,7 @@ import { StarRating } from "./StarRating";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
-import { deleteProductReview } from "../../actions/reviews";
+import { deleteProductReview } from "@/app/[locale]/actions/reviews";
 import toast from "react-hot-toast";
 import { useRouter } from "@/i18n/navigation";
 import { formatDistanceToNow } from "date-fns";
@@ -27,14 +27,12 @@ interface ProductReviewDisplayProps {
   canDelete?: (reviewId: string) => boolean;
 }
 
-export function ProductReviewDisplay({
-  reviews,
-}: ProductReviewDisplayProps) {
+export function ProductReviewDisplay({ reviews }: ProductReviewDisplayProps) {
   const router = useRouter();
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const handleDelete = async (reviewId: string) => {
-    if (!confirm("Are you sure you want to delete this review?")) {
+    if (!window.confirm("Are you sure you want to delete this review?")) {
       return;
     }
 
@@ -111,4 +109,3 @@ export function ProductReviewDisplay({
     </div>
   );
 }
-

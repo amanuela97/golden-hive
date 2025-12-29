@@ -123,6 +123,7 @@ export function SearchResultsClient({
                   key={result.id}
                   product={{
                     id: result.id,
+                    slug: result.slug || null,
                     name: result.name,
                     description: result.description || null,
                     imageUrl: result.imageUrl || null,

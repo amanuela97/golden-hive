@@ -17,14 +17,14 @@ import { getDefaultInventoryLocation } from "./orders";
 
 /**
  * Fulfill an order (per inst.md)
- * 
+ *
  * This function implements the correct fulfillment logic:
  * - Decreases committed inventory
  * - Decreases on-hand inventory
  * - Does NOT change available inventory (was already reduced when order was created)
  * - Tracks fulfillment per line item (fulfilledQuantity)
  * - Stores fulfillment metadata (carrier, tracking, fulfilledBy)
- * 
+ *
  * Does NOT:
  * - Change payment status
  * - Issue refunds
@@ -88,7 +88,8 @@ export async function fulfillOrder(input: {
     if (order.workflowStatus === "on_hold") {
       return {
         success: false,
-        error: "Cannot fulfill order that is on hold. Please resolve the hold reason first.",
+        error:
+          "Cannot fulfill order that is on hold. Please resolve the hold reason first.",
       };
     }
 
@@ -140,14 +141,15 @@ export async function fulfillOrder(input: {
     // Process fulfillment in transaction
     await db.transaction(async (tx) => {
       const fulfilledAt = new Date();
-      let totalFulfilled = 0;
       let allItemsFulfilled = true;
 
       // Process each fulfilled item
       for (const fulfilledItem of input.fulfilledItems) {
         if (fulfilledItem.quantity === 0) continue;
 
-        const orderItem = items.find((item) => item.id === fulfilledItem.orderItemId);
+        const orderItem = items.find(
+          (item) => item.id === fulfilledItem.orderItemId
+        );
         if (!orderItem) continue;
 
         const currentFulfilled = orderItem.fulfilledQuantity || 0;
@@ -235,8 +237,6 @@ export async function fulfillOrder(input: {
           }
         }
 
-        totalFulfilled += fulfilledItem.quantity;
-
         // Check if this item is fully fulfilled
         if (newFulfilledQuantity < orderItem.quantity) {
           allItemsFulfilled = false;
@@ -285,9 +285,7 @@ export async function fulfillOrder(input: {
         .limit(1);
 
       const paymentStatus =
-        orderPaymentData.length > 0
-          ? orderPaymentData[0].paymentStatus
-          : null;
+        orderPaymentData.length > 0 ? orderPaymentData[0].paymentStatus : null;
       const currentOrderStatus =
         orderPaymentData.length > 0 ? orderPaymentData[0].status : "open";
 
@@ -310,7 +308,10 @@ export async function fulfillOrder(input: {
         .update(orders)
         .set({
           fulfillmentStatus: newFulfillmentStatus,
-          fulfilledAt: newFulfillmentStatus === "fulfilled" ? fulfilledAt : orders.fulfilledAt,
+          fulfilledAt:
+            newFulfillmentStatus === "fulfilled"
+              ? fulfilledAt
+              : orders.fulfilledAt,
           status: newOrderStatus,
           updatedAt: new Date(),
         })
@@ -337,11 +338,7 @@ export async function fulfillOrder(input: {
     console.error("Error fulfilling order:", error);
     return {
       success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to fulfill order",
+      error: error instanceof Error ? error.message : "Failed to fulfill order",
     };
   }
 }
-

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useActionState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,8 +11,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { createStoreForUser } from "../actions/store-setup";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { createStoreForUser } from "@/app/[locale]/actions/store-setup";
 import toast from "react-hot-toast";
 import { useRouter } from "@/i18n/navigation";
 import currenciesData from "@/data/currency/currency.json";
@@ -27,7 +33,9 @@ export default function StoreSetupForm() {
   const router = useRouter();
   const [storeName, setStoreName] = useState("");
   const [storeCurrency, setStoreCurrency] = useState("EUR");
-  const [unitSystem, setUnitSystem] = useState<"Metric system" | "Imperial system">("Metric system");
+  const [unitSystem, setUnitSystem] = useState<
+    "Metric system" | "Imperial system"
+  >("Metric system");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -67,7 +75,8 @@ export default function StoreSetupForm() {
         <CardHeader>
           <CardTitle>Set Up Your Store</CardTitle>
           <CardDescription>
-            Please provide some basic information about your store to get started.
+            Please provide some basic information about your store to get
+            started.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -118,7 +127,9 @@ export default function StoreSetupForm() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Metric system">Metric system</SelectItem>
-                  <SelectItem value="Imperial system">Imperial system</SelectItem>
+                  <SelectItem value="Imperial system">
+                    Imperial system
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -132,4 +143,3 @@ export default function StoreSetupForm() {
     </div>
   );
 }
-

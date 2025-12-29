@@ -20,6 +20,10 @@ import {
 import { eq, and, sql, or, desc, inArray, isNull } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import {
+  generateOrderNumber,
+  generateDraftOrderNumber,
+} from "@/lib/order-number";
 
 export type DraftOrderRow = {
   id: string;
@@ -1118,9 +1122,12 @@ async function completeDraftOrderInternal(
             orderId: orderId,
             type: "system",
             visibility: "internal",
-            message: `Order confirmation number generated: #${orderNumber}`,
+            message: `Order confirmation number generated: #${returnedOrderNumber}`,
             createdBy: createdBy,
-            metadata: { orderNumber } as Record<string, unknown>,
+            metadata: { orderNumber: returnedOrderNumber } as Record<
+              string,
+              unknown
+            >,
           },
         ]);
 
@@ -1182,9 +1189,12 @@ async function completeDraftOrderInternal(
           const listingIds = draft.items
             .map((item) => item.listingId)
             .filter((id): id is string => !!id);
-          
-          let listingMap = new Map<string, { slug: string | null; storeId: string | null }>();
-          let storeMap = new Map<string, { slug: string | null }>();
+
+          const listingMap = new Map<
+            string,
+            { slug: string | null; storeId: string | null }
+          >();
+          const storeMap = new Map<string, { slug: string | null }>();
 
           if (listingIds.length > 0) {
             const listings = await tx
@@ -1200,11 +1210,13 @@ async function completeDraftOrderInternal(
               listingMap.set(l.id, { slug: l.slug, storeId: l.storeId });
             }
 
-            const storeIds = Array.from(new Set(
-              Array.from(listingMap.values())
-                .map((l) => l.storeId)
-                .filter((id): id is string => !!id)
-            ));
+            const storeIds = Array.from(
+              new Set(
+                Array.from(listingMap.values())
+                  .map((l) => l.storeId)
+                  .filter((id): id is string => !!id)
+              )
+            );
 
             if (storeIds.length > 0) {
               const stores = await tx
@@ -1231,8 +1243,12 @@ async function completeDraftOrderInternal(
               customerName,
               customerEmail: draft.customerEmail,
               items: draft.items.map((item) => {
-                const listingInfo = item.listingId ? listingMap.get(item.listingId) : null;
-                const storeInfo = listingInfo?.storeId ? storeMap.get(listingInfo.storeId) : null;
+                const listingInfo = item.listingId
+                  ? listingMap.get(item.listingId)
+                  : null;
+                const storeInfo = listingInfo?.storeId
+                  ? storeMap.get(listingInfo.storeId)
+                  : null;
                 return {
                   title: item.title,
                   quantity: item.quantity,
@@ -1254,7 +1270,6 @@ async function completeDraftOrderInternal(
               currency: draft.currency,
               paymentStatus: markAsPaid ? "paid" : "pending",
               orderStatus: "open",
-              fulfillmentStatus: "unfulfilled",
               shippingAddress:
                 draft.shippingAddressLine1 ||
                 draft.shippingCity ||
@@ -1469,7 +1484,7 @@ export async function sendInvoice(
       replyTo: fromEmail && fromEmail.includes("@") ? fromEmail : undefined,
       subject: `Invoice #${draft.draftNumber} - Payment Required`,
       react: DraftInvoiceEmail({
-        draftNumber: draft.draftNumber,
+        draftNumber: parseInt(draft.draftNumber),
         customerName,
         items: draft.items.map((item) => ({
           title: item.title,
@@ -2175,10 +2190,14 @@ export async function duplicateDraftOrder(draftId: string): Promise<{
       };
     }
 
+    // Generate unique draft order number for the duplicate
+    const newDraftNumber = await generateDraftOrderNumber();
+
     // Create new draft order
     const newDraft = await db
       .insert(draftOrders)
       .values({
+        draftNumber: newDraftNumber,
         storeId: draft.storeId,
         customerId: draft.customerId,
         customerEmail: draft.customerEmail,

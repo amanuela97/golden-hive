@@ -5,6 +5,7 @@ import {
   customers,
   orders,
   orderItems,
+  orderPayments,
   listing,
   store,
   storeMembers,
@@ -20,7 +21,6 @@ import {
   desc,
   asc,
   isNull,
-  isNotNull,
   ne,
   inArray,
 } from "drizzle-orm";
@@ -171,38 +171,39 @@ export async function listCustomers(filters: CustomerFilters = {}): Promise<{
           : and(...conditions)
         : searchCondition || undefined;
 
-    // Determine sort
-    let orderBy;
+    // Determine sort - always use array for consistency
+    let orderBy: (ReturnType<typeof asc> | ReturnType<typeof desc>)[];
     const sortDirection = filters.sortDirection === "desc" ? desc : asc;
     switch (filters.sortBy) {
       case "newest":
-        orderBy = sortDirection(customers.createdAt);
+        orderBy = [sortDirection(customers.createdAt)];
         break;
       case "oldest":
-        orderBy = sortDirection(customers.createdAt);
+        orderBy = [sortDirection(customers.createdAt)];
         break;
       case "total_spent":
-        orderBy = sortDirection(sql`total_spent`);
+        orderBy = [sortDirection(sql`total_spent`)];
         break;
       case "orders_count":
-        orderBy = sortDirection(sql`orders_count`);
+        orderBy = [sortDirection(sql`orders_count`)];
         break;
       case "name_asc":
-        orderBy = asc(customers.firstName, customers.lastName);
+        orderBy = [asc(customers.firstName), asc(customers.lastName)];
         break;
       case "name_desc":
-        orderBy = desc(customers.firstName, customers.lastName);
+        orderBy = [desc(customers.firstName), desc(customers.lastName)];
         break;
       default:
-        orderBy = desc(customers.createdAt);
+        orderBy = [desc(customers.createdAt)];
     }
 
     // For stores, we need to filter orders to only count orders with their products
     // For admins, count all orders
-    let ordersJoinCondition = eq(customers.id, orders.customerId);
+    let ordersJoinCondition: ReturnType<typeof eq> | ReturnType<typeof and> =
+      eq(customers.id, orders.customerId);
     if (!isAdmin && storeId) {
       // Only count orders that have items from this store's listings
-      ordersJoinCondition = and(
+      const condition = and(
         eq(customers.id, orders.customerId),
         sql`EXISTS (
           SELECT 1 
@@ -212,6 +213,9 @@ export async function listCustomers(filters: CustomerFilters = {}): Promise<{
           AND l.store_id = ${storeId}
         )`
       );
+      if (condition) {
+        ordersJoinCondition = condition;
+      }
     }
 
     // Get total count
@@ -228,7 +232,20 @@ export async function listCustomers(filters: CustomerFilters = {}): Promise<{
     // Get customers with aggregated data
     // For admins: Group customers by email to show one customer per email
     // For stores: Show individual customers (they only see customers with their products anyway)
-    let customersData: any[];
+    let customersData: Array<{
+      id: string;
+      email: string;
+      firstName: string | null;
+      lastName: string | null;
+      phone: string | null;
+      storeId: string | null;
+      createdAt: Date;
+      ordersCount: number;
+      totalSpent: string;
+      lastOrderDate: Date | null;
+      isGrouped?: boolean;
+      groupedCustomerIds?: string[];
+    }>;
 
     if (isAdmin) {
       // For admins: Get all customers, then group by email
@@ -247,21 +264,22 @@ export async function listCustomers(filters: CustomerFilters = {}): Promise<{
 
       // Get orders for all customers
       const customerIds = allCustomers.map((c) => c.id);
-      const customerOrders = customerIds.length > 0
-        ? await db
-            .select({
-              customerId: orders.customerId,
-              id: orders.id,
-              totalAmount: orders.totalAmount,
-              createdAt: orders.createdAt,
-            })
-            .from(orders)
-            .where(
-              customerIds.length > 0
-                ? inArray(orders.customerId, customerIds)
-                : undefined
-            )
-        : [];
+      const customerOrders =
+        customerIds.length > 0
+          ? await db
+              .select({
+                customerId: orders.customerId,
+                id: orders.id,
+                totalAmount: orders.totalAmount,
+                createdAt: orders.createdAt,
+              })
+              .from(orders)
+              .where(
+                customerIds.length > 0
+                  ? inArray(orders.customerId, customerIds)
+                  : undefined
+              )
+          : [];
 
       // Group customers by email
       const customersByEmail = new Map<string, typeof allCustomers>();
@@ -275,7 +293,7 @@ export async function listCustomers(filters: CustomerFilters = {}): Promise<{
 
       // Aggregate data for each email group
       customersData = Array.from(customersByEmail.entries()).map(
-        ([email, customerGroup]) => {
+        ([, customerGroup]) => {
           // Use the most recent customer as the base
           const primaryCustomer = customerGroup.sort(
             (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
@@ -285,8 +303,8 @@ export async function listCustomers(filters: CustomerFilters = {}): Promise<{
           const groupCustomerIds = customerGroup.map((c) => c.id);
 
           // Aggregate orders for all customers in this group
-          const groupOrders = customerOrders.filter((o) =>
-            o.customerId && groupCustomerIds.includes(o.customerId)
+          const groupOrders = customerOrders.filter(
+            (o) => o.customerId && groupCustomerIds.includes(o.customerId)
           );
 
           const ordersCount = new Set(groupOrders.map((o) => o.id)).size;
@@ -319,10 +337,11 @@ export async function listCustomers(filters: CustomerFilters = {}): Promise<{
       );
 
       // Sort the grouped data
+      const isDesc = filters.sortDirection === "desc";
       customersData.sort((a, b) => {
         const aDate = a.createdAt.getTime();
         const bDate = b.createdAt.getTime();
-        return sortDirection === "desc" ? bDate - aDate : aDate - bDate;
+        return isDesc ? bDate - aDate : aDate - bDate;
       });
 
       // Apply pagination
@@ -349,7 +368,7 @@ export async function listCustomers(filters: CustomerFilters = {}): Promise<{
         .leftJoin(orders, ordersJoinCondition)
         .where(whereClause)
         .groupBy(customers.id)
-        .orderBy(orderBy)
+        .orderBy(...orderBy)
         .limit(pageSize)
         .offset(page * pageSize);
     }
@@ -440,10 +459,7 @@ export async function getCustomer(customerId: string): Promise<{
           .innerJoin(orderItems, eq(orders.id, orderItems.orderId))
           .innerJoin(listing, eq(orderItems.listingId, listing.id))
           .where(
-            and(
-              eq(orders.customerId, customerId),
-              eq(listing.storeId, storeId)
-            )
+            and(eq(orders.customerId, customerId), eq(listing.storeId, storeId))
           )
           .limit(1);
 
@@ -590,7 +606,7 @@ export async function createCustomer(input: {
         notes: input.notes,
         storeId: finalStoreId,
       })
-      .returning({ id: customers.id });
+      .returning();
 
     return {
       success: true,
@@ -816,6 +832,7 @@ export async function searchCustomers(query: string): Promise<{
 
 /**
  * Get orders for a customer
+ * Groups multi-store orders by checkout session for customer view
  */
 export async function getCustomerOrders(customerId: string): Promise<{
   success: boolean;
@@ -829,6 +846,14 @@ export async function getCustomerOrders(customerId: string): Promise<{
     status: string;
     createdAt: Date;
     itemsCount: number;
+    stripeCheckoutSessionId?: string | null;
+    isGrouped?: boolean;
+    subOrders?: Array<{
+      id: string;
+      orderNumber: string;
+      storeName?: string;
+      totalAmount: string;
+    }>;
   }>;
   error?: string;
 }> {
@@ -859,10 +884,7 @@ export async function getCustomerOrders(customerId: string): Promise<{
           .innerJoin(orderItems, eq(orders.id, orderItems.orderId))
           .innerJoin(listing, eq(orderItems.listingId, listing.id))
           .where(
-            and(
-              eq(orders.customerId, customerId),
-              eq(listing.storeId, storeId)
-            )
+            and(eq(orders.customerId, customerId), eq(listing.storeId, storeId))
           )
           .limit(1);
 
@@ -875,7 +897,7 @@ export async function getCustomerOrders(customerId: string): Promise<{
       }
     }
 
-    // Get orders
+    // Get orders with checkout session IDs and store names
     const ordersData = await db
       .select({
         id: orders.id,
@@ -887,16 +909,96 @@ export async function getCustomerOrders(customerId: string): Promise<{
         status: orders.status,
         createdAt: orders.createdAt,
         itemsCount: sql<number>`COUNT(${orderItems.id})::int`,
+        stripeCheckoutSessionId: orderPayments.stripeCheckoutSessionId,
+        storeName: store.storeName,
       })
       .from(orders)
       .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+      .leftJoin(orderPayments, eq(orders.id, orderPayments.orderId))
+      .leftJoin(store, eq(orders.storeId, store.id))
       .where(eq(orders.customerId, customerId))
-      .groupBy(orders.id)
+      .groupBy(
+        orders.id,
+        orders.orderNumber,
+        orders.totalAmount,
+        orders.currency,
+        orders.paymentStatus,
+        orders.fulfillmentStatus,
+        orders.status,
+        orders.createdAt,
+        orderPayments.stripeCheckoutSessionId,
+        store.storeName
+      )
       .orderBy(desc(orders.createdAt));
+
+    // Group orders by checkout session ID
+    const groupedOrders = new Map<string, typeof ordersData>();
+    const standaloneOrders: typeof ordersData = [];
+
+    for (const order of ordersData) {
+      if (order.stripeCheckoutSessionId) {
+        const sessionId = order.stripeCheckoutSessionId;
+        if (!groupedOrders.has(sessionId)) {
+          groupedOrders.set(sessionId, []);
+        }
+        groupedOrders.get(sessionId)!.push(order);
+      } else {
+        standaloneOrders.push(order);
+      }
+    }
+
+    // Build result array
+    const result: Array<
+      (typeof ordersData)[0] & {
+        isGrouped?: boolean;
+        subOrders?: Array<{
+          id: string;
+          orderNumber: string;
+          storeName?: string;
+          totalAmount: string;
+        }>;
+      }
+    > = [];
+
+    // Add grouped orders (one entry per checkout session)
+    for (const [, sessionOrders] of groupedOrders.entries()) {
+      if (sessionOrders.length > 1) {
+        // Multi-store checkout - create grouped entry
+        const primaryOrder = sessionOrders[0];
+        const totalAmount = sessionOrders
+          .reduce((sum, o) => sum + parseFloat(o.totalAmount || "0"), 0)
+          .toFixed(2);
+
+        result.push({
+          ...primaryOrder,
+          totalAmount: totalAmount,
+          itemsCount: sessionOrders.reduce((sum, o) => sum + o.itemsCount, 0),
+          isGrouped: true,
+          subOrders: sessionOrders.map((o) => ({
+            id: o.id,
+            orderNumber: o.orderNumber,
+            storeName: o.storeName || undefined,
+            totalAmount: o.totalAmount,
+          })),
+        });
+      } else {
+        // Single order with session ID
+        result.push(sessionOrders[0]);
+      }
+    }
+
+    // Add standalone orders (no session ID)
+    result.push(...standaloneOrders);
+
+    // Sort by creation date (most recent first)
+    result.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
 
     return {
       success: true,
-      data: ordersData.map((order) => ({
+      data: result.map((order) => ({
         id: order.id,
         orderNumber: order.orderNumber,
         totalAmount: order.totalAmount,
@@ -906,6 +1008,9 @@ export async function getCustomerOrders(customerId: string): Promise<{
         status: order.status,
         createdAt: order.createdAt,
         itemsCount: order.itemsCount,
+        stripeCheckoutSessionId: order.stripeCheckoutSessionId || undefined,
+        isGrouped: order.isGrouped || false,
+        subOrders: order.subOrders,
       })),
     };
   } catch (error) {

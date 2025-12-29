@@ -58,7 +58,9 @@ export function DraftOrdersTable({
       return <Badge className="bg-green-100 text-green-800">Paid</Badge>;
     }
     if (invoiceSent && paymentStatus === "pending") {
-      return <Badge className="bg-orange-100 text-orange-800">Pending payment</Badge>;
+      return (
+        <Badge className="bg-orange-100 text-orange-800">Pending payment</Badge>
+      );
     }
     if (invoiceSent) {
       return <Badge className="bg-blue-100 text-blue-800">Invoice sent</Badge>;
@@ -248,9 +250,9 @@ export function DraftOrdersTable({
   });
 
   const selectedCount = Object.keys(rowSelection).length;
-  const selectedRows = table.getRowModel().rows.filter((row) =>
-    rowSelection[row.id]
-  );
+  const selectedRows = table
+    .getRowModel()
+    .rows.filter((row) => rowSelection[row.id]);
   const selectedDrafts = selectedRows.map((row) => row.original);
 
   return (
@@ -373,4 +375,3 @@ export function DraftOrdersTable({
     </div>
   );
 }
-
