@@ -1,5 +1,7 @@
 import FooterManager from "../FooterManager";
 
+export const dynamic = "force-dynamic";
+
 export default function FooterContentPage() {
   return (
     <div className="min-h-screen bg-background">

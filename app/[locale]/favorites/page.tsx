@@ -2,6 +2,8 @@ import { getFavorites } from "@/app/[locale]/actions/favorites";
 import { FavoritesClient } from "./FavoritesClient";
 import { PublicProduct } from "../actions/public-products";
 
+export const dynamic = "force-dynamic";
+
 export default async function FavoritesPage() {
   const favorites = await getFavorites("en");
 

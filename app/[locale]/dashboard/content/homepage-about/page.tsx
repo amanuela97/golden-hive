@@ -1,5 +1,7 @@
 import AboutManager from "../AboutManager";
 
+export const dynamic = "force-dynamic";
+
 export default function HomepageAboutContentPage() {
   return (
     <div className="min-h-screen bg-background">

@@ -1,6 +1,8 @@
 import { SearchResultsClient } from "./SearchResultsClient";
 import { Suspense } from "react";
 
+export const dynamic = "force-dynamic";
+
 interface SearchPageProps {
   searchParams: Promise<{ q?: string; page?: string }>;
 }

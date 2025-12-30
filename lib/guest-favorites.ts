@@ -153,6 +153,10 @@ export function clearGuestFavorites(): void {
  * Get expiry date as a readable string
  */
 export function getExpiryDate(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
   const stored = localStorage.getItem(GUEST_FAVORITES_KEY);
   if (!stored) return "";
 

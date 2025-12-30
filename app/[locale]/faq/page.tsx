@@ -1,4 +1,4 @@
-import { getLocale } from "next-intl/server";
+import { getLocale, setRequestLocale } from "next-intl/server";
 import { Suspense } from "react";
 import { getPublicFaq } from "../actions/faq";
 import { FaqSection } from "../components/faq-section";
@@ -6,6 +6,7 @@ import { FaqSection } from "../components/faq-section";
 async function FaqLoader() {
   try {
     const locale = await getLocale();
+    setRequestLocale(locale);
     const result = await getPublicFaq(locale);
 
     if (result.success && result.result && result.result.length > 0) {
@@ -27,7 +28,14 @@ async function FaqLoader() {
     return null;
   }
 }
-export default async function FaqPage() {
+export default async function FaqPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
+  setRequestLocale(locale);
+
   return (
     <Suspense fallback={null}>
       <FaqLoader />

@@ -1,6 +1,8 @@
 import { getFollowedStores } from "@/app/[locale]/actions/favorites";
 import { FavoriteStoresClient } from "./FavoriteStoresClient";
 
+export const dynamic = "force-dynamic";
+
 export default async function FavoriteStoresPage() {
   const result = await getFollowedStores();
 
@@ -10,4 +12,3 @@ export default async function FavoriteStoresPage() {
     </div>
   );
 }
-

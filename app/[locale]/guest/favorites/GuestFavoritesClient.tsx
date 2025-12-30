@@ -29,10 +29,11 @@ export function GuestFavoritesClient() {
   const [products, setProducts] = useState<PublicProduct[]>([]);
   const [stores, setStores] = useState<PublicStore[]>([]);
   const [loading, setLoading] = useState(true);
-  const expiryDate = getExpiryDate();
+  const [expiryDate, setExpiryDate] = useState<string>("");
 
   useEffect(() => {
     async function loadFavorites() {
+      setExpiryDate(getExpiryDate());
       const favorites = getGuestFavorites();
 
       if (favorites.products.length === 0 && favorites.stores.length === 0) {

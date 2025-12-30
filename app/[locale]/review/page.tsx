@@ -14,6 +14,8 @@ function isValidUUID(str: string): boolean {
   return uuidRegex.test(str);
 }
 
+export const dynamic = "force-dynamic";
+
 interface ReviewPageProps {
   searchParams: Promise<{
     order?: string;

@@ -5,14 +5,10 @@ import { z } from "zod";
  */
 const positiveMoney = z.number().positive();
 const positiveInt = z.number().int().positive();
-const isoDateString = z
-  .string()
-  .datetime({ offset: true })
-  .or(z.string().datetime()); // allow both with/without TZ
+const isoDateString = z.iso.datetime({ offset: true }).or(z.iso.datetime()); // allow both with/without TZ
 const optionalIsoDate = isoDateString.nullable().optional();
 
 const DiscountValueTypeSchema = z.enum(["fixed", "percentage"]);
-
 /**
  * Targets (no collections yet)
  */
