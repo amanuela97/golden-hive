@@ -21,7 +21,7 @@ import { useRouter } from "@/i18n/navigation";
 import Image from "next/image";
 interface OrderWithItems {
   id: string;
-  orderNumber: number;
+  orderNumber: string;
   totalAmount: string;
   refundedAmount: string | null;
   currency: string;

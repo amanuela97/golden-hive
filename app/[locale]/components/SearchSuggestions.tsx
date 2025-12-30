@@ -27,6 +27,7 @@ export function SearchSuggestions({
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const debouncedQuery = useDebounce(query, 300);
   const containerRef = useRef<HTMLDivElement>(null);
+  const isClickingInsideRef = useRef(false);
 
   // Fetch suggestions
   useEffect(() => {
@@ -61,6 +62,41 @@ export function SearchSuggestions({
     setSelectedIndex(-1);
   }, [suggestions]);
 
+  const handleSuggestionClick = useCallback(
+    (suggestion: SearchResult) => {
+      onSelect();
+      let url = "";
+
+      if (suggestion.type === "product") {
+        // Always use slug if available, fallback to id only if slug is missing
+        if (suggestion.slug) {
+          url = `/products/${suggestion.slug}`;
+        } else {
+          // Fallback to id if slug is not available (shouldn't happen in normal cases)
+          console.warn(
+            "Product suggestion missing slug, using id:",
+            suggestion
+          );
+          url = `/products/${suggestion.id}`;
+        }
+      } else if (suggestion.type === "store") {
+        if (!suggestion.slug) {
+          console.warn("Store suggestion missing slug:", suggestion);
+          return;
+        }
+        url = `/store/${suggestion.slug}`;
+      } else if (suggestion.type === "category") {
+        url = `/c?id=${encodeURIComponent(suggestion.id)}`;
+      }
+
+      if (url) {
+        router.push(url);
+        onClose();
+      }
+    },
+    [router, onSelect, onClose]
+  );
+
   // Handle keyboard navigation
   useEffect(() => {
     if (!isOpen) return;
@@ -85,50 +121,42 @@ export function SearchSuggestions({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, suggestions, selectedIndex, onClose]);
+  }, [isOpen, suggestions, selectedIndex, onClose, handleSuggestionClick]);
 
   // Handle clicking outside
   useEffect(() => {
+    if (!isOpen) return;
+
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        onClose();
+      // If we just clicked inside, don't close
+      if (isClickingInsideRef.current) {
+        isClickingInsideRef.current = false;
+        return;
       }
+
+      const target = event.target as Node;
+
+      // Don't close if clicking inside the container
+      if (containerRef.current?.contains(target)) {
+        return;
+      }
+
+      // Don't close if clicking on the search input
+      if (target instanceof Element && target.closest('input[type="search"]')) {
+        return;
+      }
+
+      // Close if clicking outside
+      onClose();
     };
 
-    if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () =>
-        document.removeEventListener("mousedown", handleClickOutside);
-    }
+    // Use click event instead of mousedown to allow button clicks to process first
+    document.addEventListener("click", handleClickOutside);
+
+    return () => {
+      document.removeEventListener("click", handleClickOutside);
+    };
   }, [isOpen, onClose]);
-
-  const handleSuggestionClick = useCallback(
-    (suggestion: SearchResult) => {
-      onSelect();
-      let url = "";
-
-      if (suggestion.type === "product") {
-        url = `/products/${suggestion.slug || suggestion.id}`;
-      } else if (suggestion.type === "store") {
-        if (!suggestion.slug) {
-          console.warn("Store suggestion missing slug:", suggestion);
-          return;
-        }
-        url = `/store/${suggestion.slug}`;
-      } else if (suggestion.type === "category") {
-        url = `/c?id=${encodeURIComponent(suggestion.id)}`;
-      }
-
-      if (url) {
-        router.push(url);
-        onClose();
-      }
-    },
-    [router, onSelect, onClose]
-  );
 
   // Group suggestions by type
   const products = suggestions.filter((s) => s.type === "product");
@@ -150,7 +178,16 @@ export function SearchSuggestions({
     return (
       <button
         key={`${suggestion.type}-${suggestion.id}`}
-        onClick={() => handleSuggestionClick(suggestion)}
+        type="button"
+        onMouseDown={() => {
+          // Mark that we're clicking inside to prevent outside click handler from firing
+          isClickingInsideRef.current = true;
+        }}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleSuggestionClick(suggestion);
+        }}
         className={cn(
           "w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-accent/50 transition-colors",
           isSelected && "bg-accent/50"
@@ -258,7 +295,14 @@ export function SearchSuggestions({
 
           <div className="border-t mt-2 pt-2">
             <button
-              onClick={() => {
+              type="button"
+              onMouseDown={() => {
+                // Mark that we're clicking inside to prevent outside click handler from firing
+                isClickingInsideRef.current = true;
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 router.push(`/search?q=${encodeURIComponent(debouncedQuery)}`);
                 onSelect();
                 onClose();

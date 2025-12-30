@@ -231,6 +231,9 @@ export function MarketplaceHeader() {
                 <DropdownMenuItem asChild>
                   <Link href="/products">Products</Link>
                 </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/feedback">Feedback</Link>
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
 

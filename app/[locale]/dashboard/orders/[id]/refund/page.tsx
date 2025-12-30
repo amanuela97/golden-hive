@@ -149,11 +149,8 @@ export default async function RefundPage({ params }: RefundPageProps) {
     );
   }
 
-  // Convert orderNumber from string to number for the component
-  const orderData = {
-    ...result.data,
-    orderNumber: Number(result.data.orderNumber),
-  };
+  // Keep orderNumber as string (it's stored as text in database)
+  const orderData = result.data;
 
   return (
     <DashboardWrapper userRole={roleName}>

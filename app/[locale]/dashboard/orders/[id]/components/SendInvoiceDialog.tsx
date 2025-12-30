@@ -23,7 +23,7 @@ interface SendInvoiceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orderId: string;
-  orderNumber: number;
+  orderNumber: string;
   customerEmail: string | null;
   storeOwnerEmail: string | null;
   onSuccess: () => void;

@@ -3278,7 +3278,7 @@ export async function cancelOrder(input: {
           to: order.customerEmail!,
           subject: `Order #${order.orderNumber} Cancellation`,
           react: OrderCancellationEmail({
-            orderNumber: Number(order.orderNumber),
+            orderNumber: order.orderNumber,
             customerName,
             customerEmail: order.customerEmail!,
             cancellationReason: input.cancellationReason,
@@ -3549,7 +3549,7 @@ export async function sendInvoiceForOrder(input: {
       subject: `Invoice ${invoiceNumber || `#${order.orderNumber}`} - Payment Required`,
       react: OrderInvoiceEmail({
         invoiceNumber: invoiceNumber || "",
-        orderNumber: Number(order.orderNumber),
+        orderNumber: order.orderNumber,
         customerName,
         totalAmount: order.totalAmount,
         currency: order.currency,
@@ -3748,7 +3748,7 @@ export async function sendInvoicePdfForOrder(input: {
       subject: `Invoice ${invoiceNumber || `#${order.orderNumber}`} - ${order.customerEmail}`,
       react: OrderInvoicePdfEmail({
         invoiceNumber: invoiceNumber || `#${order.orderNumber}`,
-        orderNumber: Number(order.orderNumber),
+        orderNumber: order.orderNumber,
         customerName,
         totalAmount: order.totalAmount,
         currency: order.currency,
@@ -5051,7 +5051,7 @@ export async function processRefund(input: {
           to: order.customerEmail,
           subject: `Refund Processed - Order #${order.orderNumber}`,
           react: RefundConfirmationEmail({
-            orderNumber: Number(order.orderNumber),
+            orderNumber: order.orderNumber,
             invoiceNumber: order.invoiceNumber,
             customerName,
             refundAmount: refundAmount.toString(),

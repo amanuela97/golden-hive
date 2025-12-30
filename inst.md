@@ -1,8 +1,75 @@
-I'll help you implement ShipEngine shipping logic and a public tracking page. Let me first explore your codebase to understand the current order and shipment structure.
+# ShipEngine Shipping & Tracking Implementation Guide
 
-[8 tools called]
+## 📋 Overview
 
-Now I have a good understanding of your codebase. Let me create a comprehensive implementation plan for ShipEngine integration with a public tracking page. Based on your schema, you already have a `fulfillments` table with `trackingNumber`, `trackingUrl`, and `carrier` fields, which is perfect.
+This guide implements ShipEngine integration with a public tracking page for a multi-vendor marketplace. The system supports:
+
+- **Two-level fulfillment status**: Vendor-level and master order-level
+- **Manual vendor fulfillment**: Vendors manually mark orders as shipped
+- **Payment-gated tracking**: Fulfillment only starts after payment is confirmed
+- **Public tracking page**: Customers can track orders using a secure token
+
+## 🎯 Key Concepts
+
+### Fulfillment Status (Two Levels)
+
+**A) Vendor-Order Fulfillment** (per vendor, implicit in UI)
+
+- `unfulfilled` → vendor hasn't shipped anything yet
+- `partial` → vendor shipped some of their items
+- `fulfilled` → vendor shipped all of their items
+- `canceled` → vendor fulfillment was canceled
+
+**B) Master Order Fulfillment** (admin + customer, derived automatically)
+
+- `unfulfilled` → no vendor has shipped anything
+- `partial` → at least one vendor shipped, but not all
+- `fulfilled` → all vendors shipped all items
+- `canceled` → order fulfillment canceled
+
+**Note**: Master fulfillment status is calculated from all vendor fulfillments - no separate enum needed.
+
+### Workflow Status (Internal Control)
+
+- `normal` → standard processing
+- `in_progress` → vendors are preparing shipments
+- `on_hold` → address issue, fraud review, stock problem
+
+**This is for ops/admin/automation, NOT customer-facing logic.**
+
+### Order Status (Lifecycle/Archival)
+
+- `draft` → cart / not checked out
+- `open` → paid, active, in fulfillment
+- `completed` → fulfilled + delivered (or closed)
+- `canceled` → canceled before fulfillment
+- `archived` → hidden from normal views
+
+**This should not change frequently.**
+
+### When Fulfillment Tracking Starts
+
+✅ **Only when `orderPaymentStatus = 'paid'`**
+
+- **Before payment**: No shipping, no tracking, no fulfillment
+- **After payment**: Vendors are notified, fulfillment begins
+
+### Shipping Model (MVP - Manual)
+
+✅ **Manual by vendors** (like Etsy)
+
+Flow:
+
+1. Vendor logs in
+2. Sees their portion of the order
+3. Clicks "Mark as shipped"
+4. Enters:
+   - Carrier
+   - Tracking number
+5. System updates:
+   - Vendor fulfillment status
+   - Tracking info
+   - Master order fulfillment status (calculated)
 
 ## Implementation Plan for ShipEngine Shipping & Tracking
 
@@ -172,20 +239,23 @@ export function generateTrackingUrl(
 }
 ```
 
-### 3. **Update Database Schema (Migration)**
+### 3. **Database Schema**
 
-You'll need to add a few fields to support ShipEngine tracking. Create a new migration:
+Your schema already has the correct enums. You just need to add tracking fields to the `fulfillments` table:
 
-```typescript
-// Add to fulfillments table:
-// - carrierCode: text (for ShipEngine carrier codes like 'usps', 'fedex')
-// - lastTrackedAt: timestamp (last time tracking was updated)
-// - trackingStatus: text (current status from ShipEngine)
-// - trackingData: jsonb (full tracking response from ShipEngine)
+**Add to `fulfillments` table:**
 
-// Add unique token for public tracking access to orders table:
-// - trackingToken: text (unique token for public tracking page)
-```
+- `carrierCode`: text (for ShipEngine carrier codes like 'usps', 'fedex')
+- `lastTrackedAt`: timestamp (last time tracking was updated)
+- `trackingStatus`: text (current status from ShipEngine)
+- `trackingData`: jsonb (full tracking response from ShipEngine)
+- `vendorFulfillmentStatus`: orderFulfillmentStatusEnum (vendor-level status)
+
+**Add to `orders` table:**
+
+- `trackingToken`: text unique (for public tracking page access)
+
+**Note**: The `orders.fulfillmentStatus` field already exists and should be calculated from all vendor fulfillments.
 
 Update your `db/schema.ts`:
 
@@ -201,16 +271,23 @@ export const fulfillments = pgTable("fulfillments", {
   locationId: uuid("location_id").references(() => inventoryLocations.id, {
     onDelete: "set null",
   }),
-  status: text("status").default("pending"),
+  // Vendor-level fulfillment status
+  vendorFulfillmentStatus: orderFulfillmentStatusEnum(
+    "vendor_fulfillment_status"
+  )
+    .default("unfulfilled")
+    .notNull(),
+  // Tracking fields
   trackingNumber: text("tracking_number"),
   trackingUrl: text("tracking_url"),
   carrier: text("carrier"), // Display name: UPS, FedEx, etc.
   carrierCode: text("carrier_code"), // ShipEngine code: ups, fedex, usps
   trackingStatus: text("tracking_status"), // Latest status from ShipEngine
-  trackingData: text("tracking_data"), // JSON string of full tracking response
+  trackingData: jsonb("tracking_data"), // Full tracking response from ShipEngine
   lastTrackedAt: timestamp("last_tracked_at"), // When tracking was last updated
-  fulfilledBy: text("fulfilled_by"),
-  fulfilledAt: timestamp("fulfilled_at"),
+  // Fulfillment metadata
+  fulfilledBy: text("fulfilled_by"), // User ID who marked as shipped
+  fulfilledAt: timestamp("fulfilled_at"), // When vendor marked as shipped
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -225,7 +302,82 @@ export const orders = pgTable("orders", {
 });
 ```
 
-### 4. **Server Action for Tracking**
+### 4. **Calculate Master Order Fulfillment Status**
+
+Create a helper function to calculate master fulfillment status from all vendor fulfillments:
+
+```typescript
+// In app/[locale]/actions/orders-fulfillment.ts or a new utils file
+
+import { db } from "@/db";
+import { fulfillments, orders } from "@/db/schema";
+import { eq, and, sql } from "drizzle-orm";
+
+/**
+ * Calculate master order fulfillment status from all vendor fulfillments
+ */
+export async function calculateOrderFulfillmentStatus(
+  orderId: string
+): Promise<"unfulfilled" | "partial" | "fulfilled" | "canceled"> {
+  const orderFulfillments = await db
+    .select({
+      vendorFulfillmentStatus: fulfillments.vendorFulfillmentStatus,
+    })
+    .from(fulfillments)
+    .where(eq(fulfillments.orderId, orderId));
+
+  if (orderFulfillments.length === 0) {
+    return "unfulfilled";
+  }
+
+  // Check if any are canceled
+  const hasCanceled = orderFulfillments.some(
+    (f) => f.vendorFulfillmentStatus === "canceled"
+  );
+  if (hasCanceled) {
+    return "canceled";
+  }
+
+  // Check if all are fulfilled
+  const allFulfilled = orderFulfillments.every(
+    (f) => f.vendorFulfillmentStatus === "fulfilled"
+  );
+  if (allFulfilled) {
+    return "fulfilled";
+  }
+
+  // Check if any are fulfilled or partial
+  const hasFulfilled = orderFulfillments.some(
+    (f) =>
+      f.vendorFulfillmentStatus === "fulfilled" ||
+      f.vendorFulfillmentStatus === "partial"
+  );
+  if (hasFulfilled) {
+    return "partial";
+  }
+
+  return "unfulfilled";
+}
+
+/**
+ * Update master order fulfillment status
+ */
+export async function updateOrderFulfillmentStatus(orderId: string) {
+  const newStatus = await calculateOrderFulfillmentStatus(orderId);
+
+  await db
+    .update(orders)
+    .set({
+      fulfillmentStatus: newStatus,
+      updatedAt: new Date(),
+    })
+    .where(eq(orders.id, orderId));
+
+  return newStatus;
+}
+```
+
+### 5. **Server Action for Tracking**
 
 Create `app/[locale]/actions/tracking.ts`:
 
@@ -436,67 +588,143 @@ export async function generateOrderTrackingToken(orderId: string) {
 }
 ```
 
-### 5. **Update Fulfillment Action**
+### 6. **Update Fulfillment Action (Manual Vendor Fulfillment)**
 
-Update `app/[locale]/actions/orders-fulfillment.ts` to include carrier code and generate tracking token:
+Update `app/[locale]/actions/orders-fulfillment.ts` to support manual vendor fulfillment:
+
+**Key Requirements:**
+
+1. Only allow fulfillment when `orderPaymentStatus = 'paid'`
+2. Vendor manually enters carrier and tracking number
+3. Update vendor fulfillment status
+4. Calculate and update master order fulfillment status
+5. Generate tracking token if it doesn't exist
 
 ```typescript
-// Add to fulfillOrder function, after creating the fulfillment:
+// In fulfillOrder function (app/[locale]/actions/orders-fulfillment.ts)
 
-// Generate tracking URL if not provided
-const trackingUrl =
-  input.trackingUrl ||
-  (input.trackingNumber && input.carrier
-    ? generateTrackingUrl(input.carrier, input.trackingNumber)
-    : undefined);
+import { db } from "@/db";
+import { fulfillments, orders, orderItems, listing } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
+import { generateTrackingUrl } from "@/lib/shipengine";
+import { nanoid } from "nanoid";
+import { updateOrderFulfillmentStatus } from "./orders-fulfillment";
 
-// Map carrier name to ShipEngine carrier code
-const carrierCodeMap: Record<string, string> = {
-  USPS: "usps",
-  FedEx: "fedex",
-  UPS: "ups",
-  DHL: "dhl",
-  "Canada Post": "canada_post",
-  "Royal Mail": "royal_mail",
-};
+export async function fulfillOrder(input: {
+  orderId: string;
+  storeId: string; // Vendor's store ID
+  trackingNumber: string;
+  carrier: string; // Display name: "UPS", "FedEx", etc.
+  trackingUrl?: string;
+  fulfilledBy?: string;
+}) {
+  return await db.transaction(async (tx) => {
+    // 1. Verify order is paid (fulfillment only starts after payment)
+    const order = await tx
+      .select({
+        id: orders.id,
+        paymentStatus: orders.paymentStatus,
+        trackingToken: orders.trackingToken,
+      })
+      .from(orders)
+      .where(eq(orders.id, input.orderId))
+      .limit(1);
 
-const carrierCode = input.carrier
-  ? carrierCodeMap[input.carrier] || input.carrier.toLowerCase()
-  : undefined;
+    if (order.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
 
-const [fulfillmentRecord] = await tx
-  .insert(fulfillments)
-  .values({
-    orderId: input.orderId,
-    storeId: storeId,
-    locationId: locationId,
-    status: "fulfilled",
-    trackingNumber: input.trackingNumber,
-    trackingUrl: trackingUrl,
-    carrier: input.carrier,
-    carrierCode: carrierCode, // Add this
-    fulfilledBy: input.fulfilledBy || "seller",
-    fulfilledAt,
-  })
-  .returning();
+    if (order[0].paymentStatus !== "paid") {
+      return {
+        success: false,
+        error: "Order must be paid before fulfillment can begin",
+      };
+    }
 
-// Generate tracking token for the order if it doesn't exist
-const existingOrder = await tx
-  .select({ trackingToken: orders.trackingToken })
-  .from(orders)
-  .where(eq(orders.id, input.orderId))
-  .limit(1);
+    // 2. Map carrier name to ShipEngine carrier code
+    const carrierCodeMap: Record<string, string> = {
+      USPS: "usps",
+      FedEx: "fedex",
+      UPS: "ups",
+      DHL: "dhl",
+      "Canada Post": "canada_post",
+      "Royal Mail": "royal_mail",
+    };
 
-if (!existingOrder[0]?.trackingToken) {
-  const trackingToken = nanoid(32);
-  await tx
-    .update(orders)
-    .set({ trackingToken })
-    .where(eq(orders.id, input.orderId));
+    const carrierCode =
+      carrierCodeMap[input.carrier] || input.carrier.toLowerCase();
+
+    // 3. Generate tracking URL if not provided
+    const trackingUrl =
+      input.trackingUrl ||
+      generateTrackingUrl(input.carrier, input.trackingNumber);
+
+    // 4. Get vendor's items in this order to determine fulfillment status
+    const vendorItems = await tx
+      .select({ id: orderItems.id })
+      .from(orderItems)
+      .innerJoin(listing, eq(orderItems.listingId, listing.id))
+      .where(
+        and(
+          eq(orderItems.orderId, input.orderId),
+          eq(listing.storeId, input.storeId)
+        )
+      );
+
+    // 5. Check existing fulfillments for this vendor
+    const existingFulfillments = await tx
+      .select()
+      .from(fulfillments)
+      .where(
+        and(
+          eq(fulfillments.orderId, input.orderId),
+          eq(fulfillments.storeId, input.storeId)
+        )
+      );
+
+    // 6. Determine vendor fulfillment status
+    // For MVP: if vendor is creating first fulfillment, mark as "fulfilled"
+    // In future: calculate based on which items are fulfilled
+    const vendorFulfillmentStatus: "unfulfilled" | "partial" | "fulfilled" =
+      existingFulfillments.length === 0 ? "fulfilled" : "partial";
+
+    // 7. Create fulfillment record
+    const [fulfillmentRecord] = await tx
+      .insert(fulfillments)
+      .values({
+        orderId: input.orderId,
+        storeId: input.storeId,
+        vendorFulfillmentStatus: vendorFulfillmentStatus,
+        trackingNumber: input.trackingNumber,
+        trackingUrl: trackingUrl,
+        carrier: input.carrier,
+        carrierCode: carrierCode,
+        fulfilledBy: input.fulfilledBy || "vendor",
+        fulfilledAt: new Date(),
+      })
+      .returning();
+
+    // 8. Update master order fulfillment status (calculated from all vendors)
+    await updateOrderFulfillmentStatus(input.orderId);
+
+    // 9. Generate tracking token for the order if it doesn't exist
+    if (!order[0].trackingToken) {
+      const trackingToken = nanoid(32);
+      await tx
+        .update(orders)
+        .set({ trackingToken })
+        .where(eq(orders.id, input.orderId));
+    }
+
+    return {
+      success: true,
+      fulfillment: fulfillmentRecord,
+    };
+  });
 }
 ```
 
-### 6. **Public Tracking Page**
+### 7. **Public Tracking Page**
 
 Create `app/[locale]/track/[token]/page.tsx`:
 
@@ -544,7 +772,7 @@ function TrackingPageSkeleton() {
 }
 ```
 
-### 7. **Tracking Page Client Component**
+### 8. **Tracking Page Client Component**
 
 Create `app/[locale]/track/[token]/TrackingPageClient.tsx`:
 
@@ -781,7 +1009,7 @@ export default function TrackingPageClient({
 }
 ```
 
-### 8. **Email with Tracking Link**
+### 9. **Email with Tracking Link**
 
 Update the order confirmation email to include tracking link. Create `app/[locale]/components/tracking-notification-email.tsx`:
 
@@ -886,7 +1114,7 @@ export default function TrackingNotificationEmail({
 }
 ```
 
-### 9. **Send Tracking Email After Fulfillment**
+### 10. **Send Tracking Email After Fulfillment**
 
 Update `app/[locale]/actions/orders-fulfillment.ts` to send tracking email:
 
@@ -933,7 +1161,7 @@ if (result.success && input.trackingNumber) {
 }
 ```
 
-### 10. **ShipEngine Webhook Handler (Optional)**
+### 11. **ShipEngine Webhook Handler (Optional)**
 
 Create `app/api/webhooks/shipengine/route.ts`:
 
@@ -1000,17 +1228,57 @@ export async function POST(req: NextRequest) {
 
 ## Summary
 
-**To switch to Agent mode and apply these changes**, you'll need to:
+**Implementation Checklist:**
 
 1. ✅ Add environment variables for ShipEngine
 2. ✅ Create `lib/shipengine.ts` utility
-3. ✅ Update database schema (add migration)
-4. ✅ Create `app/[locale]/actions/tracking.ts`
-5. ✅ Update `app/[locale]/actions/orders-fulfillment.ts`
-6. ✅ Create public tracking page at `app/[locale]/track/[token]/page.tsx`
-7. ✅ Create `TrackingPageClient.tsx` component
-8. ✅ Create tracking notification email component
-9. ✅ Create ShipEngine webhook handler (optional)
-10. ✅ Run database migration
+3. ✅ Update database schema (add tracking fields to fulfillments, trackingToken to orders)
+4. ✅ Create fulfillment status calculation utilities
+5. ✅ Create `app/[locale]/actions/tracking.ts`
+6. ✅ Update `app/[locale]/actions/orders-fulfillment.ts` with:
+   - Payment status check (only allow fulfillment when paid)
+   - Manual vendor fulfillment flow
+   - Vendor-level fulfillment status
+   - Master order fulfillment status calculation
+7. ✅ Create public tracking page at `app/[locale]/track/[token]/page.tsx`
+8. ✅ Create `TrackingPageClient.tsx` component
+9. ✅ Create tracking notification email component
+10. ✅ Update fulfillment action to send tracking email
+11. ✅ Create ShipEngine webhook handler (optional)
+12. ✅ Run database migration
 
-This implementation follows your codebase conventions, uses your existing fulfillments table, integrates with your email system, and provides a secure public tracking page that customers can access. The tracking page will show real-time updates from ShipEngine for all shipments in an order (supporting your multi-vendor setup).
+## Key Implementation Notes
+
+### Fulfillment Status Flow
+
+1. **Order Created** → `fulfillmentStatus: "unfulfilled"`, `paymentStatus: "pending"`
+2. **Payment Confirmed** → `paymentStatus: "paid"` → Vendors can now fulfill
+3. **Vendor Marks as Shipped** → Creates fulfillment with `vendorFulfillmentStatus: "fulfilled"`
+4. **System Calculates Master Status** → Updates `orders.fulfillmentStatus` based on all vendor fulfillments
+5. **All Vendors Shipped** → `fulfillmentStatus: "fulfilled"`
+
+### Vendor Dashboard Flow
+
+1. Vendor logs in → sees orders with their products
+2. Vendor clicks "Mark as Shipped" on an order
+3. Vendor enters:
+   - Carrier (dropdown: UPS, FedEx, USPS, etc.)
+   - Tracking number
+4. System:
+   - Creates fulfillment record
+   - Sets `vendorFulfillmentStatus: "fulfilled"`
+   - Calculates master `fulfillmentStatus`
+   - Generates tracking token (if needed)
+   - Sends tracking email to customer
+
+### Master Fulfillment Status Calculation
+
+```typescript
+// Pseudo-code logic:
+if (any vendor fulfillment is "canceled") → "canceled"
+else if (all vendor fulfillments are "fulfilled") → "fulfilled"
+else if (any vendor fulfillment is "fulfilled" or "partial") → "partial"
+else → "unfulfilled"
+```
+
+This implementation follows your codebase conventions, supports the two-level fulfillment system, enforces payment-gated fulfillment, and provides a secure public tracking page that customers can access. The tracking page shows real-time updates from ShipEngine for all shipments in an order (supporting your multi-vendor setup).

@@ -1,5 +1,5 @@
 interface OrderCancellationEmailProps {
-  orderNumber: number;
+  orderNumber: string;
   customerName: string;
   customerEmail: string;
   cancellationReason: string;

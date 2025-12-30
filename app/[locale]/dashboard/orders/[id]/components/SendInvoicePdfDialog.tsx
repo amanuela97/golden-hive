@@ -22,7 +22,7 @@ interface SendInvoicePdfDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orderId: string;
-  orderNumber: number;
+  orderNumber: string;
   invoiceNumber: string | null;
   customerEmail: string | null;
   storeOwnerEmail: string | null;

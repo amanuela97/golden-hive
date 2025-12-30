@@ -28,7 +28,7 @@ interface CancelOrderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orderId: string;
-  orderNumber: number;
+  orderNumber: string;
   totalAmount: string;
   currency: string;
   paymentStatus: string;

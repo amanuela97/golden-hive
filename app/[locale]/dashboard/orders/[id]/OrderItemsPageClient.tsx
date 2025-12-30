@@ -33,7 +33,7 @@ interface OrderItem {
 
 interface OrderData {
   id: string;
-  orderNumber: number;
+  orderNumber: string;
   customerEmail: string | null;
   customerFirstName: string | null;
   customerLastName: string | null;

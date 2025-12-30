@@ -1,5 +1,5 @@
 interface RefundConfirmationEmailProps {
-  orderNumber: number;
+  orderNumber: string;
   invoiceNumber: string | null;
   customerName: string;
   refundAmount: string;

@@ -179,34 +179,47 @@ export function StorefrontClient({
 
   // Scroll-spy: Update active section based on scroll position
   useEffect(() => {
-    const handleScroll = () => {
-      const sections = [
-        { id: "items", ref: itemsRef },
-        { id: "reviews", ref: reviewsRef },
-        { id: "about", ref: aboutRef },
-        { id: "policies", ref: policiesRef },
-      ];
+    // Delay scroll-spy initialization to prevent interference with initial page load
+    let scrollHandler: (() => void) | null = null;
+    let checkTimeout: NodeJS.Timeout | null = null;
 
-      const scrollPosition = window.scrollY + 150; // Offset for sticky nav
+    const timeoutId = setTimeout(() => {
+      scrollHandler = () => {
+        const sections = [
+          { id: "items", ref: itemsRef },
+          { id: "reviews", ref: reviewsRef },
+          { id: "about", ref: aboutRef },
+          { id: "policies", ref: policiesRef },
+        ];
 
-      // Find which section is currently in view
-      for (let i = sections.length - 1; i >= 0; i--) {
-        const section = sections[i];
-        if (section.ref.current) {
-          const rect = section.ref.current.getBoundingClientRect();
-          const sectionTop = rect.top + window.scrollY;
-          if (scrollPosition >= sectionTop) {
-            setActiveSection(section.id);
-            break;
+        const scrollPosition = window.scrollY + 150; // Offset for sticky nav
+
+        // Find which section is currently in view
+        for (let i = sections.length - 1; i >= 0; i--) {
+          const section = sections[i];
+          if (section.ref.current) {
+            const rect = section.ref.current.getBoundingClientRect();
+            const sectionTop = rect.top + window.scrollY;
+            if (scrollPosition >= sectionTop) {
+              setActiveSection(section.id);
+              break;
+            }
           }
         }
+      };
+
+      window.addEventListener("scroll", scrollHandler);
+      // Only check scroll position after a delay to avoid interfering with initial scroll to top
+      checkTimeout = setTimeout(scrollHandler, 100);
+    }, 200);
+
+    return () => {
+      clearTimeout(timeoutId);
+      if (checkTimeout) clearTimeout(checkTimeout);
+      if (scrollHandler) {
+        window.removeEventListener("scroll", scrollHandler);
       }
     };
-
-    window.addEventListener("scroll", handleScroll);
-    handleScroll(); // Check on mount
-
-    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   // Smooth scroll to section
@@ -273,54 +286,75 @@ export function StorefrontClient({
     setListingsPage(1); // Reset to first page on sort change
   };
 
+  // Scroll to top on mount to prevent auto-scrolling to bottom
+  useEffect(() => {
+    // Use both methods to ensure scroll to top works
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    // Also set scroll position directly as a fallback
+    if (typeof window !== "undefined") {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    }
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Banner Carousel */}
-      {data.banners.length > 0 && (
-        <div className="relative w-full h-64 md:h-96 bg-gray-200">
+      <div className="relative w-full h-64 md:h-96 bg-gray-200">
+        {data.banners.length > 0 ? (
+          <>
+            <Image
+              src={data.banners[currentBannerIndex].url}
+              alt={
+                data.banners[currentBannerIndex].alt ||
+                `Banner ${currentBannerIndex + 1}`
+              }
+              fill
+              className="object-cover"
+              priority
+            />
+            {data.banners.length > 1 && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white"
+                  onClick={prevBanner}
+                >
+                  <ChevronLeft className="w-6 h-6" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white"
+                  onClick={nextBanner}
+                >
+                  <ChevronRight className="w-6 h-6" />
+                </Button>
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+                  {data.banners.map((_, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setCurrentBannerIndex(idx)}
+                      className={`w-2 h-2 rounded-full ${
+                        idx === currentBannerIndex ? "bg-white" : "bg-white/50"
+                      }`}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        ) : (
           <Image
-            src={data.banners[currentBannerIndex].url}
-            alt={
-              data.banners[currentBannerIndex].alt ||
-              `Banner ${currentBannerIndex + 1}`
-            }
+            src="/store-placeholder.jpg"
+            alt={data.store.storeName}
             fill
             className="object-cover"
             priority
           />
-          {data.banners.length > 1 && (
-            <>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white"
-                onClick={prevBanner}
-              >
-                <ChevronLeft className="w-6 h-6" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white"
-                onClick={nextBanner}
-              >
-                <ChevronRight className="w-6 h-6" />
-              </Button>
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
-                {data.banners.map((_, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setCurrentBannerIndex(idx)}
-                    className={`w-2 h-2 rounded-full ${
-                      idx === currentBannerIndex ? "bg-white" : "bg-white/50"
-                    }`}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="container mx-auto px-6 md:px-8 lg:px-12 py-8">
         {/* Store Header */}

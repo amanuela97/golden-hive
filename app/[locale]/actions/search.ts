@@ -39,6 +39,7 @@ export async function searchAll(
     const products = await db
       .select({
         id: listing.id,
+        slug: listing.slug,
         name: listingTranslations.name,
         nameFallback: listing.name,
         description: listingTranslations.description,
@@ -122,6 +123,7 @@ export async function searchAll(
       ...products.map((p) => ({
         type: "product" as const,
         id: p.id,
+        slug: p.slug || undefined,
         name: p.name || p.nameFallback || "",
         imageUrl: p.imageUrl,
         description: p.description || p.descriptionFallback || null,
@@ -239,6 +241,7 @@ export async function searchProducts(
     const products = await db
       .select({
         id: listing.id,
+        slug: listing.slug,
         name: listingTranslations.name,
         nameFallback: listing.name,
         description: listingTranslations.description,
@@ -266,6 +269,7 @@ export async function searchProducts(
     const results: SearchResult[] = products.map((p) => ({
       type: "product" as const,
       id: p.id,
+      slug: p.slug || undefined,
       name: p.name || p.nameFallback || "",
       imageUrl: p.imageUrl,
       description: p.description || p.descriptionFallback || null,

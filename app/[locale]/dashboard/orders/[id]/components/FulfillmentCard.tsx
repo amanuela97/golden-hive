@@ -47,7 +47,7 @@ interface OrderItem {
 
 interface OrderData {
   id: string;
-  orderNumber: string | number;
+  orderNumber: string;
   fulfillmentStatus: string;
   paymentStatus: string;
   shippingMethod: string | null;

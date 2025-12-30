@@ -1,6 +1,6 @@
 interface OrderInvoicePdfEmailProps {
   invoiceNumber: string;
-  orderNumber: number;
+  orderNumber: string;
   customerName: string;
   totalAmount: string;
   currency: string;

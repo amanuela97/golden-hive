@@ -24,6 +24,7 @@ import {
   Edit,
   RefreshCw,
   CreditCard,
+  Download,
 } from "lucide-react";
 import { useRouter } from "@/i18n/navigation";
 import { format } from "date-fns";
@@ -69,7 +70,7 @@ interface OrderEvent {
 
 interface OrderData {
   id: string;
-  orderNumber: number;
+  orderNumber: string;
   customerEmail: string | null;
   customerFirstName: string | null;
   customerLastName: string | null;
@@ -326,10 +327,24 @@ export default function OrderDetailsPageClient({
             />
             Refresh
           </Button>
-          <Button variant="outline" size="sm">
-            <Printer className="mr-2 h-4 w-4" />
-            Print
-          </Button>
+          {orderData.invoicePdfUrl ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                // Open invoice PDF in a new tab
+                window.open(orderData.invoicePdfUrl!, "_blank");
+              }}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Download Invoice
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm">
+              <Printer className="mr-2 h-4 w-4" />
+              Print
+            </Button>
+          )}
           {canRefund && (
             <Button
               variant="outline"
