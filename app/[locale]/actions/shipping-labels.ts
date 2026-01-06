@@ -539,10 +539,7 @@ export async function purchaseShippingLabel(params: {
 
     // Create shipment in EasyPost (without purchasing yet)
     const EasyPost = (await import("@easypost/api")).default;
-    const EASYPOST_API_KEY =
-      process.env.NODE_ENV === "production"
-        ? process.env.EASYPOST_API_KEY_PROD
-        : process.env.EASYPOST_API_KEY_TEST;
+    const EASYPOST_API_KEY = process.env.EASYPOST_API_KEY_TEST;
     const api = new EasyPost(EASYPOST_API_KEY || "");
 
     // Prepare addresses for EasyPost format

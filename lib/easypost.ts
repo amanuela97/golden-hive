@@ -1,10 +1,7 @@
 import EasyPost from "@easypost/api";
 
 // Use sandbox key in development, production key in production
-const EASYPOST_API_KEY =
-  process.env.NODE_ENV === "production"
-    ? process.env.EASYPOST_API_KEY_PROD
-    : process.env.EASYPOST_API_KEY_TEST;
+const EASYPOST_API_KEY = process.env.EASYPOST_API_KEY_TEST;
 
 if (!EASYPOST_API_KEY) {
   console.warn("EasyPost API key not configured");
@@ -204,14 +201,14 @@ export async function getShippingRates(
           const carrier = "carrier" in msg ? String(msg.carrier) : "unknown";
           const message =
             "message" in msg ? String(msg.message) : "Unknown error";
-          
+
           // Filter out expected errors
           const isExpectedError =
-            (carrier === "CanadaPost" && 
-             message.includes("originating outside of Canada")) ||
-            (carrier === "DhlEcs" && 
-             message.includes("merchant_id is required")); // DHL requires special EasyPost account configuration
-          
+            (carrier === "CanadaPost" &&
+              message.includes("originating outside of Canada")) ||
+            (carrier === "DhlEcs" &&
+              message.includes("merchant_id is required")); // DHL requires special EasyPost account configuration
+
           if (!isExpectedError) {
             console.warn(`Carrier ${carrier} error: ${message}`);
           } else if (carrier === "DhlEcs") {
@@ -411,8 +408,7 @@ export async function trackShipment(
     };
   } catch (error) {
     // Check if it's the test mode error
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     if (
       errorMessage.includes("test mode") ||
       errorMessage.includes("test tracking numbers")
