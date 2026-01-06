@@ -20,7 +20,11 @@ import {
   X,
   ArrowLeft,
   Heart,
+  AlertTriangle,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { useCustomerLocation } from "../../hooks/useCustomerLocation";
+import { checkShippingAvailability } from "../../actions/shipping-availability";
 import { ProductCard } from "../../components/product-card";
 import { PublicProduct } from "../../actions/public-products";
 import { useCart } from "@/lib/cart-context";
@@ -65,6 +69,11 @@ export function ProductDetailClient({
   const { addItem } = useCart();
   const { data: session } = useSession();
   const isAuthenticated = !!session?.user;
+  const { country } = useCustomerLocation();
+  const [shippingAvailable, setShippingAvailable] = useState<boolean | null>(
+    product.shippingAvailable ?? null
+  );
+  const [checkingShipping, setCheckingShipping] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<
@@ -79,6 +88,23 @@ export function ProductDetailClient({
   const [isLoadingFavorite, setIsLoadingFavorite] = useState(true);
   const t = useTranslations("products");
   const navT = useTranslations("nav");
+
+  // Check shipping availability when country is detected
+  useEffect(() => {
+    if (country && product?.id) {
+      setCheckingShipping(true);
+      checkShippingAvailability(product.id, country)
+        .then((result) => {
+          setShippingAvailable(result.available);
+        })
+        .catch((error) => {
+          console.error("Error checking shipping availability:", error);
+        })
+        .finally(() => {
+          setCheckingShipping(false);
+        });
+    }
+  }, [country, product?.id]);
 
   // Extract unique option keys from variants
   const optionKeys = useMemo(() => {
@@ -545,6 +571,33 @@ export function ProductDetailClient({
                   }`}
                 />
               </button>
+            </div>
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              {product.marketType && (
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                    product.marketType === "local"
+                      ? "bg-blue-100 text-blue-800"
+                      : "bg-green-100 text-green-800"
+                  }`}
+                >
+                  {product.marketType === "local" ? (
+                    <MapPin className="w-3 h-3" />
+                  ) : (
+                    <Globe className="w-3 h-3" />
+                  )}
+                  {product.marketType === "local" ? "Local" : "International"}
+                </span>
+              )}
+              {shippingAvailable === false && (
+                <Badge
+                  variant="outline"
+                  className="text-xs border-yellow-300 text-yellow-700 bg-yellow-50"
+                >
+                  <AlertTriangle className="w-3 h-3 mr-1" />
+                  Shipping may not be available
+                </Badge>
+              )}
             </div>
             {product.storeName && product.storeSlug && (
               <Link

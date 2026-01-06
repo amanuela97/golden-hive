@@ -1,13 +1,67 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { getTrendingProductsData } from "@/app/[locale]/actions/homepage";
 import { ProductCard } from "@/app/[locale]/components/product-card";
 import { Button } from "@/components/ui/button";
 import { Link } from "@/i18n/navigation";
 import { Badge } from "@/components/ui/badge";
-import { getLocale } from "next-intl/server";
+import { useLocale } from "next-intl";
+import { useCustomerLocation } from "../hooks/useCustomerLocation";
+import { PublicProduct } from "../actions/public-products";
 
-export async function TrendingProducts() {
-  const locale = await getLocale();
-  const products = await getTrendingProductsData({ limit: 4, locale });
+export function TrendingProducts() {
+  const locale = useLocale();
+  const { country } = useCustomerLocation();
+  const [products, setProducts] = useState<PublicProduct[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadProducts() {
+      setLoading(true);
+      try {
+        const result = await getTrendingProductsData({
+          limit: 4,
+          locale,
+          customerCountry: country || undefined,
+        });
+        setProducts(result);
+      } catch (error) {
+        console.error("Error loading trending products:", error);
+        setProducts([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadProducts();
+  }, [locale, country]);
+
+  if (loading) {
+    return (
+      <section className="py-12 md:py-16 bg-muted/30">
+        <div className="container mx-auto px-4">
+          <div className="mb-8 flex items-end justify-between animate-in fade-in slide-in-from-top-4 duration-700">
+            <div>
+              <h2 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
+                Trending Now
+              </h2>
+              <p className="mt-2 text-muted-foreground max-w-2xl">
+                Discover what&apos;s popular with our community
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div
+                key={i}
+                className="h-96 bg-muted animate-pulse rounded-lg"
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="py-12 md:py-16 bg-muted/30">

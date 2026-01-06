@@ -57,6 +57,34 @@ export const customerEligibilityTypeEnum = pgEnum("customer_eligibility_type", [
   "specific",
 ]);
 
+// Seller balance transaction types
+export const balanceTransactionTypeEnum = pgEnum("balance_transaction_type", [
+  "order_payment",
+  "platform_fee",
+  "stripe_fee",
+  "shipping_label",
+  "refund",
+  "dispute",
+  "payout",
+  "adjustment",
+]);
+
+// Payout status
+export const payoutStatusEnum = pgEnum("payout_status", [
+  "pending",
+  "processing",
+  "completed",
+  "failed",
+  "canceled",
+]);
+
+// Transfer status for order payments
+export const transferStatusEnum = pgEnum("transfer_status", [
+  "held",
+  "transferred",
+  "pending_payout",
+]);
+
 // Shopify-style status enum: active | draft | archived
 export const listingStatusEnum = pgEnum("listing_status", [
   "active",
@@ -362,6 +390,12 @@ export const listing = pgTable(
 
     // Published at (when it became active)
     publishedAt: timestamp("published_at"),
+
+    // Shipping profile
+    shippingProfileId: uuid("shipping_profile_id").references(
+      () => shippingProfiles.id,
+      { onDelete: "set null" }
+    ),
 
     // Timestamps
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -760,7 +794,13 @@ export const inventoryItems = pgTable("inventory_items", {
     "0"
   ),
   requiresShipping: boolean("requires_shipping").default(true),
-  weightGrams: integer("weight_grams").default(0),
+  weightGrams: integer("weight_grams").default(0), // Keep for backward compatibility
+  // Weight in OUNCES (OZ) - stored with 1 decimal precision
+  weightOz: numeric("weight_oz", { precision: 8, scale: 1 }).default("0"),
+  // Dimensions in INCHES (IN) - stored with 1 decimal precision
+  lengthIn: numeric("length_in", { precision: 8, scale: 1 }).default("0"),
+  widthIn: numeric("width_in", { precision: 8, scale: 1 }).default("0"),
+  heightIn: numeric("height_in", { precision: 8, scale: 1 }).default("0"),
   countryOfOrigin: text("country_of_origin"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at")
@@ -778,7 +818,11 @@ export const inventoryLocations = pgTable("inventory_locations", {
     .notNull()
     .references(() => store.id, { onDelete: "cascade" }),
   name: text("name").notNull(), // e.g. "Kathmandu Warehouse"
-  address: text("address"),
+  address: text("address"), // Street address
+  city: text("city"), // City
+  state: text("state"), // State/Province (required for US, optional for others)
+  zip: text("zip"), // ZIP/Postal code
+  country: text("country"), // Country code (e.g., "US", "NP", "FI")
   phone: text("phone"), // Phone / contact (optional)
   fulfillmentRules: text("fulfillment_rules"), // Fulfillment rules (optional)
   isActive: boolean("is_active").default(true),
@@ -949,6 +993,10 @@ export const orders = pgTable("orders", {
   internalNote: text("internal_note"), // Internal notes (seller/admin only)
   tags: text("tags"), // comma-separated for now
   shippingMethod: text("shipping_method"), // Shipping method name
+  // Shipping rate details
+  shippingCarrier: text("shipping_carrier"), // Selected carrier (e.g., "USPS", "FedEx")
+  shippingService: text("shipping_service"), // Service level (e.g., "Priority", "Express")
+  shippingRateId: text("shipping_rate_id"), // EasyPost rate ID (for label purchase)
 
   // Important timestamps
   placedAt: timestamp("placed_at").defaultNow(), // when the order is placed
@@ -968,11 +1016,178 @@ export const orders = pgTable("orders", {
   invoiceSentAt: timestamp("invoice_sent_at"), // Track when invoice was sent
   invoiceSentCount: integer("invoice_sent_count").default(0), // How many times sent
 
+  // Tracking token for public tracking page access
+  trackingToken: text("tracking_token").unique(),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
     .$onUpdate(() => new Date())
     .notNull(),
+});
+
+// ===================================
+// ORDER SHIPPING RATES (EasyPost)
+// ===================================
+export const orderShippingRates = pgTable("order_shipping_rates", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  storeId: uuid("store_id")
+    .notNull()
+    .references(() => store.id, { onDelete: "cascade" }),
+  rateId: text("rate_id").notNull(), // EasyPost rate ID
+  carrier: text("carrier").notNull(),
+  service: text("service").notNull(),
+  rate: numeric("rate", { precision: 10, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ===================================
+// SHIPPING PROFILES
+// ===================================
+export const shippingProfiles = pgTable("shipping_profiles", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  storeId: uuid("store_id")
+    .notNull()
+    .references(() => store.id, { onDelete: "cascade" }),
+
+  name: text("name").notNull(), // e.g., "Standard Shipping", "International"
+
+  pricingType: text("pricing_type").notNull(), // "manual" | "calculated"
+
+  // Origin address
+  originCountry: text("origin_country").notNull(), // "FI", "NP", "US"
+  originPostalCode: text("origin_postal_code"), // ZIP/Postal code
+
+  // Processing time
+  processingDaysMin: integer("processing_days_min").notNull().default(1),
+  processingDaysMax: integer("processing_days_max").notNull().default(3),
+
+  // Default profile for new listings
+  isDefault: boolean("is_default").default(false).notNull(),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// SHIPPING DESTINATIONS
+// ===================================
+export const shippingDestinations = pgTable("shipping_destinations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  shippingProfileId: uuid("shipping_profile_id")
+    .notNull()
+    .references(() => shippingProfiles.id, { onDelete: "cascade" }),
+
+  destinationType: text("destination_type").notNull(),
+  // "country" | "region" | "everywhere_else"
+
+  countryCode: text("country_code"), // "FI", "NP", null for "everywhere_else"
+  regionCode: text("region_code"), // "EU", "ASIA" (future use)
+
+  excluded: boolean("excluded").default(false), // For exclusions
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ===================================
+// SHIPPING RATES (Manual Pricing)
+// ===================================
+export const shippingRates = pgTable("shipping_rates", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  destinationId: uuid("destination_id")
+    .notNull()
+    .references(() => shippingDestinations.id, { onDelete: "cascade" }),
+
+  serviceName: text("service_name").notNull(), // "Standard", "Express", "Priority"
+
+  freeShipping: boolean("free_shipping").default(false).notNull(),
+
+  // Etsy-style pricing: first item + additional items
+  firstItemPriceCents: integer("first_item_price_cents"), // null if freeShipping
+  additionalItemPriceCents: integer("additional_item_price_cents").default(0),
+
+  // Weight brackets (optional - for future use)
+  minWeightOz: numeric("min_weight_oz", { precision: 8, scale: 1 }),
+  maxWeightOz: numeric("max_weight_oz", { precision: 8, scale: 1 }),
+
+  currency: text("currency").default("EUR").notNull(),
+
+  // Transit time estimates
+  transitDaysMin: integer("transit_days_min"),
+  transitDaysMax: integer("transit_days_max"),
+
+  // Display order
+  sortOrder: integer("sort_order").default(0).notNull(),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// SHIPPING SERVICES (For Future Calculated Rates)
+// ===================================
+export const shippingServices = pgTable("shipping_services", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  shippingProfileId: uuid("shipping_profile_id")
+    .notNull()
+    .references(() => shippingProfiles.id, { onDelete: "cascade" }),
+
+  carrier: text("carrier").notNull(), // "usps", "dhl", "posti", "easypost"
+  serviceCode: text("service_code").notNull(), // API service code
+  displayName: text("display_name").notNull(), // "Standard Shipping"
+
+  enabled: boolean("enabled").default(true).notNull(),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ===================================
+// ORDER SHIPMENTS (Shipping Snapshot)
+// ===================================
+export const orderShipments = pgTable("order_shipments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  storeId: uuid("store_id")
+    .notNull()
+    .references(() => store.id, { onDelete: "cascade" }),
+
+  // Snapshot of selected shipping option
+  shippingProfileName: text("shipping_profile_name"), // Snapshot
+  serviceName: text("service_name").notNull(), // "Standard", "Express"
+
+  priceCents: integer("price_cents").notNull(),
+  currency: text("currency").notNull(),
+
+  // For calculated rates (future)
+  carrier: text("carrier"), // "USPS", "DHL", etc.
+  trackingNumber: text("tracking_number"),
+  rateId: text("rate_id"), // EasyPost rate ID if calculated
+
+  // Estimated delivery
+  estimatedDeliveryMin: timestamp("estimated_delivery_min"),
+  estimatedDeliveryMax: timestamp("estimated_delivery_max"),
+
+  // Shipping label cost tracking
+  labelCostCents: integer("label_cost_cents"), // Actual cost when label was purchased
+  labelCostDeducted: boolean("label_cost_deducted").default(false).notNull(), // Whether cost was deducted from balance
+  deductedAt: timestamp("deducted_at"),
+
+  // Label URL and file type (for EasyPost labels)
+  labelUrl: text("label_url"), // EasyPost label URL
+  labelFileType: text("label_file_type"), // "application/pdf", "image/png", "application/zpl"
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // ===================================
@@ -1044,6 +1259,10 @@ export const draftOrders = pgTable("draft_orders", {
   // Meta
   notes: text("notes"), // Public notes (visible to customer)
   shippingMethod: text("shipping_method"), // Shipping method name
+  // Shipping rate details
+  shippingCarrier: text("shipping_carrier"), // Selected carrier (e.g., "USPS", "FedEx")
+  shippingService: text("shipping_service"), // Service level (e.g., "Priority", "Express")
+  shippingRateId: text("shipping_rate_id"), // EasyPost rate ID (for label purchase)
 
   // Conversion tracking
   completed: boolean("completed").default(false).notNull(),
@@ -1166,6 +1385,8 @@ export const orderPayments = pgTable("order_payments", {
   refundedAmount: numeric("refunded_amount", { precision: 10, scale: 2 })
     .default("0")
     .notNull(), // Amount refunded from this payment
+  transferStatus: transferStatusEnum("transfer_status").default("held").notNull(), // held | transferred | pending_payout
+  stripeTransferId: text("stripe_transfer_id"), // Stripe Transfer ID (only set when transferred)
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -1229,11 +1450,24 @@ export const fulfillments = pgTable("fulfillments", {
   locationId: uuid("location_id").references(() => inventoryLocations.id, {
     onDelete: "set null",
   }),
+  // Vendor-level fulfillment status
+  vendorFulfillmentStatus: orderFulfillmentStatusEnum(
+    "vendor_fulfillment_status"
+  )
+    .default("unfulfilled")
+    .notNull(),
   status: text("status").default("pending"),
   trackingNumber: text("tracking_number"),
   trackingUrl: text("tracking_url"),
   // Fulfillment metadata (per inst.md)
   carrier: text("carrier"), // UPS, Posti, DHL, etc.
+  carrierCode: text("carrier_code"), // EasyPost code: ups, fedex, usps
+  trackingStatus: text("tracking_status"), // Latest status from EasyPost
+  trackingData: jsonb("tracking_data"), // Full tracking response from EasyPost
+  lastTrackedAt: timestamp("last_tracked_at"), // When tracking was last updated
+  easypostShipmentId: text("easypost_shipment_id"), // EasyPost shipment ID
+  labelUrl: text("label_url"), // URL to shipping label PDF
+  labelFileType: text("label_file_type"), // "application/pdf", "image/png", "application/zpl"
   fulfilledBy: text("fulfilled_by"), // seller / warehouse / automation
   fulfilledAt: timestamp("fulfilled_at"), // When fulfillment occurred
   createdAt: timestamp("created_at").defaultNow(),
@@ -1766,6 +2000,12 @@ export type OrderPayment = InferSelectModel<typeof orderPayments>;
 export type OrderRefund = InferSelectModel<typeof orderRefunds>;
 export type OrderRefundItem = InferSelectModel<typeof orderRefundItems>;
 export type OrderEvent = InferSelectModel<typeof orderEvents>;
+export type OrderShippingRates = InferSelectModel<typeof orderShippingRates>;
+export type ShippingProfile = InferSelectModel<typeof shippingProfiles>;
+export type ShippingDestination = InferSelectModel<typeof shippingDestinations>;
+export type ShippingRate = InferSelectModel<typeof shippingRates>;
+export type ShippingService = InferSelectModel<typeof shippingServices>;
+export type OrderShipment = InferSelectModel<typeof orderShipments>;
 export type DraftOrder = InferSelectModel<typeof draftOrders>;
 export type DraftOrderItem = InferSelectModel<typeof draftOrderItems>;
 export type Market = InferSelectModel<typeof markets>;
@@ -1776,3 +2016,168 @@ export type OrderDiscount = InferSelectModel<typeof orderDiscounts>;
 export type OrderItemDiscount = InferSelectModel<typeof orderItemDiscounts>;
 export type ProductReview = InferSelectModel<typeof productReview>;
 export type StoreReview = InferSelectModel<typeof storeReview>;
+
+// ===================================
+// SELLER BALANCES (Ledger System)
+// ===================================
+export const sellerBalances = pgTable("seller_balances", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  storeId: uuid("store_id")
+    .notNull()
+    .references(() => store.id, { onDelete: "cascade" })
+    .unique(), // One balance per store
+
+  // Current balance (can be negative)
+  availableBalance: numeric("available_balance", {
+    precision: 10,
+    scale: 2,
+  })
+    .default("0")
+    .notNull(), // Funds available for payout
+
+  pendingBalance: numeric("pending_balance", {
+    precision: 10,
+    scale: 2,
+  })
+    .default("0")
+    .notNull(), // Funds pending (e.g., in dispute period)
+
+  currency: text("currency").default("EUR").notNull(),
+
+  // Metadata
+  lastPayoutAt: timestamp("last_payout_at"),
+  lastPayoutAmount: numeric("last_payout_amount", {
+    precision: 10,
+    scale: 2,
+  }),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// SELLER BALANCE TRANSACTIONS (Immutable Ledger)
+// ===================================
+export const sellerBalanceTransactions = pgTable(
+  "seller_balance_transactions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => store.id, { onDelete: "cascade" }),
+
+    // Transaction details
+    type: balanceTransactionTypeEnum("type").notNull(),
+    amount: numeric("amount", { precision: 10, scale: 2 }).notNull(), // Always positive, use type to determine +/-
+    currency: text("currency").notNull(),
+
+    // References
+    orderId: uuid("order_id").references(() => orders.id, {
+      onDelete: "set null",
+    }),
+    orderPaymentId: uuid("order_payment_id").references(() => orderPayments.id, {
+      onDelete: "set null",
+    }),
+    orderShipmentId: uuid("order_shipment_id").references(
+      () => orderShipments.id,
+      { onDelete: "set null" }
+    ),
+    payoutId: uuid("payout_id").references(() => sellerPayouts.id, {
+      onDelete: "set null",
+    }),
+
+    // Balance snapshots (for audit trail)
+    balanceBefore: numeric("balance_before", { precision: 10, scale: 2 }).notNull(),
+    balanceAfter: numeric("balance_after", { precision: 10, scale: 2 }).notNull(),
+
+    description: text("description"), // Human-readable description
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("seller_balance_transactions_store_idx").on(t.storeId),
+    index("seller_balance_transactions_order_idx").on(t.orderId),
+    index("seller_balance_transactions_type_idx").on(t.type),
+  ]
+);
+
+// ===================================
+// SELLER PAYOUTS (Payout Requests)
+// ===================================
+export const sellerPayouts = pgTable("seller_payouts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  storeId: uuid("store_id")
+    .notNull()
+    .references(() => store.id, { onDelete: "cascade" }),
+
+  // Payout details
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  currency: text("currency").notNull(),
+
+  status: payoutStatusEnum("status").default("pending").notNull(),
+
+  // Stripe transfer details
+  stripeTransferId: text("stripe_transfer_id"), // Stripe Transfer ID
+  stripePayoutId: text("stripe_payout_id"), // Stripe Payout ID (if using payouts)
+
+  // Request details
+  requestedAt: timestamp("requested_at").defaultNow().notNull(),
+  requestedBy: text("requested_by").references(() => user.id, {
+    onDelete: "set null",
+  }),
+
+  processedAt: timestamp("processed_at"),
+  completedAt: timestamp("completed_at"),
+
+  failureReason: text("failure_reason"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
+// SHIPPING PACKAGES (Custom Packages)
+// ===================================
+export const shippingPackages = pgTable("shipping_packages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  storeId: uuid("store_id")
+    .notNull()
+    .references(() => store.id, { onDelete: "cascade" }),
+
+  name: text("name").notNull(), // e.g., "Small Box", "Medium Envelope"
+  description: text("description"), // Optional description
+
+  // Dimensions in inches (stored in DB)
+  lengthIn: numeric("length_in", { precision: 8, scale: 2 }).notNull(),
+  widthIn: numeric("width_in", { precision: 8, scale: 2 }).notNull(),
+  heightIn: numeric("height_in", { precision: 8, scale: 2 }).notNull(),
+
+  // Weight in ounces (stored in DB)
+  weightOz: numeric("weight_oz", { precision: 8, scale: 2 }).notNull(),
+
+  // Metadata
+  isDefault: boolean("is_default").default(false).notNull(), // One default per store
+  sortOrder: integer("sort_order").default(0).notNull(),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// Type exports
+export type SellerBalance = InferSelectModel<typeof sellerBalances>;
+export type SellerBalanceTransaction = InferSelectModel<
+  typeof sellerBalanceTransactions
+>;
+export type SellerPayout = InferSelectModel<typeof sellerPayouts>;
+export type ShippingPackage = InferSelectModel<typeof shippingPackages>;

@@ -2764,6 +2764,39 @@ export async function getOrderWithItems(orderId: string): Promise<{
           }
         : null;
 
+    // Get fulfillment info (for shipping labels)
+    const { fulfillments } = await import("@/db/schema");
+    const fulfillmentData = await db
+      .select({
+        trackingNumber: fulfillments.trackingNumber,
+        carrier: fulfillments.carrier,
+        labelUrl: fulfillments.labelUrl,
+        labelFileType: fulfillments.labelFileType,
+      })
+      .from(fulfillments)
+      .where(
+        and(
+          eq(fulfillments.orderId, orderId),
+          ...(!isAdmin && storeId ? [eq(fulfillments.storeId, storeId)] : [])
+        )
+      )
+      .limit(1);
+
+    const fulfillmentInfo =
+      fulfillmentData.length > 0
+        ? {
+            trackingNumber: fulfillmentData[0].trackingNumber,
+            carrier: fulfillmentData[0].carrier,
+            labelUrl: fulfillmentData[0].labelUrl,
+            labelFileType: fulfillmentData[0].labelFileType,
+          }
+        : {
+            trackingNumber: null,
+            carrier: null,
+            labelUrl: null,
+            labelFileType: null,
+          };
+
     return {
       success: true,
       data: {
@@ -2798,6 +2831,7 @@ export async function getOrderWithItems(orderId: string): Promise<{
         })),
         paymentProvider,
         discount,
+        ...fulfillmentInfo,
       },
     };
   } catch (error) {
@@ -4831,12 +4865,13 @@ export async function processRefund(input: {
               throw new Error("No charge found on payment intent");
             }
 
-            // Create refund on platform account (not connected account)
+            // Create refund on platform account
+            // Note: No reverse_transfer needed since funds are held in platform account
             const refund = await stripe.refunds.create({
               charge: typeof chargeId === "string" ? chargeId : chargeId.id,
               amount: refundAmountCents,
               refund_application_fee: false,
-              reverse_transfer: true, // Automatically reverses transfer to connected account
+              // No reverse_transfer - funds are held in platform account, not transferred
             });
 
             stripeRefundId = refund.id;
@@ -4965,7 +5000,30 @@ export async function processRefund(input: {
         }
       }
 
-      // Step 9: Timeline / audit log
+      // Step 9: Update seller balance ledger for refund
+      // Debit the refunded amount from seller balance
+      // Note: This is done in the transaction to ensure consistency
+      // The webhook will also update balance when Stripe confirms, but we do it here too
+      // to ensure it's recorded even if webhook is delayed
+      try {
+        const { updateSellerBalance } = await import("./seller-balance");
+        await updateSellerBalance({
+          storeId: order.storeId!,
+          type: "refund",
+          amount: refundAmount, // Will be debited (negative)
+          currency: order.currency,
+          orderId: input.orderId,
+          description: `Refund processed (${refundAmount.toFixed(2)} ${order.currency})`,
+        });
+        console.log(
+          `[Refund] ✅ Seller balance debited for refund: ${refundAmount} ${order.currency}`
+        );
+      } catch (balanceError) {
+        console.error("[Refund] Error updating seller balance:", balanceError);
+        // Don't fail the refund if balance update fails - webhook will handle it
+      }
+
+      // Step 10: Timeline / audit log
       const restockMessage = input.restockItems ? " Inventory restocked." : "";
       const hasStripeRefunds = createdRefunds.some(
         (r) => r.provider === "stripe"

@@ -8,9 +8,11 @@ import {
   listingFavorite,
   store,
   listingTranslations,
+  shippingProfiles,
 } from "@/db/schema";
-import { eq, and, gte, sql, desc, isNotNull, inArray } from "drizzle-orm";
+import { eq, and, gte, sql, desc, isNotNull, inArray, or } from "drizzle-orm";
 import { PublicProduct } from "./public-products";
+import { checkShippingAvailability } from "./shipping-availability";
 
 /**
  * Calculate trending score for products
@@ -18,7 +20,8 @@ import { PublicProduct } from "./public-products";
  */
 export async function getTrendingProducts(
   limit: number = 6,
-  locale: string = "en"
+  locale: string = "en",
+  customerCountry?: string
 ): Promise<PublicProduct[]> {
   try {
     const now = new Date();
@@ -41,7 +44,17 @@ export async function getTrendingProducts(
         and(
           eq(listing.status, "active"),
           eq(store.isApproved, true),
-          eq(store.visibility, "public")
+          eq(store.visibility, "public"),
+          // Product must have shipping profile (either direct or store default)
+          or(
+            isNotNull(listing.shippingProfileId), // Product has direct profile
+            // Store has default profile
+            sql`EXISTS (
+              SELECT 1 FROM ${shippingProfiles} 
+              WHERE ${shippingProfiles.storeId} = ${store.id} 
+              AND ${shippingProfiles.isDefault} = true
+            )`
+          )
         )
       );
 
@@ -330,6 +343,7 @@ export async function getTrendingProducts(
           updatedAt,
           storeName: p.storeName || null,
           storeSlug: p.storeSlug || null,
+          shippingAvailable: null as boolean | null | undefined, // Will be set below if country provided
         };
 
         // Validate no undefined values
@@ -344,7 +358,25 @@ export async function getTrendingProducts(
         return product;
       });
 
-    return mappedProducts;
+    // Check shipping availability if customer country is provided
+    let finalProducts = mappedProducts;
+    if (customerCountry) {
+      const availabilityChecks = await Promise.all(
+        mappedProducts.map(async (product) => {
+          const availability = await checkShippingAvailability(
+            product.id,
+            customerCountry
+          );
+          return {
+            ...product,
+            shippingAvailable: availability.available,
+          };
+        })
+      );
+      finalProducts = availabilityChecks;
+    }
+
+    return finalProducts;
   } catch (error) {
     console.error("Error in getTrendingProducts:", error);
     return [];

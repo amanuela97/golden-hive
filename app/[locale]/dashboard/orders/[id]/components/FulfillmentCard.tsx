@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,16 +19,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Package, Truck, ChevronDown, Star } from "lucide-react";
+import { Package, ChevronDown, Star } from "lucide-react";
 import Image from "next/image";
 import { Link } from "@/i18n/navigation";
 import toast from "react-hot-toast";
-import { fulfillOrder } from "@/app/[locale]/actions/orders-fulfillment";
 import { updateWorkflowStatus } from "@/app/[locale]/actions/orders-workflow";
+import { BuyShippingLabelDialog } from "./BuyShippingLabelDialog";
+import { ManualShippingDialog } from "./ManualShippingDialog";
 
 interface OrderItem {
   id: string;
@@ -53,7 +53,13 @@ interface OrderData {
   shippingMethod: string | null;
   workflowStatus?: string;
   holdReason?: string | null;
+  storeId?: string | null;
   items: OrderItem[];
+  // Fulfillment info
+  trackingNumber?: string | null;
+  carrier?: string | null;
+  labelUrl?: string | null;
+  labelFileType?: string | null;
 }
 
 interface FulfillmentCardProps {
@@ -63,16 +69,6 @@ interface FulfillmentCardProps {
   isArchived?: boolean;
   isCanceled?: boolean;
 }
-
-const shippingCarriers = [
-  "USPS",
-  "FedEx",
-  "UPS",
-  "DHL",
-  "Canada Post",
-  "Royal Mail",
-  "Other",
-];
 
 const holdReasons = [
   "inventory out of stock",
@@ -88,15 +84,10 @@ export function FulfillmentCard({
   isArchived = false,
   isCanceled = false,
 }: FulfillmentCardProps) {
-  const [showFulfillDialog, setShowFulfillDialog] = useState(false);
   const [showOnHoldDialog, setShowOnHoldDialog] = useState(false);
-
-  // Fulfill dialog state
-  const [selectedItems, setSelectedItems] = useState<Record<string, number>>(
-    {}
-  );
-  const [trackingNumber, setTrackingNumber] = useState("");
-  const [shippingCarrier, setShippingCarrier] = useState("");
+  const [showBuyLabelDialog, setShowBuyLabelDialog] = useState(false);
+  const [showManualShippingDialog, setShowManualShippingDialog] =
+    useState(false);
 
   // On hold dialog state
   const [onHoldItems, setOnHoldItems] = useState<Record<string, number>>({});
@@ -155,20 +146,6 @@ export function FulfillmentCard({
     }
   };
 
-  // Initialize selected items when dialog opens
-  // Pre-fill with remaining unfulfilled quantities
-  const handleFulfillClick = () => {
-    const initial: Record<string, number> = {};
-    orderData.items.forEach((item) => {
-      const fulfilledQty = item.fulfilledQuantity || 0;
-      const remainingQty = item.quantity - fulfilledQty;
-      // Pre-select remaining quantity (or 0 if already fully fulfilled)
-      initial[item.id] = remainingQty > 0 ? remainingQty : 0;
-    });
-    setSelectedItems(initial);
-    setShowFulfillDialog(true);
-  };
-
   const handleInProgressClick = async () => {
     try {
       const result = await updateWorkflowStatus({
@@ -193,55 +170,6 @@ export function FulfillmentCard({
     });
     setOnHoldItems(initial);
     setShowOnHoldDialog(true);
-  };
-
-  const handleFulfillSubmit = async () => {
-    if (!shippingCarrier) {
-      toast.error("Please select a shipping carrier");
-      return;
-    }
-    if (!trackingNumber.trim()) {
-      toast.error("Please enter a tracking number");
-      return;
-    }
-
-    // Build fulfilledItems array from selected items
-    const fulfilledItems = Object.entries(selectedItems)
-      .filter(([, quantity]) => quantity > 0)
-      .map(([orderItemId, quantity]) => ({
-        orderItemId,
-        quantity,
-      }));
-
-    if (fulfilledItems.length === 0) {
-      toast.error("Please select at least one item to fulfill");
-      return;
-    }
-
-    try {
-      const result = await fulfillOrder({
-        orderId: orderData.id,
-        fulfilledItems,
-        carrier: shippingCarrier,
-        trackingNumber: trackingNumber.trim(),
-        trackingUrl: trackingNumber.trim() ? undefined : undefined, // Could add tracking URL field later
-        fulfilledBy: "seller", // Could make this configurable later
-      });
-
-      if (result.success) {
-        toast.success("Order fulfilled successfully");
-        setShowFulfillDialog(false);
-        setTrackingNumber("");
-        setShippingCarrier("");
-        setSelectedItems({});
-        window.location.reload();
-      } else {
-        toast.error(result.error || "Failed to fulfill order");
-      }
-    } catch (error) {
-      console.error("Error fulfilling order:", error);
-      toast.error("Failed to fulfill order");
-    }
   };
 
   const handleOnHoldSubmit = async () => {
@@ -302,16 +230,6 @@ export function FulfillmentCard({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div>
-            <p className="text-sm text-muted-foreground mb-1">
-              Fulfillment Type
-            </p>
-            <p className="font-medium flex items-center gap-2">
-              <Truck className="h-4 w-4" />
-              {orderData.shippingMethod || "Standard Shipping"}
-            </p>
-          </div>
-
           <div>
             <p className="text-sm text-muted-foreground mb-2">Order Items</p>
             <div className="space-y-2">
@@ -377,189 +295,88 @@ export function FulfillmentCard({
             </div>
           </div>
 
+          {/* Shipping Label Info */}
+          {orderData.trackingNumber && (
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-sm font-medium mb-1">Tracking Information</p>
+              <p className="text-sm text-muted-foreground">
+                Carrier: {orderData.carrier || "N/A"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Tracking: {orderData.trackingNumber}
+              </p>
+              {orderData.labelUrl && (
+                <div className="mt-2">
+                  {orderData.labelFileType === "application/pdf" ? (
+                    <a
+                      href={orderData.labelUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      Download Shipping Label (PDF)
+                    </a>
+                  ) : (
+                    <Image
+                      src={orderData.labelUrl}
+                      alt="Shipping label"
+                      className="max-w-full h-auto"
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {canFulfill &&
             !isFulfilled &&
             !isArchived &&
             !isCanceled &&
             !isOnHold && (
-              <div className="flex gap-2">
-                <Button onClick={handleFulfillClick} className="flex-1">
-                  Mark as fulfilled
-                </Button>
-                <Select
-                  value=""
-                  onValueChange={(value) => {
-                    if (value === "in_progress") {
-                      handleInProgressClick();
-                    } else if (value === "on_hold") {
-                      handleOnHoldClick();
-                    }
-                  }}
-                >
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="More actions">
-                      <ChevronDown className="h-4 w-4" />
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="in_progress">
-                      Mark as in progress
-                    </SelectItem>
-                    <SelectItem value="on_hold">Mark as on hold</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => setShowBuyLabelDialog(true)}
+                    className="flex-1"
+                  >
+                    Buy Shipping Label
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowManualShippingDialog(true)}
+                    className="flex-1"
+                  >
+                    Mark as Shipped Manually
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Select
+                    value=""
+                    onValueChange={(value) => {
+                      if (value === "in_progress") {
+                        handleInProgressClick();
+                      } else if (value === "on_hold") {
+                        handleOnHoldClick();
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="More actions">
+                        <ChevronDown className="h-4 w-4" />
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="in_progress">
+                        Mark as in progress
+                      </SelectItem>
+                      <SelectItem value="on_hold">Mark as on hold</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             )}
         </CardContent>
       </Card>
-
-      {/* Fulfill Dialog */}
-      <Dialog open={showFulfillDialog} onOpenChange={setShowFulfillDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Mark as Fulfilled</DialogTitle>
-            <DialogDescription>
-              Select items and quantities to fulfill, then add tracking
-              information.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {/* Items Selection */}
-            <div>
-              <Label className="mb-2 block">Items to Fulfill</Label>
-              <div className="space-y-2">
-                {orderData.items.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center gap-3 p-3 rounded-lg border"
-                  >
-                    <Checkbox
-                      checked={selectedItems[item.id] > 0}
-                      onCheckedChange={(checked) => {
-                        setSelectedItems((prev) => ({
-                          ...prev,
-                          [item.id]: checked ? item.quantity : 0,
-                        }));
-                      }}
-                    />
-                    {item.imageUrl ? (
-                      <div className="relative h-12 w-12 overflow-hidden rounded-md border">
-                        <Image
-                          src={item.imageUrl}
-                          alt={item.title}
-                          fill
-                          className="object-cover"
-                          sizes="48px"
-                        />
-                      </div>
-                    ) : (
-                      <div className="h-12 w-12 rounded-md border bg-muted flex items-center justify-center">
-                        <Package className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                    )}
-                    <div className="flex-1">
-                      <p className="font-medium text-sm">{item.title}</p>
-                      {item.sku && (
-                        <p className="text-xs text-muted-foreground">
-                          SKU: {item.sku}
-                        </p>
-                      )}
-                    </div>
-                    {selectedItems[item.id] > 0 && (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            if (selectedItems[item.id] > 0) {
-                              setSelectedItems((prev) => ({
-                                ...prev,
-                                [item.id]: prev[item.id] - 1,
-                              }));
-                            }
-                          }}
-                        >
-                          -
-                        </Button>
-                        <span className="w-16 text-center text-sm">
-                          {selectedItems[item.id]} / {item.quantity}
-                          {item.fulfilledQuantity !== undefined &&
-                            item.fulfilledQuantity > 0 && (
-                              <span className="block text-xs text-muted-foreground">
-                                ({item.fulfilledQuantity} already fulfilled)
-                              </span>
-                            )}
-                        </span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            const fulfilledQty = item.fulfilledQuantity || 0;
-                            const maxQty = item.quantity - fulfilledQty;
-                            if (selectedItems[item.id] < maxQty) {
-                              setSelectedItems((prev) => ({
-                                ...prev,
-                                [item.id]: prev[item.id] + 1,
-                              }));
-                            }
-                          }}
-                        >
-                          +
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Shipping Carrier and Tracking */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="carrier">Shipping Carrier</Label>
-                <Select
-                  value={shippingCarrier}
-                  onValueChange={setShippingCarrier}
-                >
-                  <SelectTrigger id="carrier">
-                    <SelectValue placeholder="Select carrier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {shippingCarriers.map((carrier) => (
-                      <SelectItem key={carrier} value={carrier}>
-                        {carrier}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="tracking">Tracking Number</Label>
-                <Input
-                  id="tracking"
-                  value={trackingNumber}
-                  onChange={(e) => setTrackingNumber(e.target.value)}
-                  placeholder="Enter tracking number"
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowFulfillDialog(false);
-                setTrackingNumber("");
-                setShippingCarrier("");
-                setSelectedItems({});
-              }}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleFulfillSubmit}>Mark as Fulfilled</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* On Hold Dialog */}
       <Dialog open={showOnHoldDialog} onOpenChange={setShowOnHoldDialog}>
@@ -699,6 +516,31 @@ export function FulfillmentCard({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Buy Shipping Label Dialog */}
+      {orderData.storeId && (
+        <>
+          <BuyShippingLabelDialog
+            open={showBuyLabelDialog}
+            onOpenChange={setShowBuyLabelDialog}
+            orderId={orderData.id}
+            storeId={orderData.storeId}
+            onSuccess={() => {
+              window.location.reload();
+            }}
+          />
+
+          <ManualShippingDialog
+            open={showManualShippingDialog}
+            onOpenChange={setShowManualShippingDialog}
+            orderId={orderData.id}
+            storeId={orderData.storeId}
+            onSuccess={() => {
+              window.location.reload();
+            }}
+          />
+        </>
+      )}
     </>
   );
 }

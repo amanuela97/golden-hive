@@ -323,6 +323,55 @@
       "when": 1766875722931,
       "tag": "0045_silly_gorilla_man",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1767214034139,
+      "tag": "0046_lethal_impossible_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1767222634502,
+      "tag": "0047_yellow_madame_hydra",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1767272454326,
+      "tag": "0048_loose_maestro",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1767563908204,
+      "tag": "0049_cuddly_doorman",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1767569246555,
+      "tag": "0050_right_rhino",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1767638331594,
+      "tag": "0051_oval_marvel_apes",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1767644522742,
+      "tag": "0052_whole_mac_gargan",
+      "breakpoints": true
     }
   ]
 }

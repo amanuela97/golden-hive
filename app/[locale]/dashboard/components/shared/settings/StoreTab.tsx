@@ -51,6 +51,7 @@ import toast from "react-hot-toast";
 import { FileUploader } from "react-drag-drop-files";
 import type { InventoryLocation } from "@/db/schema";
 import currenciesData from "@/data/currency/currency.json";
+import { CountrySelect } from "@/components/ui/country-select";
 import Image from "next/image";
 
 const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP", "JFIF"];
@@ -116,6 +117,10 @@ export default function StoreTab() {
     useState<InventoryLocationData>({
       name: "",
       address: "",
+      city: "",
+      state: "",
+      zip: "",
+      country: "",
       phone: "",
       fulfillmentRules: "",
       isActive: true,
@@ -251,6 +256,25 @@ export default function StoreTab() {
     setIsLoading(true);
 
     try {
+      // Validate that at least one location has all required fields
+      const completeLocations = locations.filter(
+        (loc) =>
+          loc.name &&
+          loc.address &&
+          loc.city &&
+          loc.zip &&
+          loc.country &&
+          loc.isActive
+      );
+
+      if (completeLocations.length === 0) {
+        toast.error(
+          "At least one active location with complete address information (name, address, city, zip, country) is required before saving the store."
+        );
+        setIsLoading(false);
+        return;
+      }
+
       // Update slug if changed
       if (storeId && formData.slug) {
         const slugResult = await updateStoreSlug(storeId, formData.slug);
@@ -388,6 +412,27 @@ export default function StoreTab() {
 
   const handleLocationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate required fields
+    if (
+      !locationFormData.name ||
+      !locationFormData.address ||
+      !locationFormData.city ||
+      !locationFormData.zip ||
+      !locationFormData.country
+    ) {
+      toast.error(
+        "Please fill in all required fields: Name, Address, City, ZIP/Postal Code, and Country"
+      );
+      return;
+    }
+
+    // Validate state for US addresses
+    if (locationFormData.country === "US" && !locationFormData.state) {
+      toast.error("State/Province is required for US addresses");
+      return;
+    }
+
     setIsSavingLocation(true);
 
     try {
@@ -412,6 +457,10 @@ export default function StoreTab() {
         setLocationFormData({
           name: "",
           address: "",
+          city: "",
+          state: "",
+          zip: "",
+          country: "",
           phone: "",
           fulfillmentRules: "",
           isActive: true,
@@ -433,6 +482,10 @@ export default function StoreTab() {
     setLocationFormData({
       name: location.name || "",
       address: location.address || "",
+      city: location.city || "",
+      state: location.state || "",
+      zip: location.zip || "",
+      country: location.country || "",
       phone: location.phone || "",
       fulfillmentRules: location.fulfillmentRules || "",
       isActive: location.isActive ?? true,
@@ -660,6 +713,10 @@ export default function StoreTab() {
                 setLocationFormData({
                   name: "",
                   address: "",
+                  city: "",
+                  state: "",
+                  zip: "",
+                  country: "",
                   phone: "",
                   fulfillmentRules: "",
                   isActive: true,
@@ -706,7 +763,7 @@ export default function StoreTab() {
                     />
                   </div>
                   <div className="md:col-span-2 space-y-2">
-                    <Label htmlFor="locationAddress">Address</Label>
+                    <Label htmlFor="locationAddress">Street Address *</Label>
                     <Input
                       id="locationAddress"
                       value={locationFormData.address}
@@ -716,6 +773,77 @@ export default function StoreTab() {
                           address: e.target.value,
                         }))
                       }
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="locationCity">City *</Label>
+                    <Input
+                      id="locationCity"
+                      value={locationFormData.city}
+                      onChange={(e) =>
+                        setLocationFormData((prev) => ({
+                          ...prev,
+                          city: e.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="locationState">
+                      State/Province
+                      {locationFormData.country === "US" && (
+                        <span className="text-destructive ml-1">*</span>
+                      )}
+                    </Label>
+                    <Input
+                      id="locationState"
+                      value={locationFormData.state}
+                      onChange={(e) =>
+                        setLocationFormData((prev) => ({
+                          ...prev,
+                          state: e.target.value,
+                        }))
+                      }
+                      placeholder={
+                        locationFormData.country === "US"
+                          ? "Required (e.g., CA, NY, TX)"
+                          : "Optional (e.g., Province, Region)"
+                      }
+                      required={locationFormData.country === "US"}
+                    />
+                    {locationFormData.country === "US" && (
+                      <p className="text-xs text-muted-foreground">
+                        Use 2-letter state code (e.g., CA, NY, TX)
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="locationZip">ZIP/Postal Code *</Label>
+                    <Input
+                      id="locationZip"
+                      value={locationFormData.zip}
+                      onChange={(e) =>
+                        setLocationFormData((prev) => ({
+                          ...prev,
+                          zip: e.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="locationCountry">Country *</Label>
+                    <CountrySelect
+                      value={locationFormData.country || ""}
+                      onValueChange={(value) =>
+                        setLocationFormData((prev) => ({
+                          ...prev,
+                          country: value,
+                        }))
+                      }
+                      placeholder="Select a country"
                     />
                   </div>
                   <div className="md:col-span-2 space-y-2">
@@ -771,6 +899,18 @@ export default function StoreTab() {
                       {location.address && (
                         <p className="text-sm text-gray-600 mt-1">
                           {location.address}
+                        </p>
+                      )}
+                      {(location.city || location.state || location.zip) && (
+                        <p className="text-sm text-gray-600">
+                          {[location.city, location.state, location.zip]
+                            .filter(Boolean)
+                            .join(", ")}
+                        </p>
+                      )}
+                      {location.country && (
+                        <p className="text-sm text-gray-600">
+                          {location.country}
                         </p>
                       )}
                       {location.phone && (

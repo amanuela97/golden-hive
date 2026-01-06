@@ -9,6 +9,7 @@ import {
   getFeaturedProducts,
   getPublicProductVariants,
 } from "../actions/public-products";
+import { useCustomerLocation } from "./useCustomerLocation";
 
 // Query Keys
 export const productQueryKeys = {
@@ -21,16 +22,21 @@ export const productQueryKeys = {
   ) => ["products", "related", productId, categoryId, locale] as const,
   featuredProducts: (limit: number | undefined, locale: string) =>
     ["products", "featured", limit, locale] as const,
-  productVariants: (listingId: string) => ["products", "variants", listingId] as const,
+  productVariants: (listingId: string) =>
+    ["products", "variants", listingId] as const,
 };
 
 // Product Queries
 export function useProducts() {
   const locale = useLocale();
+  const { country } = useCustomerLocation();
+
   return useQuery({
-    queryKey: productQueryKeys.products(locale),
-    queryFn: () => getPublicProducts({ locale }),
+    queryKey: [...productQueryKeys.products(locale), country || "all"],
+    queryFn: () =>
+      getPublicProducts({ locale, customerCountry: country || undefined }),
     staleTime: 5 * 60 * 1000, // 5 minutes
+    enabled: true, // Always enabled, country is optional
   });
 }
 

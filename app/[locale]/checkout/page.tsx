@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { CountrySelect } from "@/components/ui/country-select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -14,10 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Separator } from "@/components/ui/separator";
 import Image from "next/image";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSession } from "@/lib/auth-client";
 import { getShippingBillingInfo } from "../actions/shipping-billing";
 import { Link } from "@/i18n/navigation";
@@ -27,6 +28,8 @@ import {
   getAutomaticDiscountsForCheckout,
   findBestDiscountForCheckout,
 } from "../actions/order-discounts";
+import { getManualShippingRatesForOrder } from "../actions/shipping-rates";
+import { checkShippingAvailability } from "../actions/shipping-availability";
 import { X, AlertCircle, Info } from "lucide-react";
 import toast from "react-hot-toast";
 import { type CartItem } from "@/lib/types";
@@ -81,11 +84,41 @@ export default function CheckoutPage() {
   >([]);
   const [hasDiscountsWithCodes, setHasDiscountsWithCodes] = useState(false);
 
+  // Shipping rates state (for manual rates)
+  const [shippingRates, setShippingRates] = useState<
+    Array<{
+      storeId: string;
+      storeName: string;
+      rates: Array<{
+        id: string;
+        serviceName: string;
+        priceCents: number;
+        currency: string;
+        estimatedDays?: { min: number; max: number };
+      }>;
+    }>
+  >([]);
+  const [loadingShippingRates, setLoadingShippingRates] = useState(false);
+  const [selectedShippingMethod, setSelectedShippingMethod] = useState<{
+    storeId: string;
+    rateId: string;
+    serviceName: string;
+    priceCents: number;
+    currency: string;
+  } | null>(null);
+  const [shippingCost, setShippingCost] = useState(0);
+
+  // Track items that cannot be shipped to selected country
+  const [unshippableItems, setUnshippableItems] = useState<
+    Array<{ itemId: string; listingId: string; name: string; reason: string }>
+  >([]);
+  const [checkingShippingAvailability, setCheckingShippingAvailability] =
+    useState(false);
+
   // Form state
   const [billingData, setBillingData] = useState({
     firstName: "",
     lastName: "",
-    company: "",
     country: "",
     address: "",
     address2: "",
@@ -99,7 +132,6 @@ export default function CheckoutPage() {
   const [shippingData, setShippingData] = useState({
     firstName: "",
     lastName: "",
-    company: "",
     country: "",
     address: "",
     address2: "",
@@ -107,6 +139,50 @@ export default function CheckoutPage() {
     state: "",
     zip: "",
   });
+
+  // Form validation
+  const isFormValid = useMemo(() => {
+    // Check billing fields
+    const billingValid =
+      billingData.firstName.trim() !== "" &&
+      billingData.lastName.trim() !== "" &&
+      billingData.email.trim() !== "" &&
+      billingData.address.trim() !== "" &&
+      billingData.city.trim() !== "" &&
+      billingData.zip.trim() !== "" &&
+      billingData.country.trim() !== "" &&
+      billingData.phone.trim() !== "";
+
+    // Check shipping fields (if shipping to different address)
+    const shippingValid = shipToDifferentAddress
+      ? shippingData.firstName.trim() !== "" &&
+        shippingData.lastName.trim() !== "" &&
+        shippingData.address.trim() !== "" &&
+        shippingData.city.trim() !== "" &&
+        shippingData.zip.trim() !== "" &&
+        shippingData.country.trim() !== ""
+      : true; // If same as billing, billing validation covers it
+
+    // Check if shipping method is selected (if rates are available)
+    const shippingMethodValid =
+      shippingRates.length === 0 ||
+      shippingRates.every((vr) => vr.rates.length === 0) ||
+      selectedShippingMethod !== null;
+
+    // Check if all items can be shipped to selected country
+    const allItemsShippable = unshippableItems.length === 0;
+
+    return (
+      billingValid && shippingValid && shippingMethodValid && allItemsShippable
+    );
+  }, [
+    billingData,
+    shippingData,
+    shipToDifferentAddress,
+    shippingRates,
+    selectedShippingMethod,
+    unshippableItems,
+  ]);
 
   // Load saved info if user is signed in
   useEffect(() => {
@@ -120,7 +196,6 @@ export default function CheckoutPage() {
             setBillingData({
               firstName: result.result.billingFirstName || "",
               lastName: result.result.billingLastName || "",
-              company: result.result.billingCompany || "",
               country: result.result.billingCountry || "",
               address: result.result.billingAddress || "",
               address2: result.result.billingAddress2 || "",
@@ -136,7 +211,6 @@ export default function CheckoutPage() {
             setShippingData({
               firstName: result.result.shippingFirstName || "",
               lastName: result.result.shippingLastName || "",
-              company: result.result.shippingCompany || "",
               country: result.result.shippingCountry || "",
               address: result.result.shippingAddress || "",
               address2: result.result.shippingAddress2 || "",
@@ -153,6 +227,195 @@ export default function CheckoutPage() {
     }
     loadSavedInfo();
   }, [session]);
+
+  // Calculate shipping rates when shipping address is complete
+  useEffect(() => {
+    async function calculateShipping() {
+      const finalShippingData = shipToDifferentAddress
+        ? shippingData
+        : {
+            firstName: billingData.firstName,
+            lastName: billingData.lastName,
+            country: billingData.country,
+            address: billingData.address,
+            address2: billingData.address2,
+            city: billingData.city,
+            state: billingData.state,
+            zip: billingData.zip,
+          };
+
+      // Check if address is complete
+      if (
+        !finalShippingData.address ||
+        !finalShippingData.city ||
+        !finalShippingData.zip ||
+        !finalShippingData.country ||
+        items.length === 0
+      ) {
+        setShippingRates([]);
+        setSelectedShippingMethod(null);
+        setShippingCost(0);
+        setUnshippableItems([]);
+        return;
+      }
+
+      setLoadingShippingRates(true);
+      setCheckingShippingAvailability(true);
+
+      try {
+        // First, check shipping availability for all items
+        const availabilityChecks = await Promise.all(
+          items.map(async (item) => {
+            const availability = await checkShippingAvailability(
+              item.listingId,
+              finalShippingData.country
+            );
+            return {
+              item,
+              available: availability.available,
+              message: availability.message,
+            };
+          })
+        );
+
+        // Find items that cannot be shipped
+        const unshippable = availabilityChecks
+          .filter((check) => !check.available)
+          .map((check) => ({
+            itemId: check.item.id,
+            listingId: check.item.listingId,
+            name: check.item.name,
+            reason: check.message || "Shipping not available to this country",
+          }));
+
+        setUnshippableItems(unshippable);
+
+        // If any items cannot be shipped, show warning and don't calculate rates
+        if (unshippable.length > 0) {
+          setShippingRates([]);
+          setSelectedShippingMethod(null);
+          setShippingCost(0);
+          setLoadingShippingRates(false);
+          setCheckingShippingAvailability(false);
+          return;
+        }
+
+        const orderItems = items.map((item) => ({
+          listingId: item.listingId,
+          variantId: item.variantId || null,
+          quantity: item.quantity,
+          storeId: item.storeId || "", // Will be fetched in getManualShippingRatesForOrder if empty
+        }));
+
+        // Use manual shipping rates
+        const result = await getManualShippingRatesForOrder(
+          orderItems,
+          finalShippingData.country
+        );
+
+        if (result.success && result.rates) {
+          // Filter out vendors with no rates
+          const validRates = result.rates.filter(
+            (vr) => vr.rates && vr.rates.length > 0
+          );
+
+          if (validRates.length === 0) {
+            setShippingRates([]);
+            setSelectedShippingMethod(null);
+            setShippingCost(0);
+            return;
+          }
+
+          setShippingRates(validRates);
+
+          // Find cheapest rate across all vendors and set as default
+          // For manual rates, we need to match by service name across vendors
+          let cheapestRate: {
+            storeId: string;
+            rateId: string;
+            serviceName: string;
+            priceCents: number;
+            currency: string;
+          } | null = null;
+          let cheapestPrice = Infinity;
+
+          // Group rates by service name to find cheapest option
+          const ratesByService = new Map<
+            string,
+            Array<{
+              storeId: string;
+              rateId: string;
+              serviceName: string;
+              priceCents: number;
+              currency: string;
+            }>
+          >();
+
+          for (const vendorRates of validRates) {
+            for (const rate of vendorRates.rates) {
+              const serviceKey = rate.serviceName;
+              if (!ratesByService.has(serviceKey)) {
+                ratesByService.set(serviceKey, []);
+              }
+              ratesByService.get(serviceKey)!.push({
+                storeId: vendorRates.storeId,
+                rateId: rate.id,
+                serviceName: rate.serviceName,
+                priceCents: rate.priceCents,
+                currency: rate.currency,
+              });
+            }
+          }
+
+          // Find the service with the lowest total cost
+          for (const [serviceName, serviceRates] of ratesByService.entries()) {
+            const totalPrice = serviceRates.reduce(
+              (sum, r) => sum + r.priceCents,
+              0
+            );
+            if (totalPrice < cheapestPrice) {
+              cheapestPrice = totalPrice;
+              // Use the first rate as the representative (we'll track all in order creation)
+              cheapestRate = serviceRates[0];
+            }
+          }
+
+          if (cheapestRate) {
+            setSelectedShippingMethod(cheapestRate);
+            // Calculate total shipping cost (sum of all rates for selected service)
+            const selectedServiceRates =
+              ratesByService.get(cheapestRate.serviceName) || [];
+            const totalShippingCents = selectedServiceRates.reduce(
+              (sum, r) => sum + r.priceCents,
+              0
+            );
+            setShippingCost(totalShippingCents / 100); // Convert cents to currency
+          } else {
+            setSelectedShippingMethod(null);
+            setShippingCost(0);
+          }
+        } else {
+          setShippingRates([]);
+          setSelectedShippingMethod(null);
+          setShippingCost(0);
+          if (result.error) {
+            console.error("Shipping rates error:", result.error);
+          }
+        }
+      } catch (error) {
+        console.error("Error calculating shipping:", error);
+        setShippingRates([]);
+        setSelectedShippingMethod(null);
+        setShippingCost(0);
+        setUnshippableItems([]);
+      } finally {
+        setLoadingShippingRates(false);
+        setCheckingShippingAvailability(false);
+      }
+    }
+
+    calculateShipping();
+  }, [shipToDifferentAddress, shippingData, billingData, items]);
 
   // Automatically find and apply best discount when items or email change
   useEffect(() => {
@@ -424,6 +687,15 @@ export default function CheckoutPage() {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    // Prevent order if any items cannot be shipped
+    if (unshippableItems.length > 0) {
+      toast.error(
+        `Cannot proceed: Some items cannot be shipped to the selected country. Please remove them or change your shipping address.`
+      );
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
@@ -433,7 +705,7 @@ export default function CheckoutPage() {
         (sum, item) => sum + item.price * item.quantity,
         0
       );
-      const shipping = 0; // TODO: Calculate shipping
+      const shipping = shippingCost;
       const tax = 0; // TODO: Calculate tax
       const discount = appliedDiscount?.totalAmount || 0;
       const finalTotal = subtotal + shipping + tax - discount;
@@ -444,7 +716,6 @@ export default function CheckoutPage() {
         : {
             firstName: billingData.firstName,
             lastName: billingData.lastName,
-            company: billingData.company,
             country: billingData.country,
             address: billingData.address,
             address2: billingData.address2,
@@ -503,6 +774,42 @@ export default function CheckoutPage() {
           billingPostalCode: billingData.zip,
           billingCountry: billingData.country,
           notes: orderNotes || null,
+          shippingMethod: selectedShippingMethod
+            ? selectedShippingMethod.serviceName
+            : null,
+          shippingService: selectedShippingMethod?.serviceName || null,
+          vendorShippingRates: shippingRates
+            .map((vendorRates) => {
+              // Find the selected rate for this vendor matching the service name
+              let selectedRate = vendorRates.rates.find(
+                (r) =>
+                  r.id === selectedShippingMethod?.rateId &&
+                  r.serviceName === selectedShippingMethod?.serviceName
+              );
+              if (!selectedRate && selectedShippingMethod) {
+                // If exact rate not found, use matching service name
+                selectedRate = vendorRates.rates.find(
+                  (r) => r.serviceName === selectedShippingMethod.serviceName
+                );
+              }
+              if (!selectedRate && vendorRates.rates.length > 0) {
+                // Fallback to cheapest
+                selectedRate = vendorRates.rates.reduce((prev, curr) =>
+                  curr.priceCents < prev.priceCents ? curr : prev
+                );
+              }
+              if (!selectedRate) {
+                return null;
+              }
+              return {
+                storeId: vendorRates.storeId,
+                rateId: selectedRate.id,
+                serviceName: selectedRate.serviceName,
+                priceCents: selectedRate.priceCents,
+                currency: selectedRate.currency,
+              };
+            })
+            .filter((r): r is NonNullable<typeof r> => r !== null),
         }),
       });
 
@@ -653,40 +960,15 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="company">Company Name</Label>
-                      <Input
-                        id="company"
-                        value={billingData.company}
-                        onChange={(e) =>
-                          setBillingData({
-                            ...billingData,
-                            company: e.target.value,
-                          })
-                        }
-                      />
-                    </div>
-
-                    <div className="space-y-2">
                       <Label htmlFor="country">Country</Label>
-                      <Select
+                      <CountrySelect
+                        id="country"
                         value={billingData.country}
                         onValueChange={(value) =>
                           setBillingData({ ...billingData, country: value })
                         }
-                        required
-                      >
-                        <SelectTrigger id="country" className="w-full">
-                          <SelectValue placeholder="Select Country" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="us">United States</SelectItem>
-                          <SelectItem value="uk">United Kingdom</SelectItem>
-                          <SelectItem value="ca">Canada</SelectItem>
-                          <SelectItem value="au">Australia</SelectItem>
-                          <SelectItem value="np">Nepal</SelectItem>
-                          <SelectItem value="in">India</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        placeholder="Select Country"
+                      />
                     </div>
 
                     <div className="space-y-2">
@@ -850,40 +1132,15 @@ export default function CheckoutPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="shipCompany">Company Name</Label>
-                      <Input
-                        id="shipCompany"
-                        value={shippingData.company}
-                        onChange={(e) =>
-                          setShippingData({
-                            ...shippingData,
-                            company: e.target.value,
-                          })
-                        }
-                      />
-                    </div>
-
-                    <div className="space-y-2">
                       <Label htmlFor="shipCountry">Country</Label>
-                      <Select
+                      <CountrySelect
+                        id="shipCountry"
                         value={shippingData.country}
                         onValueChange={(value) =>
                           setShippingData({ ...shippingData, country: value })
                         }
-                        required
-                      >
-                        <SelectTrigger id="shipCountry" className="w-full">
-                          <SelectValue placeholder="Select Country" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="us">United States</SelectItem>
-                          <SelectItem value="uk">United Kingdom</SelectItem>
-                          <SelectItem value="ca">Canada</SelectItem>
-                          <SelectItem value="au">Australia</SelectItem>
-                          <SelectItem value="np">Nepal</SelectItem>
-                          <SelectItem value="in">India</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        placeholder="Select Country"
+                      />
                     </div>
 
                     <div className="space-y-2">
@@ -988,6 +1245,35 @@ export default function CheckoutPage() {
                   Your Order
                 </h2>
 
+                {/* Shipping Availability Warnings */}
+                {unshippableItems.length > 0 && (
+                  <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-destructive mb-2">
+                          Shipping Not Available
+                        </h3>
+                        <p className="text-sm text-destructive mb-2">
+                          The following items cannot be shipped to the selected
+                          country:
+                        </p>
+                        <ul className="list-disc list-inside space-y-1 text-sm text-destructive">
+                          {unshippableItems.map((item) => (
+                            <li key={item.itemId}>
+                              {item.name} - {item.reason}
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="text-sm text-destructive mt-2">
+                          Please remove these items or change your shipping
+                          address to continue.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Order Items */}
                 <div className="space-y-4 mb-6">
                   <div className="flex justify-between font-medium text-sm pb-3 border-b border-border">
@@ -996,6 +1282,9 @@ export default function CheckoutPage() {
                   </div>
 
                   {items.map((item: CartItem) => {
+                    const isUnshippable = unshippableItems.some(
+                      (u) => u.itemId === item.id
+                    );
                     const itemSubtotal = item.price * item.quantity;
                     const allocation = appliedDiscount?.allocations?.find(
                       (a) => a.cartItemId === item.id
@@ -1004,7 +1293,18 @@ export default function CheckoutPage() {
                     const itemTotal = itemSubtotal - itemDiscount;
 
                     return (
-                      <div key={item.id} className="space-y-2">
+                      <div
+                        key={item.id}
+                        className={`space-y-2 ${
+                          isUnshippable ? "opacity-50" : ""
+                        }`}
+                      >
+                        {isUnshippable && (
+                          <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
+                            <AlertCircle className="w-4 h-4" />
+                            <span>Cannot ship to selected country</span>
+                          </div>
+                        )}
                         <div className="flex gap-3">
                           <div className="relative w-16 h-16 shrink-0 rounded-md overflow-hidden bg-muted">
                             <Image
@@ -1342,9 +1642,151 @@ export default function CheckoutPage() {
                     </div>
                   )}
 
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Shipping</span>
-                    <span className="font-medium text-foreground">Free</span>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Shipping</span>
+                      <span className="font-medium text-foreground">
+                        {loadingShippingRates
+                          ? "Calculating..."
+                          : shippingCost > 0
+                            ? `€${shippingCost.toFixed(2)}`
+                            : "Free"}
+                      </span>
+                    </div>
+                    {shippingRates.length > 0 &&
+                      shippingRates.some((vr) => vr.rates.length > 0) && (
+                        <div className="space-y-2">
+                          <Label className="text-xs">Shipping Method</Label>
+                          <Select
+                            value={
+                              selectedShippingMethod
+                                ? `${selectedShippingMethod.storeId}-${selectedShippingMethod.rateId}`
+                                : ""
+                            }
+                            onValueChange={(value) => {
+                              const [storeId, rateId] = value.split("-");
+                              const vendorRates = shippingRates.find(
+                                (r) => r.storeId === storeId
+                              );
+                              if (vendorRates) {
+                                const rate = vendorRates.rates.find(
+                                  (r) => r.id === rateId
+                                );
+                                if (rate) {
+                                  setSelectedShippingMethod({
+                                    storeId,
+                                    rateId: rate.id,
+                                    serviceName: rate.serviceName,
+                                    priceCents: rate.priceCents,
+                                    currency: rate.currency,
+                                  });
+                                  // Recalculate total shipping - find all rates with same service name
+                                  const selectedServiceName = rate.serviceName;
+                                  let totalShippingCents = 0;
+                                  for (const vr of shippingRates) {
+                                    const matchingRate = vr.rates.find(
+                                      (r) =>
+                                        r.serviceName === selectedServiceName
+                                    );
+                                    if (matchingRate) {
+                                      totalShippingCents +=
+                                        matchingRate.priceCents;
+                                    } else if (vr.rates.length > 0) {
+                                      // Fallback to cheapest for that vendor
+                                      const cheapest = vr.rates.reduce(
+                                        (prev, curr) =>
+                                          curr.priceCents < prev.priceCents
+                                            ? curr
+                                            : prev
+                                      );
+                                      totalShippingCents += cheapest.priceCents;
+                                    }
+                                  }
+                                  setShippingCost(totalShippingCents / 100);
+                                }
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Select shipping method" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(() => {
+                                // Group rates by service name across all vendors
+                                const servicesMap = new Map<
+                                  string,
+                                  Array<{
+                                    storeId: string;
+                                    storeName: string;
+                                    rate: {
+                                      id: string;
+                                      serviceName: string;
+                                      priceCents: number;
+                                      currency: string;
+                                    };
+                                  }>
+                                >();
+
+                                for (const vendorRates of shippingRates.filter(
+                                  (vr) => vr.rates.length > 0
+                                )) {
+                                  for (const rate of vendorRates.rates) {
+                                    if (!servicesMap.has(rate.serviceName)) {
+                                      servicesMap.set(rate.serviceName, []);
+                                    }
+                                    servicesMap.get(rate.serviceName)!.push({
+                                      storeId: vendorRates.storeId,
+                                      storeName: vendorRates.storeName,
+                                      rate,
+                                    });
+                                  }
+                                }
+
+                                return Array.from(servicesMap.entries()).map(
+                                  ([serviceName, serviceRates]) => {
+                                    const totalPriceCents = serviceRates.reduce(
+                                      (sum, sr) => sum + sr.rate.priceCents,
+                                      0
+                                    );
+                                    const currency =
+                                      serviceRates[0]?.rate.currency || "EUR";
+                                    const price = (
+                                      totalPriceCents / 100
+                                    ).toFixed(2);
+                                    // Use first vendor's rate ID as the key
+                                    const firstRate = serviceRates[0].rate;
+                                    const firstStoreId =
+                                      serviceRates[0].storeId;
+
+                                    return (
+                                      <SelectItem
+                                        key={`${firstStoreId}-${firstRate.id}`}
+                                        value={`${firstStoreId}-${firstRate.id}`}
+                                      >
+                                        {serviceName} -{" "}
+                                        {currency === "EUR"
+                                          ? "€"
+                                          : currency === "USD"
+                                            ? "$"
+                                            : currency}
+                                        {price}
+                                        {shippingRates.length > 1 &&
+                                          ` (Ships from ${serviceRates.length} vendor${serviceRates.length > 1 ? "s" : ""})`}
+                                      </SelectItem>
+                                    );
+                                  }
+                                );
+                              })()}
+                            </SelectContent>
+                          </Select>
+                          {shippingRates.length > 1 && (
+                            <p className="text-xs text-muted-foreground">
+                              Ships from {shippingRates.length} vendor
+                              {shippingRates.length > 1 ? "s" : ""}
+                            </p>
+                          )}
+                        </div>
+                      )}
                   </div>
 
                   <Separator />
@@ -1400,10 +1842,31 @@ export default function CheckoutPage() {
                   type="submit"
                   className="w-full"
                   size="lg"
-                  disabled={isProcessing}
+                  disabled={
+                    isProcessing ||
+                    !isFormValid ||
+                    unshippableItems.length > 0 ||
+                    checkingShippingAvailability
+                  }
                 >
-                  {isProcessing ? "Processing..." : "Place Order"}
+                  {isProcessing
+                    ? "Processing..."
+                    : checkingShippingAvailability
+                      ? "Checking shipping..."
+                      : unshippableItems.length > 0
+                        ? "Cannot Ship Items"
+                        : "Place Order"}
                 </Button>
+                {!isFormValid && unshippableItems.length === 0 && (
+                  <p className="text-xs text-destructive text-center mt-2">
+                    Please fill in all required fields
+                  </p>
+                )}
+                {unshippableItems.length > 0 && (
+                  <p className="text-xs text-destructive text-center mt-2">
+                    Some items cannot be shipped to the selected country
+                  </p>
+                )}
               </div>
             </div>
           </div>

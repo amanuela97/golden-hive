@@ -688,16 +688,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Create checkout session - payment goes to platform account (no destination charges)
+    // Funds will be held and managed via ledger system
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: customerEmail || undefined,
       line_items: stripeLineItems,
       payment_intent_data: {
-        application_fee_amount: platformFeeCents,
-        on_behalf_of: storeInfo.stripeAccountId,
-        transfer_data: {
-          destination: storeInfo.stripeAccountId,
-        },
+        // No transfer_data or application_fee_amount - payment goes to platform
         metadata: {
           orderId: finalOrderId,
           storeId: finalStoreId,

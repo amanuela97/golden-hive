@@ -25,6 +25,10 @@ interface EditProductFormProps {
     available: number | null;
     committed: number | null;
     incoming: number | null;
+    weightOz: string | null;
+    lengthIn: string | null;
+    widthIn: string | null;
+    heightIn: string | null;
   }>;
   isAdmin: boolean;
 }

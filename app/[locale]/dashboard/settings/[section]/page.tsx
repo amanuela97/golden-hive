@@ -23,7 +23,8 @@ type SettingsSection =
   | "policies"
   | "profile"
   | "security"
-  | "shipping-billing";
+  | "shipping-billing"
+  | "shipping-settings";
 
 export default async function SettingsSectionPage({
   params,
@@ -76,6 +77,7 @@ export default async function SettingsSectionPage({
     "profile",
     "security",
     "shipping-billing",
+    "shipping-settings",
     "store",
   ];
 

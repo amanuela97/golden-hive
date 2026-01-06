@@ -9,6 +9,7 @@ import SecurityTab from "./settings/SecurityTab";
 import PaymentsTab from "./settings/PaymentsTab";
 import ShippingTab from "./settings/ShippingTab";
 import StoreTab from "./settings/StoreTab";
+import ShippingProfilesTab from "./settings/ShippingProfilesTab";
 import UserManagement from "../admin/UserManagement";
 import RoleManagement from "../admin/RoleManagement";
 import PermissionsManagement from "../admin/PermissionsManagement";
@@ -35,7 +36,8 @@ type SettingsSection =
   | "policies"
   | "profile"
   | "security"
-  | "shipping-billing";
+  | "shipping-billing"
+  | "shipping-settings";
 
 interface SettingsContentProps {
   section: SettingsSection;
@@ -125,6 +127,8 @@ export default function SettingsContent({
       return <ShippingTab />;
     case "store":
       return <StoreTab />;
+    case "shipping-settings":
+      return <ShippingProfilesTab />;
     case "translations":
       return <TranslationsPage />;
     case "categories":

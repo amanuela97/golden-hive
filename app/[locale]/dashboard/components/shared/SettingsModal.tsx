@@ -17,6 +17,7 @@ import {
   User,
   Truck,
   Store,
+  Package,
 } from "lucide-react";
 import SettingsContent from "./SettingsContent";
 
@@ -40,6 +41,7 @@ type SettingsSection =
   | "profile"
   | "security"
   | "shipping-billing"
+  | "shipping-settings"
   | "store";
 
 interface SettingsSectionConfig {
@@ -74,6 +76,7 @@ export function SettingsModal({
     "profile",
     "security",
     "shipping-billing",
+    "shipping-settings",
     "store",
   ];
 
@@ -200,6 +203,13 @@ export function SettingsModal({
       id: "shipping-billing",
       label: "Shipping & Billing",
       icon: Truck,
+      roles: ["admin", "seller"], // A, S
+    },
+    // Shipping Profiles (A, S) - for managing shipping profiles
+    {
+      id: "shipping-settings",
+      label: "Shipping Settings",
+      icon: Package,
       roles: ["admin", "seller"], // A, S
     },
   ];

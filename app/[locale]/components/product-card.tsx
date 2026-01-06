@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { Card, CardContent } from "@/components/ui/card";
 import { PublicProduct } from "@/app/[locale]/actions/public-products";
-import { MapPin, Globe, Heart } from "lucide-react";
+import { MapPin, Globe, Heart, AlertTriangle } from "lucide-react";
 import { Link, useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import { useState, useEffect } from "react";
@@ -18,6 +18,7 @@ import {
   isGuestFavorite,
 } from "@/lib/guest-favorites";
 import toast from "react-hot-toast";
+import { Badge } from "@/components/ui/badge";
 
 interface ProductCardProps {
   product: PublicProduct;
@@ -148,6 +149,15 @@ export function ProductCard({ product }: ProductCardProps) {
                     ? t("local")
                     : t("international")}
                 </span>
+              )}
+              {product.shippingAvailable === false && (
+                <Badge
+                  variant="outline"
+                  className="text-xs border-yellow-300 text-yellow-700 bg-yellow-50"
+                >
+                  <AlertTriangle className="w-3 h-3 mr-1" />
+                  Shipping may not be available
+                </Badge>
               )}
             </div>
             <h3 className="font-medium text-base mb-1 text-foreground group-hover:text-primary transition-colors line-clamp-2">

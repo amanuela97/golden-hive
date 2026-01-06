@@ -8,9 +8,11 @@ import {
   inventoryItems,
   inventoryLevels,
   store,
+  shippingProfiles,
 } from "@/db/schema";
-import { eq, and, desc, inArray, sql } from "drizzle-orm";
+import { eq, and, desc, inArray, sql, or, isNotNull } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
+import { checkShippingAvailability } from "./shipping-availability";
 
 export interface PublicProduct {
   id: string;
@@ -39,6 +41,7 @@ export interface PublicProduct {
   updatedAt: Date;
   storeName: string | null;
   storeSlug: string | null;
+  shippingAvailable?: boolean | null; // Shipping availability for customer's country
 }
 
 export interface ProductFilters {
@@ -65,6 +68,7 @@ export async function getPublicProducts(options?: {
   categoryIds?: string[];
   limit?: number;
   page?: number;
+  customerCountry?: string; // Optional country code for shipping availability check
 }): Promise<
   ActionResponse & {
     result?: PublicProduct[];
@@ -122,6 +126,16 @@ export async function getPublicProducts(options?: {
     const whereConditions = and(
       eq(listing.status, "active"),
       eq(store.isApproved, true), // Only show products from approved stores
+      // Product must have shipping profile (either direct or store default)
+      or(
+        isNotNull(listing.shippingProfileId), // Product has direct profile
+        // Store has default profile (checked via subquery in having clause)
+        sql`EXISTS (
+          SELECT 1 FROM ${shippingProfiles} 
+          WHERE ${shippingProfiles.storeId} = ${store.id} 
+          AND ${shippingProfiles.isDefault} = true
+        )`
+      ),
       categoryIds && categoryIds.length > 0
         ? inArray(listing.taxonomyCategoryId, categoryIds)
         : undefined
@@ -218,13 +232,48 @@ export async function getPublicProducts(options?: {
       updatedAt: p.updatedAt,
       storeName: p.storeName,
       storeSlug: p.storeSlug,
+      shippingAvailable: null as boolean | null | undefined, // Will be set below if country provided
     }));
 
-    console.log("Mapped products:", mappedProducts.length);
+    // Check shipping availability if customer country is provided
+    let finalProducts = mappedProducts;
+    const customerCountry = options?.customerCountry;
+    if (customerCountry) {
+      console.log(
+        `Checking shipping availability for ${mappedProducts.length} products to country: ${customerCountry}`
+      );
+      // Check availability for each product in parallel
+      const availabilityChecks = await Promise.all(
+        mappedProducts.map(async (product) => {
+          const availability = await checkShippingAvailability(
+            product.id,
+            customerCountry
+          );
+          if (!availability.available) {
+            console.log(
+              `Product ${product.name} (${product.id}) not available to ${customerCountry}: ${availability.message}`
+            );
+          }
+          return {
+            ...product,
+            shippingAvailable: availability.available,
+          };
+        })
+      );
+      finalProducts = availabilityChecks;
+      const unavailableCount = availabilityChecks.filter(
+        (p) => p.shippingAvailable === false
+      ).length;
+      console.log(
+        `Shipping check complete: ${unavailableCount} products not available to ${options.customerCountry}`
+      );
+    }
+
+    console.log("Mapped products:", finalProducts.length);
 
     return {
       success: true,
-      result: mappedProducts,
+      result: finalProducts,
       total,
       totalPages,
       currentPage: page,
@@ -242,20 +291,21 @@ export async function getPublicProducts(options?: {
 // Get a single public product by slug
 export async function getPublicProductBySlug(
   slug: string,
-  locale: string = "en"
+  locale: string = "en",
+  options?: { customerCountry?: string }
 ): Promise<ActionResponse & { result?: PublicProduct }> {
   try {
     // Ensure locale is valid
     const validLocale = locale || "en";
     const slugLower = slug.toLowerCase();
 
-    // Cache key for this product
-    const cacheKey = `product-${slugLower}-${validLocale}`;
+    // Cache key for this product (include country if provided)
+    const cacheKey = `product-${slugLower}-${validLocale}-${options?.customerCountry || "all"}`;
 
     // Use unstable_cache for performance
     return await unstable_cache(
       async () => {
-        return await fetchProductBySlug(slugLower, validLocale);
+        return await fetchProductBySlug(slugLower, validLocale, options?.customerCountry);
       },
       [cacheKey],
       {
@@ -275,7 +325,8 @@ export async function getPublicProductBySlug(
 // Internal function to fetch product (used by cache)
 async function fetchProductBySlug(
   slugLower: string,
-  validLocale: string
+  validLocale: string,
+  customerCountry?: string
 ): Promise<ActionResponse & { result?: PublicProduct }> {
   try {
     const result = await db
@@ -322,7 +373,21 @@ async function fetchProductBySlug(
       )
       .leftJoin(store, eq(listing.storeId, store.id))
       .where(
-        and(eq(listing.slugLower, slugLower), eq(listing.status, "active"))
+        and(
+          eq(listing.slugLower, slugLower),
+          eq(listing.status, "active"),
+          eq(store.isApproved, true),
+          // Product must have shipping profile (either direct or store default)
+          or(
+            isNotNull(listing.shippingProfileId), // Product has direct profile
+            // Store has default profile
+            sql`EXISTS (
+              SELECT 1 FROM ${shippingProfiles} 
+              WHERE ${shippingProfiles.storeId} = ${store.id} 
+              AND ${shippingProfiles.isDefault} = true
+            )`
+          )
+        )
       )
       .limit(1);
 
@@ -366,6 +431,14 @@ async function fetchProductBySlug(
     }
 
     const p = result[0];
+    
+    // Check shipping availability if customer country is provided
+    let shippingAvailable: boolean | null = null;
+    if (customerCountry) {
+      const availability = await checkShippingAvailability(p.id, customerCountry);
+      shippingAvailable = availability.available;
+    }
+
     return {
       success: true,
       result: {
@@ -395,6 +468,7 @@ async function fetchProductBySlug(
         salesCount: p.salesCount ?? 0,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
+        shippingAvailable,
       },
     };
   } catch (error) {
@@ -456,7 +530,20 @@ async function fetchRelatedProducts(
 ): Promise<ActionResponse & { result?: PublicProduct[] }> {
   try {
     // Build where conditions
-    const whereConditions = [eq(listing.status, "active")];
+    const whereConditions = [
+      eq(listing.status, "active"),
+      eq(store.isApproved, true),
+      // Product must have shipping profile (either direct or store default)
+      or(
+        isNotNull(listing.shippingProfileId), // Product has direct profile
+        // Store has default profile
+        sql`EXISTS (
+          SELECT 1 FROM ${shippingProfiles} 
+          WHERE ${shippingProfiles.storeId} = ${store.id} 
+          AND ${shippingProfiles.isDefault} = true
+        )`
+      ),
+    ];
 
     if (categoryId) {
       whereConditions.push(eq(listing.taxonomyCategoryId, categoryId));
@@ -612,7 +699,23 @@ export async function getFeaturedProducts(
         )
       )
       .leftJoin(store, eq(listing.storeId, store.id))
-      .where(and(eq(listing.status, "active"), eq(listing.isFeatured, true)))
+      .where(
+        and(
+          eq(listing.status, "active"),
+          eq(listing.isFeatured, true),
+          eq(store.isApproved, true),
+          // Product must have shipping profile (either direct or store default)
+          or(
+            isNotNull(listing.shippingProfileId), // Product has direct profile
+            // Store has default profile
+            sql`EXISTS (
+              SELECT 1 FROM ${shippingProfiles} 
+              WHERE ${shippingProfiles.storeId} = ${store.id} 
+              AND ${shippingProfiles.isDefault} = true
+            )`
+          )
+        )
+      )
       .orderBy(desc(listing.createdAt))
       .limit(limit);
 

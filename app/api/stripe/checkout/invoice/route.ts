@@ -81,10 +81,11 @@ export async function POST(req: NextRequest) {
       },
     ];
 
-    // Create Stripe Checkout Session with Connect (Destination Charges)
-    // IMPORTANT: Create on platform account (not connected account) so webhooks come to our endpoint
+    // Create Stripe Checkout Session
+    // IMPORTANT: Payment goes to platform account (no destination charges)
+    // Funds will be held and transferred later via payout feature
     console.log("Creating Stripe Checkout Session for draft:", draft.id);
-    console.log("Store Stripe Account ID:", storeInfo.stripeAccountId);
+    console.log("Store ID:", storeInfo.id);
     console.log("Metadata to include:", {
       draftId: draft.id,
       storeId: storeInfo.id,
@@ -94,26 +95,16 @@ export async function POST(req: NextRequest) {
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: lineItems,
-      payment_intent_data: {
-        application_fee_amount: platformFeeCents, // Your 5% platform fee
-        on_behalf_of: storeInfo.stripeAccountId, // Compliance & reporting
-        transfer_data: {
-          destination: storeInfo.stripeAccountId, // Store receives the rest
-        },
-        metadata: {
-          draftId: draft.id,
-          storeId: storeInfo.id,
-          invoiceToken: token,
-        },
-      },
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/invoice/${token}?canceled=true`,
-      customer_email: draft.customerEmail || undefined,
+      // No payment_intent_data with transfer_data - payment goes to platform
+      // Funds will be held and seller balance will be updated via webhook
       metadata: {
         draftId: draft.id,
         storeId: storeInfo.id,
         invoiceToken: token,
       },
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/invoice/${token}?canceled=true`,
+      customer_email: draft.customerEmail || undefined,
     });
 
     console.log("✅ Checkout session created:", {

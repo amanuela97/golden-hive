@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import type { Listing, ListingVariant, InventoryLocation } from "@/db/schema";
 import type { CreateListingData, UpdateListingData } from "@/lib/listing";
-import { Save, ArrowLeft, Image as ImageIcon, X } from "lucide-react";
+import { Save, ArrowLeft, Image as ImageIcon, X, AlertTriangle } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import toast from "react-hot-toast";
 import { InputTags } from "@/app/[locale]/components/input-tags";
@@ -38,7 +38,14 @@ import { getCategoryAttributes, type TaxonomyAttribute } from "@/lib/taxonomy";
 import { getStore } from "@/app/[locale]/actions/store";
 import { getStoreIdForUser } from "@/app/[locale]/actions/store-members";
 import { slugify } from "@/lib/slug-utils";
+import {
+  kilogramsToOunces,
+  gramsToOunces,
+  centimetersToInches,
+  metersToInches,
+} from "@/lib/shipping-utils";
 import Image from "next/image";
+import { Badge } from "@/components/ui/badge";
 
 const fileTypes = ["JPG", "PNG", "GIF", "JPEG", "WEBP", "JFIF"];
 
@@ -60,6 +67,10 @@ interface ProductFormProps {
     available: number | null;
     committed: number | null;
     incoming: number | null;
+    weightOz: string | null;
+    lengthIn: string | null;
+    widthIn: string | null;
+    heightIn: string | null;
   }>;
   onSubmit: (data: CreateListingData | UpdateListingData) => Promise<void>;
   isLoading?: boolean;
@@ -83,10 +94,15 @@ type Variant = Omit<
   quantity: string; // Inventory quantity for UI (not in schema)
   barcode?: string; // UI-only field
   package?: string; // UI-only field
-  weight?: string; // UI-only field
+  weight?: string; // UI-only field (deprecated, use weightOz)
   origin?: string; // UI-only field
   images?: string[]; // Array of image URLs for UI (not in schema)
   options: Record<string, string>; // Ensure options is Record type (from schema but typed explicitly)
+  // Shipping fields (stored in inventoryItems)
+  weightOz?: string | null; // Weight in ounces (stored in DB)
+  lengthIn?: string | null; // Length in inches (stored in DB)
+  widthIn?: string | null; // Width in inches (stored in DB)
+  heightIn?: string | null; // Height in inches (stored in DB)
 };
 
 export default function ProductForm({
@@ -98,12 +114,31 @@ export default function ProductForm({
   basePath,
   isAdmin = false,
 }: ProductFormProps) {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    name: string;
+    slug: string;
+    description: string;
+    taxonomyCategoryId: string;
+    price: number | "";
+    compareAtPrice: number | "" | undefined;
+    currency: string;
+    unit: string;
+    status: "active" | "draft" | "archived";
+    isFeatured: boolean;
+    marketType: string;
+    originVillage: string;
+    harvestDate: string;
+    tags: string[];
+    tracksInventory: boolean;
+    inventoryLocationId: string;
+    costPerItem: number | "";
+    shippingProfileId: string;
+  }>({
     name: initialData?.name || "",
     slug: initialData?.slug || "",
     description: initialData?.description || "",
     taxonomyCategoryId: initialData?.taxonomyCategoryId || "",
-    price: initialData?.price ? parseFloat(initialData.price) : 0,
+    price: initialData?.price ? parseFloat(initialData.price) : "",
     compareAtPrice: initialData?.compareAtPrice
       ? parseFloat(initialData.compareAtPrice)
       : undefined,
@@ -120,7 +155,9 @@ export default function ProductForm({
     // Inventory fields
     tracksInventory: false,
     inventoryLocationId: "",
-    costPerItem: 0,
+    costPerItem: "",
+    // Shipping profile
+    shippingProfileId: initialData?.shippingProfileId || "",
   });
 
   // Fetch inventory locations
@@ -128,6 +165,12 @@ export default function ProductForm({
     Pick<InventoryLocation, "id" | "name">[]
   >([]);
   const [loadingLocations, setLoadingLocations] = useState(false);
+
+  // Fetch shipping profiles
+  const [shippingProfiles, setShippingProfiles] = useState<
+    Array<{ id: string; name: string; isDefault: boolean }>
+  >([]);
+  const [loadingProfiles, setLoadingProfiles] = useState(false);
 
   // Category attributes for recommended options
   const [categoryAttributes, setCategoryAttributes] = useState<
@@ -219,6 +262,49 @@ export default function ProductForm({
       });
   }, [mode, initialData?.producerId, initialData?.storeId]);
 
+  // Fetch shipping profiles
+  useEffect(() => {
+    const fetchProfiles = async () => {
+      setLoadingProfiles(true);
+      try {
+        const { getShippingProfiles } = await import(
+          "@/app/[locale]/actions/shipping-profiles"
+        );
+        // When editing, use the product's storeId; when creating, let it use the current user's storeId
+        const storeId = mode === "edit" ? initialData?.storeId : undefined;
+        const result = await getShippingProfiles(storeId);
+        if (result.success && result.result) {
+          setShippingProfiles(
+            result.result.map((p) => ({
+              id: p.id,
+              name: p.name,
+              isDefault: p.isDefault,
+            }))
+          );
+          // Set default profile if none selected and in create mode
+          if (
+            mode === "create" &&
+            !formData.shippingProfileId &&
+            result.result.length > 0
+          ) {
+            const defaultProfile = result.result.find((p) => p.isDefault);
+            if (defaultProfile) {
+              setFormData((prev) => ({
+                ...prev,
+                shippingProfileId: defaultProfile.id,
+              }));
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching shipping profiles:", error);
+      } finally {
+        setLoadingProfiles(false);
+      }
+    };
+    fetchProfiles();
+  }, [mode, formData.shippingProfileId, initialData?.storeId]);
+
   // Fetch category attributes when editing a product with an existing category
   // or when category changes
   useEffect(() => {
@@ -251,6 +337,10 @@ export default function ProductForm({
           quantity: v.available?.toString() || "0",
           sku: v.sku || null,
           images: v.imageUrl ? [v.imageUrl] : undefined,
+          weightOz: v.weightOz || null,
+          lengthIn: v.lengthIn || null,
+          widthIn: v.widthIn || null,
+          heightIn: v.heightIn || null,
         };
       });
 
@@ -325,7 +415,12 @@ export default function ProductForm({
     setFormData((prev) => {
       const newData = {
         ...prev,
-        [name]: type === "number" ? parseFloat(value) || 0 : value,
+        [name]:
+          type === "number"
+            ? value === ""
+              ? ""
+              : parseFloat(value) || 0
+            : value,
       };
       // Auto-generate slug from name if slug is empty and name changed
       if (name === "name" && !prev.slug && value) {
@@ -511,6 +606,18 @@ export default function ProductForm({
   // For edit mode, we'd need to fetch variants separately
   const [variants, setVariants] = useState<Variant[]>([]);
 
+  // Weight and dimensions for products without variants
+  const [productWeightOz, setProductWeightOz] = useState<string>("");
+  const [productLengthIn, setProductLengthIn] = useState<string>("");
+  const [productWidthIn, setProductWidthIn] = useState<string>("");
+  const [productHeightIn, setProductHeightIn] = useState<string>("");
+  const [productWeightUnit, setProductWeightUnit] = useState<"oz" | "kg" | "g">(
+    "kg"
+  );
+  const [productDimensionUnit, setProductDimensionUnit] = useState<
+    "in" | "cm" | "m"
+  >("cm");
+
   // Memoize the callback to prevent unnecessary re-renders
   const handleVariantsChange = useCallback((newVariants: Variant[]) => {
     setVariants(newVariants);
@@ -518,7 +625,12 @@ export default function ProductForm({
 
   // Calculate margin and profit based on cost per item
   const marginAndProfit = useMemo(() => {
-    const cost = formData.costPerItem;
+    const cost =
+      typeof formData.costPerItem === "string"
+        ? 0
+        : typeof formData.costPerItem === "number"
+          ? formData.costPerItem
+          : 0;
     if (!cost || cost <= 0) {
       return null;
     }
@@ -550,7 +662,12 @@ export default function ProductForm({
       }>;
     } else {
       // Use main price if no variants
-      const price = formData.price;
+      const price =
+        typeof formData.price === "string"
+          ? 0
+          : typeof formData.price === "number"
+            ? formData.price
+            : 0;
       if (price <= 0) return null;
 
       const profit = price - cost;
@@ -571,7 +688,12 @@ export default function ProductForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.name || !formData.slug || !formData.price) {
+    if (
+      !formData.name ||
+      !formData.slug ||
+      typeof formData.price === "string" ||
+      (typeof formData.price === "number" && formData.price <= 0)
+    ) {
       toast.error("Name, slug, and price are required");
       return;
     }
@@ -676,6 +798,55 @@ export default function ProductForm({
         return;
       }
 
+      // Validate weight and dimensions (required for shipping calculation)
+      if (variants.length === 0) {
+        // For products without variants, validate main product weight/dimensions
+        if (!productWeightOz || parseFloat(productWeightOz) <= 0) {
+          toast.error("Weight is required for shipping calculation");
+          return;
+        }
+        if (!productLengthIn || parseFloat(productLengthIn) <= 0) {
+          toast.error("Length is required for shipping calculation");
+          return;
+        }
+        if (!productWidthIn || parseFloat(productWidthIn) <= 0) {
+          toast.error("Width is required for shipping calculation");
+          return;
+        }
+        if (!productHeightIn || parseFloat(productHeightIn) <= 0) {
+          toast.error("Height is required for shipping calculation");
+          return;
+        }
+      } else {
+        // For products with variants, validate each variant has weight/dimensions
+        for (const variant of variants) {
+          if (!variant.weightOz || parseFloat(variant.weightOz) <= 0) {
+            toast.error(
+              `Weight is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+          if (!variant.lengthIn || parseFloat(variant.lengthIn) <= 0) {
+            toast.error(
+              `Length is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+          if (!variant.widthIn || parseFloat(variant.widthIn) <= 0) {
+            toast.error(
+              `Width is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+          if (!variant.heightIn || parseFloat(variant.heightIn) <= 0) {
+            toast.error(
+              `Height is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+        }
+      }
+
       try {
         // Helper function to convert base64 to File
         const base64ToFile = (base64String: string, filename: string): File => {
@@ -694,6 +865,62 @@ export default function ProductForm({
         const variantData: VariantData[] = [];
         // Only include new File objects for upload, not existing URLs
         const newVariantImages: Record<string, File[]> = {};
+
+        // If no variants, create a default variant with weight/dimensions
+        if (variants.length === 0) {
+          const mainPrice =
+            typeof formData.price === "string"
+              ? 0
+              : typeof formData.price === "number"
+                ? formData.price
+                : 0;
+
+          // Convert weight/dimensions based on selected unit
+          let weightOz = productWeightOz;
+          let lengthIn = productLengthIn;
+          let widthIn = productWidthIn;
+          let heightIn = productHeightIn;
+
+          if (productWeightUnit === "kg") {
+            weightOz = kilogramsToOunces(
+              parseFloat(productWeightOz)
+            ).toString();
+          } else if (productWeightUnit === "g") {
+            weightOz = gramsToOunces(parseFloat(productWeightOz)).toString();
+          }
+
+          if (productDimensionUnit === "cm") {
+            lengthIn = centimetersToInches(
+              parseFloat(productLengthIn)
+            ).toString();
+            widthIn = centimetersToInches(
+              parseFloat(productWidthIn)
+            ).toString();
+            heightIn = centimetersToInches(
+              parseFloat(productHeightIn)
+            ).toString();
+          } else if (productDimensionUnit === "m") {
+            lengthIn = metersToInches(parseFloat(productLengthIn)).toString();
+            widthIn = metersToInches(parseFloat(productWidthIn)).toString();
+            heightIn = metersToInches(parseFloat(productHeightIn)).toString();
+          }
+
+          variantData.push({
+            title: "Default",
+            price: mainPrice,
+            currency: (formData.currency || "NPR") as "EUR" | "USD" | "NPR",
+            initialStock: formData.tracksInventory ? 0 : undefined,
+            costPerItem:
+              typeof formData.costPerItem === "number" &&
+              formData.costPerItem > 0
+                ? formData.costPerItem
+                : undefined,
+            weightOz,
+            lengthIn,
+            widthIn,
+            heightIn,
+          });
+        }
 
         for (const variant of variants) {
           let imageUrl = variant.images?.[0];
@@ -734,11 +961,17 @@ export default function ProductForm({
             }
           }
 
+          const mainPrice =
+            typeof formData.price === "string"
+              ? 0
+              : typeof formData.price === "number"
+                ? formData.price
+                : 0;
           variantData.push({
             id: variant.id,
             title: Object.values(variant.options).join(" / ") || "Default",
             sku: variant.sku || undefined,
-            price: parseFloat(variant.price) || formData.price,
+            price: parseFloat(variant.price) || mainPrice,
             currency: (variant.currency || "NPR") as "EUR" | "USD" | "NPR",
             compareAtPrice: undefined,
             // Only set imageUrl if it's an existing URL (not base64)
@@ -753,7 +986,14 @@ export default function ProductForm({
               ? parseInt(variant.quantity) || 0
               : undefined,
             costPerItem:
-              formData.costPerItem > 0 ? formData.costPerItem : undefined,
+              typeof formData.costPerItem === "number" &&
+              formData.costPerItem > 0
+                ? formData.costPerItem
+                : undefined,
+            weightOz: variant.weightOz || undefined,
+            lengthIn: variant.lengthIn || undefined,
+            widthIn: variant.widthIn || undefined,
+            heightIn: variant.heightIn || undefined,
           });
         }
 
@@ -764,13 +1004,28 @@ export default function ProductForm({
           categoryRuleId: categoryRuleId, // Optional - only set if category rule exists
           taxonomyCategoryId: formData.taxonomyCategoryId, // Already set by user
           tags,
-          compareAtPrice: formData.compareAtPrice || undefined,
+          price:
+            typeof formData.price === "string"
+              ? 0
+              : typeof formData.price === "number"
+                ? formData.price
+                : 0,
+          compareAtPrice:
+            typeof formData.compareAtPrice === "string" ||
+            formData.compareAtPrice === undefined
+              ? undefined
+              : formData.compareAtPrice,
           harvestDate: formData.harvestDate
             ? new Date(formData.harvestDate)
             : undefined,
           variants: variantData.length > 0 ? variantData : undefined,
           tracksInventory: formData.tracksInventory,
           inventoryLocationId: formData.inventoryLocationId || undefined,
+          costPerItem:
+            typeof formData.costPerItem === "number" && formData.costPerItem > 0
+              ? formData.costPerItem
+              : undefined,
+          marketType: formData.marketType as "local" | "international",
           // Only include variantImages if there are actual new files to upload
           variantImages:
             Object.keys(newVariantImages).length > 0
@@ -830,6 +1085,55 @@ export default function ProductForm({
         return;
       }
 
+      // Validate weight and dimensions (required for shipping calculation)
+      if (variants.length === 0) {
+        // For products without variants, validate main product weight/dimensions
+        if (!productWeightOz || parseFloat(productWeightOz) <= 0) {
+          toast.error("Weight is required for shipping calculation");
+          return;
+        }
+        if (!productLengthIn || parseFloat(productLengthIn) <= 0) {
+          toast.error("Length is required for shipping calculation");
+          return;
+        }
+        if (!productWidthIn || parseFloat(productWidthIn) <= 0) {
+          toast.error("Width is required for shipping calculation");
+          return;
+        }
+        if (!productHeightIn || parseFloat(productHeightIn) <= 0) {
+          toast.error("Height is required for shipping calculation");
+          return;
+        }
+      } else {
+        // For products with variants, validate each variant has weight/dimensions
+        for (const variant of variants) {
+          if (!variant.weightOz || parseFloat(variant.weightOz) <= 0) {
+            toast.error(
+              `Weight is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+          if (!variant.lengthIn || parseFloat(variant.lengthIn) <= 0) {
+            toast.error(
+              `Length is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+          if (!variant.widthIn || parseFloat(variant.widthIn) <= 0) {
+            toast.error(
+              `Width is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+          if (!variant.heightIn || parseFloat(variant.heightIn) <= 0) {
+            toast.error(
+              `Height is required for variant: ${Object.values(variant.options).join(" / ") || "Default"}`
+            );
+            return;
+          }
+        }
+      }
+
       try {
         // Helper function to convert base64 to File
         const base64ToFile = (base64String: string, filename: string): File => {
@@ -848,6 +1152,62 @@ export default function ProductForm({
         const variantData: VariantData[] = [];
         // Only include new File objects for upload, not existing URLs
         const newVariantImages: Record<string, File[]> = {};
+
+        // If no variants, create a default variant with weight/dimensions
+        if (variants.length === 0) {
+          const mainPrice =
+            typeof formData.price === "string"
+              ? 0
+              : typeof formData.price === "number"
+                ? formData.price
+                : 0;
+
+          // Convert weight/dimensions based on selected unit
+          let weightOz = productWeightOz;
+          let lengthIn = productLengthIn;
+          let widthIn = productWidthIn;
+          let heightIn = productHeightIn;
+
+          if (productWeightUnit === "kg") {
+            weightOz = kilogramsToOunces(
+              parseFloat(productWeightOz)
+            ).toString();
+          } else if (productWeightUnit === "g") {
+            weightOz = gramsToOunces(parseFloat(productWeightOz)).toString();
+          }
+
+          if (productDimensionUnit === "cm") {
+            lengthIn = centimetersToInches(
+              parseFloat(productLengthIn)
+            ).toString();
+            widthIn = centimetersToInches(
+              parseFloat(productWidthIn)
+            ).toString();
+            heightIn = centimetersToInches(
+              parseFloat(productHeightIn)
+            ).toString();
+          } else if (productDimensionUnit === "m") {
+            lengthIn = metersToInches(parseFloat(productLengthIn)).toString();
+            widthIn = metersToInches(parseFloat(productWidthIn)).toString();
+            heightIn = metersToInches(parseFloat(productHeightIn)).toString();
+          }
+
+          variantData.push({
+            title: "Default",
+            price: mainPrice,
+            currency: (formData.currency || "NPR") as "EUR" | "USD" | "NPR",
+            initialStock: formData.tracksInventory ? 0 : undefined,
+            costPerItem:
+              typeof formData.costPerItem === "number" &&
+              formData.costPerItem > 0
+                ? formData.costPerItem
+                : undefined,
+            weightOz,
+            lengthIn,
+            widthIn,
+            heightIn,
+          });
+        }
 
         for (const variant of variants) {
           let imageUrl = variant.images?.[0];
@@ -888,11 +1248,17 @@ export default function ProductForm({
             }
           }
 
+          const mainPrice =
+            typeof formData.price === "string"
+              ? 0
+              : typeof formData.price === "number"
+                ? formData.price
+                : 0;
           variantData.push({
             id: variant.id,
             title: Object.values(variant.options).join(" / ") || "Default",
             sku: variant.sku || undefined,
-            price: parseFloat(variant.price) || formData.price,
+            price: parseFloat(variant.price) || mainPrice,
             currency: (variant.currency || "NPR") as "EUR" | "USD" | "NPR",
             compareAtPrice: undefined,
             // Only set imageUrl if it's an existing URL (not base64)
@@ -907,7 +1273,14 @@ export default function ProductForm({
               ? parseInt(variant.quantity) || 0
               : undefined,
             costPerItem:
-              formData.costPerItem > 0 ? formData.costPerItem : undefined,
+              typeof formData.costPerItem === "number" &&
+              formData.costPerItem > 0
+                ? formData.costPerItem
+                : undefined,
+            weightOz: variant.weightOz || undefined,
+            lengthIn: variant.lengthIn || undefined,
+            widthIn: variant.widthIn || undefined,
+            heightIn: variant.heightIn || undefined,
           });
         }
 
@@ -915,13 +1288,28 @@ export default function ProductForm({
           ...formData,
           slug: formData.slug ? slugify(formData.slug) : undefined, // Ensure slug is properly formatted if provided
           tags,
-          compareAtPrice: formData.compareAtPrice || undefined,
+          price:
+            typeof formData.price === "string"
+              ? 0
+              : typeof formData.price === "number"
+                ? formData.price
+                : 0,
+          compareAtPrice:
+            typeof formData.compareAtPrice === "string" ||
+            formData.compareAtPrice === undefined
+              ? undefined
+              : formData.compareAtPrice,
           harvestDate: formData.harvestDate
             ? new Date(formData.harvestDate)
             : undefined,
           variants: variantData.length > 0 ? variantData : undefined,
           tracksInventory: formData.tracksInventory,
           inventoryLocationId: formData.inventoryLocationId || undefined,
+          costPerItem:
+            typeof formData.costPerItem === "number" && formData.costPerItem > 0
+              ? formData.costPerItem
+              : undefined,
+          marketType: formData.marketType as "local" | "international",
           // Only include variantImages if there are actual new files to upload
           variantImages:
             Object.keys(newVariantImages).length > 0
@@ -958,6 +1346,7 @@ export default function ProductForm({
           id: initialData.id,
           categoryRuleId: categoryRuleId || undefined,
           taxonomyCategoryId: formData.taxonomyCategoryId || undefined,
+          shippingProfileId: formData.shippingProfileId || undefined,
           mainImage: mainImage || undefined,
           galleryFiles: galleryFiles.length > 0 ? galleryFiles : undefined,
           gallery: galleryUrls.length > 0 ? galleryUrls : undefined,
@@ -1125,7 +1514,7 @@ export default function ProductForm({
                     type="number"
                     step="0.01"
                     min="0"
-                    value={formData.price}
+                    value={formData.price === "" ? "" : formData.price}
                     onChange={handleInputChange}
                     placeholder="0.00"
                     required
@@ -1139,7 +1528,12 @@ export default function ProductForm({
                     type="number"
                     step="0.01"
                     min="0"
-                    value={formData.compareAtPrice || ""}
+                    value={
+                      formData.compareAtPrice === "" ||
+                      formData.compareAtPrice === undefined
+                        ? ""
+                        : formData.compareAtPrice
+                    }
                     onChange={handleInputChange}
                     placeholder="0.00"
                   />
@@ -1267,7 +1661,11 @@ export default function ProductForm({
                         type="number"
                         step="0.01"
                         min="0"
-                        value={formData.costPerItem}
+                        value={
+                          formData.costPerItem === ""
+                            ? ""
+                            : formData.costPerItem
+                        }
                         onChange={handleInputChange}
                         placeholder="0.00"
                       />
@@ -1352,6 +1750,139 @@ export default function ProductForm({
                 recommendedAttributes={categoryAttributes}
                 storeCurrency={storeCurrency || formData.currency}
               />
+              {variants.length === 0 && (
+                <div className="mt-6 pt-6 border-t">
+                  <h3 className="text-md font-semibold mb-4">
+                    Shipping Dimensions & Weight (Required)
+                  </h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Required for shipping rate calculation. You can enter values
+                    in metric or imperial units.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="product-weight">Weight *</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="product-weight"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          value={productWeightOz}
+                          onChange={(e) => setProductWeightOz(e.target.value)}
+                          placeholder="0.0"
+                          required
+                        />
+                        <Select
+                          value={productWeightUnit}
+                          onValueChange={(value: "oz" | "kg" | "g") =>
+                            setProductWeightUnit(value)
+                          }
+                        >
+                          <SelectTrigger className="w-24">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="kg">kg</SelectItem>
+                            <SelectItem value="g">g</SelectItem>
+                            <SelectItem value="oz">oz</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="product-length">Length *</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="product-length"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          value={productLengthIn}
+                          onChange={(e) => setProductLengthIn(e.target.value)}
+                          placeholder="0.0"
+                          required
+                        />
+                        <Select
+                          value={productDimensionUnit}
+                          onValueChange={(value: "in" | "cm" | "m") =>
+                            setProductDimensionUnit(value)
+                          }
+                        >
+                          <SelectTrigger className="w-24">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cm">cm</SelectItem>
+                            <SelectItem value="m">m</SelectItem>
+                            <SelectItem value="in">in</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="product-width">Width *</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="product-width"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          value={productWidthIn}
+                          onChange={(e) => setProductWidthIn(e.target.value)}
+                          placeholder="0.0"
+                          required
+                        />
+                        <Select
+                          value={productDimensionUnit}
+                          onValueChange={(value: "in" | "cm" | "m") =>
+                            setProductDimensionUnit(value)
+                          }
+                        >
+                          <SelectTrigger className="w-24">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cm">cm</SelectItem>
+                            <SelectItem value="m">m</SelectItem>
+                            <SelectItem value="in">in</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="product-height">Height *</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="product-height"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          value={productHeightIn}
+                          onChange={(e) => setProductHeightIn(e.target.value)}
+                          placeholder="0.0"
+                          required
+                        />
+                        <Select
+                          value={productDimensionUnit}
+                          onValueChange={(value: "in" | "cm" | "m") =>
+                            setProductDimensionUnit(value)
+                          }
+                        >
+                          <SelectTrigger className="w-24">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cm">cm</SelectItem>
+                            <SelectItem value="m">m</SelectItem>
+                            <SelectItem value="in">in</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </Card>
 
             {/* Status */}
@@ -1414,6 +1945,77 @@ export default function ProductForm({
                     </Label>
                   </div>
                 )}
+              </div>
+            </Card>
+
+            {/* Shipping Profile */}
+            <Card className="p-6">
+              <h2 className="text-lg font-semibold mb-4">Shipping</h2>
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Label htmlFor="shippingProfileId">Shipping Profile</Label>
+                    {!formData.shippingProfileId &&
+                      !shippingProfiles.some((p) => p.isDefault) &&
+                      !loadingProfiles && (
+                        <Badge variant="destructive" className="gap-1">
+                          <AlertTriangle className="h-3 w-3" />
+                          Hidden from Marketplace
+                        </Badge>
+                      )}
+                  </div>
+                  <Select
+                    value={formData.shippingProfileId || "__none__"}
+                    onValueChange={(value) => {
+                      setFormData((prev) => ({
+                        ...prev,
+                        shippingProfileId: value === "__none__" ? "" : value,
+                      }));
+                    }}
+                    disabled={loadingProfiles}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          loadingProfiles
+                            ? "Loading profiles..."
+                            : "Select shipping profile (optional)"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">None (use default)</SelectItem>
+                      {shippingProfiles.map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          {profile.name}
+                          {profile.isDefault && " (Default)"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!formData.shippingProfileId &&
+                    !shippingProfiles.some((p) => p.isDefault) &&
+                    !loadingProfiles && (
+                      <p className="text-sm text-destructive mt-2 flex items-start gap-1.5">
+                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                        <span>
+                          This product will not be visible to buyers until a
+                          shipping profile is assigned. Product is draft /
+                          private until shipping profile is set.
+                        </span>
+                      </p>
+                    )}
+                  {(!formData.shippingProfileId &&
+                        shippingProfiles.some((p) => p.isDefault)) ||
+                      formData.shippingProfileId ||
+                      loadingProfiles ? (
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Select a shipping profile to use custom shipping rates
+                          for this product. If not selected, the store&apos;s
+                          default profile will be used.
+                        </p>
+                      ) : null}
+                </div>
               </div>
             </Card>
           </div>

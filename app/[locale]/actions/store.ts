@@ -2,7 +2,7 @@
 
 import { ActionResponse } from "@/lib/types";
 import { db } from "@/db";
-import { store, storeMembers, storeSlugHistory } from "@/db/schema";
+import { store, storeMembers, storeSlugHistory, inventoryLocations } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -224,6 +224,37 @@ export async function upsertStore(
 
       // Update existing store
       await db.update(store).set(storeData).where(eq(store.id, storeId));
+
+      // Validate that at least one location has all required fields
+      const locations = await db
+        .select({
+          name: inventoryLocations.name,
+          address: inventoryLocations.address,
+          city: inventoryLocations.city,
+          zip: inventoryLocations.zip,
+          country: inventoryLocations.country,
+          isActive: inventoryLocations.isActive,
+        })
+        .from(inventoryLocations)
+        .where(eq(inventoryLocations.storeId, storeId));
+
+      const completeLocations = locations.filter(
+        (loc) =>
+          loc.name &&
+          loc.address &&
+          loc.city &&
+          loc.zip &&
+          loc.country &&
+          loc.isActive
+      );
+
+      if (completeLocations.length === 0) {
+        return {
+          success: false,
+          error:
+            "At least one active location with complete address information (name, address, city, zip, country) is required before saving the store.",
+        };
+      }
     }
 
     revalidatePath("/dashboard/settings/store");

@@ -15,7 +15,7 @@ import {
 // Re-export the Listing type for use in components
 export type { Listing };
 import { uploadFile, uploadFiles, deleteFile, deleteFiles } from "./cloudinary";
-import { eq, and, sql, inArray, isNotNull } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { translateText } from "./translate";
 import { findCategoryById } from "./taxonomy";
@@ -122,7 +122,11 @@ async function createInventoryForVariant(
   variantId: string,
   locationId: string,
   initialStock: number = 0,
-  costPerItem: number | undefined = undefined
+  costPerItem: number | undefined = undefined,
+  weightOz: string | null | undefined = undefined,
+  lengthIn: string | null | undefined = undefined,
+  widthIn: string | null | undefined = undefined,
+  heightIn: string | null | undefined = undefined
 ): Promise<void> {
   // Check if inventory item already exists
   const existingItem = await db
@@ -135,6 +139,18 @@ async function createInventoryForVariant(
 
   if (existingItem.length > 0) {
     inventoryItemId = existingItem[0].id;
+    // Update existing inventory item with weight and dimensions
+    await db
+      .update(inventoryItems)
+      .set({
+        costPerItem: costPerItem ? costPerItem.toString() : "0",
+        weightOz: weightOz || "0",
+        lengthIn: lengthIn || "0",
+        widthIn: widthIn || "0",
+        heightIn: heightIn || "0",
+        updatedAt: new Date(),
+      })
+      .where(eq(inventoryItems.id, inventoryItemId));
   } else {
     // Create inventory item
     const inventoryItem = await db
@@ -144,6 +160,10 @@ async function createInventoryForVariant(
         costPerItem: costPerItem ? costPerItem.toString() : "0",
         requiresShipping: true,
         weightGrams: 0,
+        weightOz: weightOz || "0",
+        lengthIn: lengthIn || "0",
+        widthIn: widthIn || "0",
+        heightIn: heightIn || "0",
       })
       .returning();
     inventoryItemId = inventoryItem[0].id;
@@ -186,6 +206,11 @@ export type VariantData = {
   // Inventory fields
   initialStock?: number;
   costPerItem?: number;
+  // Shipping fields (stored in inventoryItems)
+  weightOz?: string | null;
+  lengthIn?: string | null;
+  widthIn?: string | null;
+  heightIn?: string | null;
 };
 
 // Types for CRUD operations
@@ -211,6 +236,7 @@ export type CreateListingData = {
   harvestDate?: Date;
   // Variants (relational, not JSON)
   variants?: VariantData[];
+  shippingProfileId?: string; // Optional - reference to shipping_profiles table
   // Inventory settings
   tracksInventory?: boolean;
   inventoryLocationId?: string; // Required if tracksInventory is true
@@ -372,6 +398,7 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
         publishedAt,
         originVillage: data.originVillage,
         harvestDate: data.harvestDate,
+        shippingProfileId: data.shippingProfileId || null,
       })
       .returning();
 
@@ -425,6 +452,10 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
           ...variant[0],
           initialStock: variantData.initialStock,
           costPerItem: variantData.costPerItem,
+          weightOz: variantData.weightOz,
+          lengthIn: variantData.lengthIn,
+          widthIn: variantData.widthIn,
+          heightIn: variantData.heightIn,
         });
       }
     }
@@ -446,7 +477,11 @@ export async function createListing(data: CreateListingData): Promise<Listing> {
             variant.id,
             locationId,
             variant.initialStock || 0,
-            variant.costPerItem
+            variant.costPerItem,
+            variant.weightOz,
+            variant.lengthIn,
+            variant.widthIn,
+            variant.heightIn
           );
         }
       }
@@ -524,6 +559,9 @@ export async function getListingById(id: string): Promise<Listing | null> {
         ratingAverage: listing.ratingAverage,
         ratingCount: listing.ratingCount,
         salesCount: listing.salesCount,
+        slug: listing.slug,
+        slugLower: listing.slugLower,
+        shippingProfileId: listing.shippingProfileId,
         createdAt: listing.createdAt,
         updatedAt: listing.updatedAt,
         // Fallback fields from base table
@@ -573,6 +611,9 @@ export async function getListingById(id: string): Promise<Listing | null> {
       ratingAverage: r.ratingAverage,
       ratingCount: r.ratingCount,
       salesCount: r.salesCount,
+      slug: r.slug,
+      slugLower: r.slugLower,
+      shippingProfileId: r.shippingProfileId || null,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     } as Listing;
@@ -605,6 +646,10 @@ export async function getListingVariantsWithInventory(
     available: number | null;
     committed: number | null;
     incoming: number | null;
+    weightOz: string | null;
+    lengthIn: string | null;
+    widthIn: string | null;
+    heightIn: string | null;
   }>
 > {
   try {
@@ -624,6 +669,10 @@ export async function getListingVariantsWithInventory(
         available: inventoryLevels.available,
         committed: inventoryLevels.committed,
         incoming: inventoryLevels.incoming,
+        weightOz: inventoryItems.weightOz,
+        lengthIn: inventoryItems.lengthIn,
+        widthIn: inventoryItems.widthIn,
+        heightIn: inventoryItems.heightIn,
       })
       .from(listingVariants)
       .leftJoin(
@@ -652,6 +701,10 @@ export async function getListingVariantsWithInventory(
       available: r.available,
       committed: r.committed,
       incoming: r.incoming,
+      weightOz: r.weightOz,
+      lengthIn: r.lengthIn,
+      widthIn: r.widthIn,
+      heightIn: r.heightIn,
     }));
   } catch (error) {
     console.error("Error fetching listing variants with inventory:", error);
@@ -789,10 +842,7 @@ export async function getListings(): Promise<Listing[]> {
 /**
  * Get all listings with user information for admin management (uses English translations)
  */
-export async function getAllListingsWithUsers(_params: {
-  page: number;
-  pageSize: number;
-}): Promise<
+export async function getAllListingsWithUsers(): Promise<
   Array<
     Listing & {
       producerName: string;
@@ -875,22 +925,6 @@ export async function getAllListingsWithUsers(_params: {
       )
       .where(inArray(listingVariants.listingId, listingIds))
       .groupBy(listingVariants.listingId);
-
-    // Batch variant images query:
-    const variantImages = await db
-      .select({
-        listingId: listingVariants.listingId,
-        imageUrl: listingVariants.imageUrl,
-      })
-      .from(listingVariants)
-      .where(
-        and(
-          inArray(listingVariants.listingId, listingIds),
-          isNotNull(listingVariants.imageUrl)
-        )
-      )
-      .groupBy(listingVariants.listingId, listingVariants.imageUrl)
-      .limit(1); // Get first variant image per listing
 
     const inventoryMap = new Map(
       inventoryData.map((d) => [
@@ -1010,8 +1044,7 @@ export async function getAllListingsWithUsers(_params: {
  * Get listings by producer ID (seller dashboard - uses English translations)
  */
 export async function getListingsByProducer(
-  producerId: string,
-  _params: { page: number; pageSize: number }
+  producerId: string
 ): Promise<Listing[]> {
   try {
     // Fetch listings with English translations (seller dashboard uses English)
@@ -1045,6 +1078,7 @@ export async function getListingsByProducer(
         updatedAt: listing.updatedAt,
         slug: listing.slug,
         slugLower: listing.slugLower,
+        shippingProfileId: listing.shippingProfileId,
         // Fallback fields from base table
         nameFallback: listing.name,
         descriptionFallback: listing.description,
@@ -1081,22 +1115,6 @@ export async function getListingsByProducer(
       )
       .where(inArray(listingVariants.listingId, listingIds))
       .groupBy(listingVariants.listingId);
-
-    // Batch variant images query:
-    const variantImages = await db
-      .select({
-        listingId: listingVariants.listingId,
-        imageUrl: listingVariants.imageUrl,
-      })
-      .from(listingVariants)
-      .where(
-        and(
-          inArray(listingVariants.listingId, listingIds),
-          isNotNull(listingVariants.imageUrl)
-        )
-      )
-      .groupBy(listingVariants.listingId, listingVariants.imageUrl)
-      .limit(1); // Get first variant image per listing
 
     const inventoryMap = new Map(
       inventoryData.map((d) => [
@@ -1154,6 +1172,7 @@ export async function getListingsByProducer(
         updatedAt: r.updatedAt,
         slug: r.slug,
         slugLower: r.slugLower,
+        shippingProfileId: r.shippingProfileId || null,
         variantCount: inventory.variantCount,
         totalStock: inventory.totalStock,
       };
@@ -1291,6 +1310,10 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
       marketType: updateData.marketType,
       publishedAt,
       harvestDate: updateData.harvestDate,
+      shippingProfileId:
+        updateData.shippingProfileId !== undefined
+          ? updateData.shippingProfileId || null
+          : undefined,
     };
 
     // Add slug update if provided
@@ -1564,7 +1587,11 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
                 newVariant[0].id,
                 locationId,
                 variantData.initialStock || 0,
-                variantData.costPerItem
+                variantData.costPerItem,
+                variantData.weightOz,
+                variantData.lengthIn,
+                variantData.widthIn,
+                variantData.heightIn
               );
             }
           }
@@ -1591,13 +1618,17 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
               .limit(1);
 
             if (existingInventoryItem.length > 0) {
-              // Update cost per item
+              // Update cost per item, weight, and dimensions
               await db
                 .update(inventoryItems)
                 .set({
                   costPerItem: variantData.costPerItem
                     ? variantData.costPerItem.toString()
                     : "0",
+                  weightOz: variantData.weightOz || "0",
+                  lengthIn: variantData.lengthIn || "0",
+                  widthIn: variantData.widthIn || "0",
+                  heightIn: variantData.heightIn || "0",
                   updatedAt: new Date(),
                 })
                 .where(eq(inventoryItems.id, existingInventoryItem[0].id));
@@ -1641,7 +1672,11 @@ export async function updateListing(data: UpdateListingData): Promise<Listing> {
                 variantData.id,
                 locationId,
                 variantData.initialStock || 0,
-                variantData.costPerItem
+                variantData.costPerItem,
+                variantData.weightOz,
+                variantData.lengthIn,
+                variantData.widthIn,
+                variantData.heightIn
               );
             }
           }

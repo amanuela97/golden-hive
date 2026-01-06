@@ -6,15 +6,18 @@ import {
   store,
   listingTranslations,
   storeBannerImage,
+  shippingProfiles,
 } from "@/db/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, or, isNotNull, sql } from "drizzle-orm";
 import { getTrendingProducts } from "./trending";
 import { PublicProduct } from "./public-products";
 import { unstable_cache } from "next/cache";
+import { checkShippingAvailability } from "./shipping-availability";
 
 export async function getNewArrivals(options?: {
   limit?: number;
   locale?: string;
+  customerCountry?: string;
 }): Promise<PublicProduct[]> {
   const limit = options?.limit || 6;
   const locale = options?.locale || "en";
@@ -64,13 +67,23 @@ export async function getNewArrivals(options?: {
       and(
         eq(listing.status, "active"),
         eq(store.isApproved, true),
-        eq(store.visibility, "public")
+        eq(store.visibility, "public"),
+        // Product must have shipping profile (either direct or store default)
+        or(
+          isNotNull(listing.shippingProfileId), // Product has direct profile
+          // Store has default profile
+          sql`EXISTS (
+            SELECT 1 FROM ${shippingProfiles} 
+            WHERE ${shippingProfiles.storeId} = ${store.id} 
+            AND ${shippingProfiles.isDefault} = true
+          )`
+        )
       )
     )
     .orderBy(desc(listing.createdAt))
     .limit(limit);
 
-  return products
+  const mappedProducts: PublicProduct[] = products
     .filter((p) => p.id != null && typeof p.id === "string")
     .map((p) => {
       // Ensure dates are Date objects or null, never undefined
@@ -130,8 +143,30 @@ export async function getNewArrivals(options?: {
         updatedAt,
         storeName: p.storeName || null,
         storeSlug: p.storeSlug || null,
+        shippingAvailable: null as boolean | null | undefined, // Will be set below if country provided
       };
-    });
+    }) as PublicProduct[];
+
+  // Check shipping availability if customer country is provided
+  let finalProducts: PublicProduct[] = mappedProducts;
+  const customerCountry = options?.customerCountry;
+  if (customerCountry) {
+    const availabilityChecks = await Promise.all(
+      mappedProducts.map(async (product) => {
+        const availability = await checkShippingAvailability(
+          product.id,
+          customerCountry as string // Type assertion since we checked it's defined
+        );
+        return {
+          ...product,
+          shippingAvailable: availability.available,
+        };
+      })
+    );
+    finalProducts = availabilityChecks;
+  }
+
+  return finalProducts;
 }
 
 export interface FeaturedStore {
@@ -292,9 +327,11 @@ export async function getFeaturedStores(options?: {
 export async function getTrendingProductsData(options?: {
   limit?: number;
   locale?: string;
+  customerCountry?: string;
 }): Promise<PublicProduct[]> {
   return await getTrendingProducts(
     options?.limit || 6,
-    options?.locale || "en"
+    options?.locale || "en",
+    options?.customerCountry
   );
 }

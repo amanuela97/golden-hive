@@ -125,11 +125,44 @@ async function sendOrderConfirmationEmail(
           .reduce((sum, item) => sum + parseFloat(item.lineTotal || "0"), 0)
           .toFixed(2)
       : order.subtotalAmount;
-    const total = allOrderIds
-      ? allItems
-          .reduce((sum, item) => sum + parseFloat(item.lineTotal || "0"), 0)
-          .toFixed(2)
-      : order.totalAmount;
+
+    // For multi-store, fetch all orders to sum up shipping, discount, and tax
+    let totalShipping = "0";
+    let totalDiscount = "0";
+    let totalTax = "0";
+
+    if (allOrderIds && allOrderIds.length > 1) {
+      const allOrders = await db
+        .select({
+          shippingAmount: orders.shippingAmount,
+          discountAmount: orders.discountAmount,
+          taxAmount: orders.taxAmount,
+        })
+        .from(orders)
+        .where(inArray(orders.id, allOrderIds));
+
+      totalShipping = allOrders
+        .reduce((sum, o) => sum + parseFloat(o.shippingAmount || "0"), 0)
+        .toFixed(2);
+      totalDiscount = allOrders
+        .reduce((sum, o) => sum + parseFloat(o.discountAmount || "0"), 0)
+        .toFixed(2);
+      totalTax = allOrders
+        .reduce((sum, o) => sum + parseFloat(o.taxAmount || "0"), 0)
+        .toFixed(2);
+    } else {
+      totalShipping = order.shippingAmount || "0";
+      totalDiscount = order.discountAmount || "0";
+      totalTax = order.taxAmount || "0";
+    }
+
+    // Calculate total: subtotal - discount + shipping + tax
+    const total = (
+      parseFloat(subtotal) -
+      parseFloat(totalDiscount) +
+      parseFloat(totalShipping) +
+      parseFloat(totalTax)
+    ).toFixed(2);
 
     await resend.emails.send({
       from: "Golden Market <goldenmarket@resend.dev>",
@@ -161,9 +194,9 @@ async function sendOrderConfirmationEmail(
           };
         }),
         subtotal: subtotal,
-        discount: order.discountAmount || "0",
-        shipping: order.shippingAmount || "0",
-        tax: order.taxAmount || "0",
+        discount: totalDiscount,
+        shipping: totalShipping,
+        tax: totalTax,
         total: total,
         currency: order.currency,
         paymentStatus: order.paymentStatus === "paid" ? "paid" : "pending",
@@ -326,57 +359,37 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Handle multi-store transfers FIRST (before processing individual orders)
+      // Handle multi-store payments (create ledger entries instead of transfers)
       if (isMultiStore && storeBreakdown) {
-        if (!paymentIntent.latest_charge) {
-          console.error("❌ Payment intent does not have latest_charge yet");
-          return NextResponse.json(
-            { error: "Payment not yet captured" },
-            { status: 400 }
-          );
-        }
-
-        console.log("🏪 Processing multi-store transfers...");
-        const chargeId =
-          typeof paymentIntent.latest_charge === "string"
-            ? paymentIntent.latest_charge
-            : paymentIntent.latest_charge.id;
-
-        console.log("💰 Charge ID:", chargeId);
+        console.log("🏪 Processing multi-store payments (ledger system)...");
         console.log(
           "💰 Store breakdown:",
           JSON.stringify(storeBreakdown, null, 2)
         );
 
-        for (const [storeId, storeInfo] of Object.entries(storeBreakdown)) {
-          const storeAmountCents = storeInfo.amount;
-          const platformFeeCents = Math.round(storeAmountCents * 0.05); // 5% platform fee
-          const payoutAmountCents = storeAmountCents - platformFeeCents;
+        // Import balance management function
+        const { updateSellerBalance } = await import(
+          "@/app/[locale]/actions/seller-balance"
+        );
 
-          console.log(`💰 Transferring to store ${storeId}:`, {
-            storeAmount: (storeAmountCents / 100).toFixed(2),
-            platformFee: (platformFeeCents / 100).toFixed(2),
-            payoutAmount: (payoutAmountCents / 100).toFixed(2),
+        // Calculate Stripe fee (2.9% + €0.30 per transaction)
+        const stripeFeeRate = 0.029;
+        const stripeFeeFixed = 0.3;
+        const totalAmount = paymentIntent.amount / 100;
+        const stripeFee = totalAmount * stripeFeeRate + stripeFeeFixed;
+
+        for (const [storeId, storeInfo] of Object.entries(storeBreakdown)) {
+          const storeAmount = storeInfo.amount / 100; // Convert cents to currency
+          const platformFee = storeAmount * 0.05; // 5% platform fee
+          const storeStripeFee = (stripeFee * storeAmount) / totalAmount; // Proportional Stripe fee
+
+          console.log(`💰 Processing payment for store ${storeId}:`, {
+            storeAmount: storeAmount.toFixed(2),
+            platformFee: platformFee.toFixed(2),
+            stripeFee: storeStripeFee.toFixed(2),
           });
 
           try {
-            // Create transfer to store's connected account
-            const transfer = await stripe.transfers.create({
-              amount: payoutAmountCents,
-              currency: paymentIntent.currency,
-              destination: storeInfo.stripeAccountId,
-              source_transaction: chargeId,
-              metadata: {
-                orderIds: JSON.stringify(storeInfo.orderIds),
-                storeId: storeId,
-              },
-            });
-
-            console.log(
-              `✅ Transfer created for store ${storeId}:`,
-              transfer.id
-            );
-
             // Create payment records and update order status for each order in this store
             for (const orderId of storeInfo.orderIds) {
               const orderData = await db
@@ -386,6 +399,7 @@ export async function POST(req: NextRequest) {
                   currency: orders.currency,
                   fulfillmentStatus: orders.fulfillmentStatus,
                   status: orders.status,
+                  storeId: orders.storeId,
                 })
                 .from(orders)
                 .where(eq(orders.id, orderId))
@@ -399,20 +413,62 @@ export async function POST(req: NextRequest) {
               const order = orderData[0];
               const orderAmount = parseFloat(order.totalAmount || "0");
               const orderPlatformFee = orderAmount * 0.05;
-              const orderNetAmount = orderAmount - orderPlatformFee;
+              const orderStripeFee = (stripeFee * orderAmount) / totalAmount;
 
-              // Create payment record
-              await db.insert(orderPayments).values({
-                orderId: orderId,
-                amount: orderAmount.toFixed(2),
+              // Create payment record with "held" status
+              const [paymentRecord] = await db
+                .insert(orderPayments)
+                .values({
+                  orderId: orderId,
+                  amount: orderAmount.toFixed(2),
+                  currency: order.currency,
+                  provider: "stripe",
+                  providerPaymentId: paymentIntentId,
+                  platformFeeAmount: orderPlatformFee.toFixed(2),
+                  netAmountToStore: (
+                    orderAmount -
+                    orderPlatformFee -
+                    orderStripeFee
+                  ).toFixed(2),
+                  stripePaymentIntentId: paymentIntentId,
+                  stripeCheckoutSessionId: session.id,
+                  status: "completed",
+                  transferStatus: "held", // Funds held in platform account
+                })
+                .returning();
+
+              // Create ledger entries
+              // 1. Order payment (CREDIT)
+              await updateSellerBalance({
+                storeId: order.storeId!,
+                type: "order_payment",
+                amount: orderAmount, // Already includes discount
                 currency: order.currency,
-                provider: "stripe",
-                providerPaymentId: paymentIntentId,
-                platformFeeAmount: orderPlatformFee.toFixed(2),
-                netAmountToStore: orderNetAmount.toFixed(2),
-                stripePaymentIntentId: paymentIntentId,
-                stripeCheckoutSessionId: session.id,
-                status: "completed",
+                orderId: orderId,
+                orderPaymentId: paymentRecord.id,
+                description: `Order payment received (discount already applied)`,
+              });
+
+              // 2. Platform fee (DEBIT)
+              await updateSellerBalance({
+                storeId: order.storeId!,
+                type: "platform_fee",
+                amount: orderPlatformFee,
+                currency: order.currency,
+                orderId: orderId,
+                orderPaymentId: paymentRecord.id,
+                description: `Platform fee (5%) for order`,
+              });
+
+              // 3. Stripe fee (DEBIT)
+              await updateSellerBalance({
+                storeId: order.storeId!,
+                type: "stripe_fee",
+                amount: orderStripeFee,
+                currency: order.currency,
+                orderId: orderId,
+                orderPaymentId: paymentRecord.id,
+                description: `Stripe processing fee for order`,
               });
 
               // Update order payment status and check if order should be completed
@@ -450,21 +506,22 @@ export async function POST(req: NextRequest) {
                   stripe_checkout_session: session.id,
                   provider: "stripe",
                   paymentIntentId: paymentIntentId,
-                  transferId: transfer.id,
                 },
                 createdBy: null, // Webhook event
               });
             }
-          } catch (transferError) {
+          } catch (error) {
             console.error(
-              `❌ Failed to transfer to store ${storeId}:`,
-              transferError
+              `❌ Failed to process payment for store ${storeId}:`,
+              error
             );
             // Continue with other stores even if one fails
           }
         }
 
-        console.log("✅ Multi-store transfers completed");
+        console.log(
+          "✅ Multi-store payments processed (ledger entries created)"
+        );
 
         // Generate invoices for all orders in background (don't await to avoid blocking)
         if (orderIdsArray.length > 0) {
@@ -526,21 +583,20 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ received: true });
       }
 
-      // Single order flow (existing logic)
-      // Calculate amounts
-      const totalAmount = (paymentIntent.amount / 100).toFixed(2);
-      const applicationFeeAmount = paymentIntent.application_fee_amount
-        ? (paymentIntent.application_fee_amount / 100).toFixed(2)
-        : "0";
-      const netAmountToStore = (
-        (paymentIntent.amount - (paymentIntent.application_fee_amount || 0)) /
-        100
-      ).toFixed(2);
+      // Single order flow (ledger system)
+      // Calculate amounts - payment amount already includes discount
+      const totalAmount = paymentIntent.amount / 100; // Already includes discount
+      const platformFee = totalAmount * 0.05; // 5% platform fee
+      const stripeFeeRate = 0.029;
+      const stripeFeeFixed = 0.3;
+      const stripeFee = totalAmount * stripeFeeRate + stripeFeeFixed;
+      const netAmountToStore = totalAmount - platformFee - stripeFee;
 
       console.log("💰 Payment amounts:", {
-        totalAmount,
-        applicationFeeAmount,
-        netAmountToStore,
+        totalAmount: totalAmount.toFixed(2),
+        platformFee: platformFee.toFixed(2),
+        stripeFee: stripeFee.toFixed(2),
+        netAmountToStore: netAmountToStore.toFixed(2),
       });
 
       let finalOrderId: string;
@@ -549,25 +605,25 @@ export async function POST(req: NextRequest) {
       if (draftId) {
         console.log("📝 Processing draft order payment:", draftId);
         // Handle invoice payment (draft order)
-      const draftData = await db
-        .select({
-          id: draftOrders.id,
-          currency: draftOrders.currency,
-          totalAmount: draftOrders.totalAmount,
-        })
-        .from(draftOrders)
-        .where(eq(draftOrders.id, draftId))
-        .limit(1);
+        const draftData = await db
+          .select({
+            id: draftOrders.id,
+            currency: draftOrders.currency,
+            totalAmount: draftOrders.totalAmount,
+          })
+          .from(draftOrders)
+          .where(eq(draftOrders.id, draftId))
+          .limit(1);
 
-      if (draftData.length === 0) {
+        if (draftData.length === 0) {
           console.error("❌ Draft order not found:", draftId);
-        return NextResponse.json(
-          { error: "Draft order not found" },
-          { status: 404 }
-        );
-      }
+          return NextResponse.json(
+            { error: "Draft order not found" },
+            { status: 404 }
+          );
+        }
 
-      const draft = draftData[0];
+        const draft = draftData[0];
         currency = draft.currency;
         console.log("✅ Draft order found:", {
           id: draft.id,
@@ -575,23 +631,23 @@ export async function POST(req: NextRequest) {
           totalAmount: draft.totalAmount,
         });
 
-      // Complete the draft order (convert to order)
+        // Complete the draft order (convert to order)
         console.log("🔄 Completing draft order...");
         const completeResult = await completeDraftOrderFromWebhook(
           draftId,
           true
         ); // markAsPaid = true
 
-      if (!completeResult.success) {
+        if (!completeResult.success) {
           console.error(
             "❌ Failed to complete draft order:",
             completeResult.error
           );
-        return NextResponse.json(
-          { error: "Failed to complete order" },
-          { status: 500 }
-        );
-      }
+          return NextResponse.json(
+            { error: "Failed to complete order" },
+            { status: 500 }
+          );
+        }
 
         finalOrderId = completeResult.orderId!;
         console.log("✅ Draft order completed! Order ID:", finalOrderId);
@@ -705,21 +761,83 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Create payment record (single store)
+      // Get order store ID for ledger entries
+      const orderStoreData = await db
+        .select({
+          storeId: orders.storeId,
+        })
+        .from(orders)
+        .where(eq(orders.id, finalOrderId))
+        .limit(1);
+
+      if (orderStoreData.length === 0 || !orderStoreData[0].storeId) {
+        console.error("❌ Order store not found");
+        return NextResponse.json(
+          { error: "Order store not found" },
+          { status: 400 }
+        );
+      }
+
+      const orderStoreId = orderStoreData[0].storeId;
+
+      // Create payment record (single store) with "held" status
       console.log("💾 Creating payment record...");
-      await db.insert(orderPayments).values({
-        orderId: finalOrderId,
+      const [paymentRecord] = await db
+        .insert(orderPayments)
+        .values({
+          orderId: finalOrderId,
+          amount: totalAmount.toFixed(2),
+          currency: currency,
+          provider: "stripe",
+          providerPaymentId: paymentIntentId,
+          platformFeeAmount: platformFee.toFixed(2),
+          netAmountToStore: netAmountToStore.toFixed(2),
+          stripePaymentIntentId: paymentIntentId,
+          stripeCheckoutSessionId: session.id,
+          status: "completed",
+          transferStatus: "held", // Funds held in platform account
+        })
+        .returning();
+      console.log("✅ Payment record created");
+
+      // Import balance management function
+      const { updateSellerBalance } = await import(
+        "@/app/[locale]/actions/seller-balance"
+      );
+
+      // Create ledger entries
+      // 1. Order payment (CREDIT) - amount already includes discount
+      await updateSellerBalance({
+        storeId: orderStoreId,
+        type: "order_payment",
         amount: totalAmount,
         currency: currency,
-        provider: "stripe",
-        providerPaymentId: paymentIntentId,
-        platformFeeAmount: applicationFeeAmount,
-        netAmountToStore: netAmountToStore,
-        stripePaymentIntentId: paymentIntentId,
-        stripeCheckoutSessionId: session.id,
-        status: "completed",
+        orderId: finalOrderId,
+        orderPaymentId: paymentRecord.id,
+        description: `Order payment received (discount already applied)`,
       });
-      console.log("✅ Payment record created");
+
+      // 2. Platform fee (DEBIT)
+      await updateSellerBalance({
+        storeId: orderStoreId,
+        type: "platform_fee",
+        amount: platformFee,
+        currency: currency,
+        orderId: finalOrderId,
+        orderPaymentId: paymentRecord.id,
+        description: `Platform fee (5%) for order`,
+      });
+
+      // 3. Stripe fee (DEBIT)
+      await updateSellerBalance({
+        storeId: orderStoreId,
+        type: "stripe_fee",
+        amount: stripeFee,
+        currency: currency,
+        orderId: finalOrderId,
+        orderPaymentId: paymentRecord.id,
+        description: `Stripe processing fee for order`,
+      });
 
       // Create order event (createdBy is null for webhook events)
       console.log("📝 Creating order event...");
@@ -729,9 +847,10 @@ export async function POST(req: NextRequest) {
         message: "Payment received via Stripe Checkout",
         visibility: "internal",
         metadata: {
-          amount: totalAmount,
+          amount: totalAmount.toFixed(2),
           currency: currency,
-          fee: applicationFeeAmount,
+          platformFee: platformFee.toFixed(2),
+          stripeFee: stripeFee.toFixed(2),
           stripe_checkout_session: session.id,
           provider: "stripe",
           paymentIntentId: paymentIntentId,
@@ -828,11 +947,15 @@ export async function POST(req: NextRequest) {
         0
       );
 
+      const refundedAmount = totalRefundedAmount / 100; // Convert from cents to currency
+      const previousRefundedAmount = parseFloat(payment.refundedAmount || "0");
+      const newRefundAmount = refundedAmount - previousRefundedAmount; // Amount of this refund
+
       // Update payment record with total refunded amount
       await db
         .update(orderPayments)
         .set({
-          refundedAmount: (totalRefundedAmount / 100).toFixed(2),
+          refundedAmount: refundedAmount.toFixed(2),
           status:
             totalRefundedAmount === 0
               ? "completed"
@@ -841,6 +964,41 @@ export async function POST(req: NextRequest) {
                 : "partially_refunded",
         })
         .where(eq(orderPayments.id, payment.id));
+
+      // Update seller balance ledger for refund
+      // Only debit if this is a new refund (not already recorded)
+      if (newRefundAmount > 0) {
+        // Get order to find storeId
+        const orderData = await db
+          .select({
+            storeId: orders.storeId,
+            currency: orders.currency,
+          })
+          .from(orders)
+          .where(eq(orders.id, payment.orderId))
+          .limit(1);
+
+        if (orderData.length > 0 && orderData[0].storeId) {
+          const { updateSellerBalance } = await import(
+            "@/app/[locale]/actions/seller-balance"
+          );
+
+          // Debit the refunded amount from seller balance
+          await updateSellerBalance({
+            storeId: orderData[0].storeId,
+            type: "refund",
+            amount: newRefundAmount, // Will be debited (negative)
+            currency: orderData[0].currency,
+            orderId: payment.orderId,
+            orderPaymentId: payment.id,
+            description: `Refund processed (${newRefundAmount.toFixed(2)} ${orderData[0].currency})`,
+          });
+
+          console.log(
+            `✅ Seller balance debited for refund: ${newRefundAmount} ${orderData[0].currency}`
+          );
+        }
+      }
 
       // Recalculate order payment status
       const { recalculateOrderPaymentStatus } = await import(

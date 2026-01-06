@@ -18,6 +18,10 @@ import { headers } from "next/headers";
 export interface InventoryLocationData {
   name: string;
   address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
   phone?: string;
   fulfillmentRules?: string;
   isActive?: boolean;
@@ -200,6 +204,10 @@ export async function createInventoryLocation(
         storeId,
         name: data.name.trim(),
         address: data.address?.trim() || null,
+        city: data.city?.trim() || null,
+        state: data.state?.trim() || null,
+        zip: data.zip?.trim() || null,
+        country: data.country?.trim() || null,
         phone: data.phone?.trim() || null,
         fulfillmentRules: data.fulfillmentRules?.trim() || null,
         isActive: data.isActive ?? true,
@@ -233,6 +241,10 @@ export async function getAllInventoryLocations(): Promise<
       id: string;
       name: string;
       address: string | null;
+      city: string | null;
+      state: string | null;
+      zip: string | null;
+      country: string | null;
       phone: string | null;
       fulfillmentRules: string | null;
       isActive: boolean;
@@ -274,6 +286,10 @@ export async function getAllInventoryLocations(): Promise<
         id: inventoryLocations.id,
         name: inventoryLocations.name,
         address: inventoryLocations.address,
+        city: inventoryLocations.city,
+        state: inventoryLocations.state,
+        zip: inventoryLocations.zip,
+        country: inventoryLocations.country,
         phone: inventoryLocations.phone,
         fulfillmentRules: inventoryLocations.fulfillmentRules,
         isActive: inventoryLocations.isActive,
@@ -366,6 +382,10 @@ export async function updateInventoryLocation(
       .set({
         name: data.name.trim(),
         address: data.address?.trim() || null,
+        city: data.city?.trim() || null,
+        state: data.state?.trim() || null,
+        zip: data.zip?.trim() || null,
+        country: data.country?.trim() || null,
         phone: data.phone?.trim() || null,
         fulfillmentRules: data.fulfillmentRules?.trim() || null,
         isActive: data.isActive ?? true,

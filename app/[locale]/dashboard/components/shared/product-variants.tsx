@@ -52,6 +52,12 @@ import ageGroupOptions from "@/data/age-group-options.json";
 import fabricOptions from "@/data/fabric-options.json";
 import type { TaxonomyAttribute } from "@/lib/taxonomy";
 import type { ListingVariant } from "@/db/schema";
+import {
+  gramsToOunces,
+  kilogramsToOunces,
+  centimetersToInches,
+  metersToInches,
+} from "@/lib/shipping-utils";
 
 type OptionValue = {
   value: string;
@@ -82,10 +88,15 @@ type Variant = Omit<
   quantity: string; // Inventory quantity for UI (not in schema)
   barcode?: string; // UI-only field
   package?: string; // UI-only field
-  weight?: string; // UI-only field
+  weight?: string; // UI-only field (deprecated, use weightOz)
   origin?: string; // UI-only field
   images?: string[]; // Array of image URLs for UI (not in schema)
   options: Record<string, string>; // Ensure options is Record type (from schema but typed explicitly)
+  // Shipping fields (stored in inventoryItems)
+  weightOz?: string | null; // Weight in ounces (stored in DB)
+  lengthIn?: string | null; // Length in inches (stored in DB)
+  widthIn?: string | null; // Width in inches (stored in DB)
+  heightIn?: string | null; // Height in inches (stored in DB)
 };
 
 const optionTypeData: Record<string, OptionValue[]> = {
@@ -916,8 +927,10 @@ export function ProductVariants({
                   <DropdownMenuItem onClick={() => setEditModal("package")}>
                     Edit package
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setEditModal("weight")}>
-                    Edit weight
+                  <DropdownMenuItem
+                    onClick={() => setEditModal("weight-dimensions")}
+                  >
+                    Edit weight & dimensions
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setEditModal("origin")}>
                     Edit country/region of origin
@@ -1007,10 +1020,250 @@ type EditModalType =
   | "skus"
   | "barcodes"
   | "package"
-  | "weight"
+  | "weight-dimensions"
   | "origin"
   | "images"
   | null;
+
+function WeightDimensionsEditor({
+  variants,
+  onVariantsChange,
+}: {
+  variants: Variant[];
+  onVariantsChange: (variants: Variant[]) => void;
+}) {
+  const [weightUnit, setWeightUnit] = useState<"kg" | "g" | "oz">("kg");
+  const [dimensionUnit, setDimensionUnit] = useState<"cm" | "m" | "in">("cm");
+
+  // Helper to convert weight from metric to ounces
+  const convertWeightToOz = (
+    value: string,
+    unit: "kg" | "g" | "oz"
+  ): string => {
+    if (!value || value.trim() === "") return "";
+    const num = parseFloat(value);
+    if (isNaN(num) || num <= 0) return "";
+    if (unit === "oz") return num.toFixed(1);
+    if (unit === "kg") return kilogramsToOunces(num).toFixed(1);
+    if (unit === "g") return gramsToOunces(num).toFixed(1);
+    return "";
+  };
+
+  // Helper to convert dimensions from metric to inches
+  const convertDimensionToIn = (
+    value: string,
+    unit: "cm" | "m" | "in"
+  ): string => {
+    if (!value || value.trim() === "") return "";
+    const num = parseFloat(value);
+    if (isNaN(num) || num <= 0) return "";
+    if (unit === "in") return num.toFixed(1);
+    if (unit === "cm") return centimetersToInches(num).toFixed(1);
+    if (unit === "m") return metersToInches(num).toFixed(1);
+    return "";
+  };
+
+  // Helper to convert weight from ounces to metric
+  const convertWeightFromOz = (
+    value: string | null | undefined,
+    unit: "kg" | "g" | "oz"
+  ): string => {
+    if (!value || value.trim() === "") return "";
+    const num = parseFloat(value);
+    if (isNaN(num) || num <= 0) return "";
+    if (unit === "oz") return num.toFixed(1);
+    if (unit === "kg") return (num / 35.274).toFixed(2);
+    if (unit === "g") return Math.round(num / 0.035274).toString();
+    return "";
+  };
+
+  // Helper to convert dimensions from inches to metric
+  const convertDimensionFromIn = (
+    value: string | null | undefined,
+    unit: "cm" | "m" | "in"
+  ): string => {
+    if (!value || value.trim() === "") return "";
+    const num = parseFloat(value);
+    if (isNaN(num) || num <= 0) return "";
+    if (unit === "in") return num.toFixed(1);
+    if (unit === "cm") return Math.round(num / 0.393701).toString();
+    if (unit === "m") return (num / 39.3701).toFixed(2);
+    return "";
+  };
+
+  const handleWeightChange = (variantId: string, value: string) => {
+    const weightOz = convertWeightToOz(value, weightUnit);
+    onVariantsChange(
+      variants.map((v) =>
+        v.id === variantId ? { ...v, weightOz: weightOz || null } : v
+      )
+    );
+  };
+
+  const handleDimensionChange = (
+    variantId: string,
+    field: "lengthIn" | "widthIn" | "heightIn",
+    value: string
+  ) => {
+    const dimensionIn = convertDimensionToIn(value, dimensionUnit);
+    onVariantsChange(
+      variants.map((v) =>
+        v.id === variantId ? { ...v, [field]: dimensionIn || null } : v
+      )
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-4 items-center">
+        <div className="flex-1">
+          <Label>Weight Unit</Label>
+          <Select
+            value={weightUnit}
+            onValueChange={(v: "kg" | "g" | "oz") => setWeightUnit(v)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="kg">Kilograms (kg)</SelectItem>
+              <SelectItem value="g">Grams (g)</SelectItem>
+              <SelectItem value="oz">Ounces (oz)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex-1">
+          <Label>Dimension Unit</Label>
+          <Select
+            value={dimensionUnit}
+            onValueChange={(v: "cm" | "m" | "in") => setDimensionUnit(v)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="cm">Centimeters (cm)</SelectItem>
+              <SelectItem value="m">Meters (m)</SelectItem>
+              <SelectItem value="in">Inches (in)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {variants.map((variant) => {
+          const weightValue = convertWeightFromOz(variant.weightOz, weightUnit);
+          const lengthValue = convertDimensionFromIn(
+            variant.lengthIn,
+            dimensionUnit
+          );
+          const widthValue = convertDimensionFromIn(
+            variant.widthIn,
+            dimensionUnit
+          );
+          const heightValue = convertDimensionFromIn(
+            variant.heightIn,
+            dimensionUnit
+          );
+
+          return (
+            <div key={variant.id} className="border rounded-lg p-4 space-y-4">
+              <div className="font-medium text-sm">
+                {Object.values(variant.options).join(" / ") || "Default"}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Weight ({weightUnit})</Label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    value={weightValue}
+                    onChange={(e) =>
+                      handleWeightChange(variant.id, e.target.value)
+                    }
+                    placeholder={`0 ${weightUnit}`}
+                  />
+                  {variant.weightOz && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Stored: {variant.weightOz} oz
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <Label>Length ({dimensionUnit})</Label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    value={lengthValue}
+                    onChange={(e) =>
+                      handleDimensionChange(
+                        variant.id,
+                        "lengthIn",
+                        e.target.value
+                      )
+                    }
+                    placeholder={`0 ${dimensionUnit}`}
+                  />
+                  {variant.lengthIn && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Stored: {variant.lengthIn} in
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Label>Width ({dimensionUnit})</Label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    value={widthValue}
+                    onChange={(e) =>
+                      handleDimensionChange(
+                        variant.id,
+                        "widthIn",
+                        e.target.value
+                      )
+                    }
+                    placeholder={`0 ${dimensionUnit}`}
+                  />
+                  {variant.widthIn && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Stored: {variant.widthIn} in
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Label>Height ({dimensionUnit})</Label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    value={heightValue}
+                    onChange={(e) =>
+                      handleDimensionChange(
+                        variant.id,
+                        "heightIn",
+                        e.target.value
+                      )
+                    }
+                    placeholder={`0 ${dimensionUnit}`}
+                  />
+                  {variant.heightIn && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Stored: {variant.heightIn} in
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function EditVariantsModal({
   type,
@@ -1064,11 +1317,11 @@ function EditVariantsModal({
       placeholder: "Enter package info",
       type: "text",
     },
-    weight: {
-      title: "Edit weight",
-      description: "Update weight for selected variants",
-      field: "weight",
-      placeholder: "0 kg",
+    "weight-dimensions": {
+      title: "Edit weight & dimensions",
+      description: "Update weight and dimensions for selected variants",
+      field: "weight-dimensions",
+      placeholder: "",
       type: "text",
     },
     origin: {
@@ -1170,7 +1423,12 @@ function EditVariantsModal({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {type === "images" ? (
+          {type === "weight-dimensions" ? (
+            <WeightDimensionsEditor
+              variants={editedVariants}
+              onVariantsChange={setEditedVariants}
+            />
+          ) : type === "images" ? (
             <>
               <div className="space-y-4">
                 <div className="space-y-2">

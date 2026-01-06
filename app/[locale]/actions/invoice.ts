@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { orders, orderItems, store } from "@/db/schema";
+import { orders, orderItems, store, orderShippingRates } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { v2 as cloudinary } from "cloudinary";
@@ -70,6 +70,9 @@ async function generateInvoicePdf(
     shippingRegion: string | null;
     shippingPostalCode: string | null;
     shippingCountry: string | null;
+    shippingMethod: string | null;
+    shippingCarrier: string | null;
+    shippingService: string | null;
   },
   items: Array<{
     title: string;
@@ -79,7 +82,13 @@ async function generateInvoicePdf(
   }>,
   storeInfo: {
     storeName: string;
-  }
+  },
+  shippingRates?: Array<{
+    storeId: string;
+    carrier: string;
+    service: string;
+    rate: string;
+  }>
 ): Promise<{ secureUrl: string; publicId: string }> {
   try {
     console.log("Creating PDFDocument with pdf-lib...");
@@ -277,10 +286,33 @@ async function generateInvoicePdf(
     }
 
     if (parseFloat(order.shippingAmount) > 0) {
-      addText("Shipping:", totalsX, currentY, 10);
+      // Build shipping description with carrier and service if available
+      let shippingDescription = "Shipping";
+      if (order.shippingCarrier && order.shippingService) {
+        shippingDescription = `Shipping (${order.shippingCarrier} ${order.shippingService})`;
+      } else if (order.shippingCarrier) {
+        shippingDescription = `Shipping (${order.shippingCarrier})`;
+      } else if (order.shippingService) {
+        shippingDescription = `Shipping (${order.shippingService})`;
+      } else if (order.shippingMethod) {
+        shippingDescription = `Shipping (${order.shippingMethod})`;
+      }
+
+      addText(shippingDescription + ":", totalsX, currentY, 10);
       const shippingText = `${parseFloat(order.shippingAmount).toFixed(2)} ${order.currency}`;
       addText(shippingText, totalsX + totalsWidth - 80, currentY, 10);
       currentY -= itemHeight;
+
+      // If there are multiple vendor shipping rates, show breakdown
+      if (shippingRates && shippingRates.length > 1) {
+        shippingRates.forEach((rate) => {
+          const rateDescription = `${rate.carrier} ${rate.service}`;
+          addText(`  ${rateDescription}:`, totalsX + 10, currentY, 9);
+          const rateText = `${parseFloat(rate.rate).toFixed(2)} ${order.currency}`;
+          addText(rateText, totalsX + totalsWidth - 80, currentY, 9);
+          currentY -= itemHeight;
+        });
+      }
     }
 
     if (parseFloat(order.taxAmount) > 0) {
@@ -413,6 +445,9 @@ export async function generateInvoiceForOrder(orderId: string): Promise<{
         shippingRegion: orders.shippingRegion,
         shippingPostalCode: orders.shippingPostalCode,
         shippingCountry: orders.shippingCountry,
+        shippingMethod: orders.shippingMethod,
+        shippingCarrier: orders.shippingCarrier,
+        shippingService: orders.shippingService,
       })
       .from(orders)
       .where(eq(orders.id, orderId))
@@ -463,6 +498,29 @@ export async function generateInvoiceForOrder(orderId: string): Promise<{
       return { success: false, error: "Order has no items" };
     }
 
+    // Get shipping rates for this order (per-vendor breakdown)
+    const shippingRatesData = await db
+      .select({
+        storeId: orderShippingRates.storeId,
+        carrier: orderShippingRates.carrier,
+        service: orderShippingRates.service,
+        rate: orderShippingRates.rate,
+      })
+      .from(orderShippingRates)
+      .where(eq(orderShippingRates.orderId, orderId));
+
+    const shippingRates = shippingRatesData.map((rate) => ({
+      storeId: rate.storeId,
+      carrier: rate.carrier,
+      service: rate.service,
+      rate:
+        typeof rate.rate === "string"
+          ? rate.rate
+          : rate.rate !== null
+            ? (rate.rate as number).toString()
+            : "0",
+    }));
+
     // Generate invoice number
     const invoiceNumber = await generateInvoiceNumber(order.storeId);
     const invoiceIssuedAt = new Date();
@@ -478,7 +536,8 @@ export async function generateInvoiceForOrder(orderId: string): Promise<{
           invoiceNumber,
         },
         items,
-        storeData[0]
+        storeData[0],
+        shippingRates.length > 0 ? shippingRates : undefined
       );
       invoicePdfUrl = pdfResult.secureUrl;
       invoicePublicId = pdfResult.publicId;

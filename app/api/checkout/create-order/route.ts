@@ -9,6 +9,7 @@ import {
   store,
   orderDiscounts,
   discounts,
+  orderShipments,
 } from "@/db/schema";
 import { eq, inArray, and } from "drizzle-orm";
 import { generateOrderNumber } from "@/lib/order-number";
@@ -52,6 +53,16 @@ interface CreateOrderRequest {
   billingPostalCode?: string | null;
   billingCountry?: string | null;
   notes?: string | null;
+  shippingMethod?: string | null;
+  shippingService?: string | null;
+  // Per-vendor shipping selections (manual rates)
+  vendorShippingRates?: Array<{
+    storeId: string;
+    rateId: string;
+    serviceName: string;
+    priceCents: number;
+    currency: string;
+  }>;
 }
 
 export async function POST(req: NextRequest) {
@@ -70,6 +81,44 @@ export async function POST(req: NextRequest) {
         { error: "Missing required fields" },
         { status: 400 }
       );
+    }
+
+    // Validate shipping availability for all items
+    if (body.shippingCountry) {
+      const { checkShippingAvailability } = await import(
+        "@/app/[locale]/actions/shipping-availability"
+      );
+
+      const availabilityChecks = await Promise.all(
+        body.lineItems.map(async (item) => {
+          const availability = await checkShippingAvailability(
+            item.listingId,
+            body.shippingCountry!
+          );
+          return {
+            listingId: item.listingId,
+            available: availability.available,
+            message: availability.message,
+          };
+        })
+      );
+
+      const unshippableItems = availabilityChecks.filter(
+        (check) => !check.available
+      );
+
+      if (unshippableItems.length > 0) {
+        return NextResponse.json(
+          {
+            error: "Some items cannot be shipped to the selected country",
+            unshippableItems: unshippableItems.map((item) => ({
+              listingId: item.listingId,
+              reason: item.message,
+            })),
+          },
+          { status: 400 }
+        );
+      }
     }
 
     // Get storeId from line items (all items should be from the same store)
@@ -303,6 +352,8 @@ export async function POST(req: NextRequest) {
             billingPostalCode: body.billingPostalCode || null,
             billingCountry: body.billingCountry || null,
             notes: body.notes || null, // Same notes for all orders
+            shippingMethod: body.shippingMethod || null,
+            shippingService: body.shippingService || null,
             placedAt: new Date(), // Order is "open" so set placedAt
           })
           .returning();
@@ -442,6 +493,30 @@ export async function POST(req: NextRequest) {
           throw new Error(
             inventoryResult.error || "Failed to adjust inventory"
           );
+        }
+
+        // Store shipping snapshot for this vendor if provided (manual rates)
+        if (body.vendorShippingRates) {
+          const vendorRate = body.vendorShippingRates.find(
+            (r) => r.storeId === storeId
+          );
+          if (vendorRate) {
+            // Get shipping profile name from the rate (if available)
+            // For now, we'll use the service name as profile name
+            await tx.insert(orderShipments).values({
+              orderId: orderId,
+              storeId: storeId,
+              shippingProfileName: null, // Will be populated from rate lookup if needed
+              serviceName: vendorRate.serviceName,
+              priceCents: vendorRate.priceCents,
+              currency: vendorRate.currency,
+              carrier: null, // Manual rates don't have carrier
+              trackingNumber: null,
+              rateId: vendorRate.rateId, // Store the rate ID for reference
+              estimatedDeliveryMin: null, // Will be calculated from processing + transit days
+              estimatedDeliveryMax: null,
+            });
+          }
         }
       }
 

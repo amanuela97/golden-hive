@@ -9,11 +9,20 @@ import {
   inventoryItems,
   inventoryLevels,
   inventoryAdjustments,
+  orderShipments,
 } from "@/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { getDefaultInventoryLocation } from "./orders";
+import {
+  createShipment,
+  generateTrackingUrl,
+  type Address,
+  type Parcel,
+} from "@/lib/easypost";
+import { nanoid } from "nanoid";
+import { updateOrderFulfillmentStatus } from "./orders-fulfillment-utils";
 
 /**
  * Fulfill an order (per inst.md)
@@ -341,4 +350,281 @@ export async function fulfillOrder(input: {
       error: error instanceof Error ? error.message : "Failed to fulfill order",
     };
   }
+}
+
+/**
+ * Vendor fulfillment function with EasyPost support (per inst.md)
+ * This function allows vendors to mark orders as shipped with either:
+ * - Manual tracking entry
+ * - EasyPost shipment creation and label purchase
+ */
+export async function fulfillOrderVendor(input: {
+  orderId: string;
+  storeId: string; // Vendor's store ID
+  // Option 1: Manual tracking entry
+  trackingNumber?: string;
+  carrier?: string; // Display name: "UPS", "FedEx", etc.
+  trackingUrl?: string;
+  // Option 2: EasyPost shipment creation
+  createShipment?: boolean;
+  toAddress?: Address;
+  fromAddress?: Address;
+  parcel?: Parcel;
+  fulfilledBy?: string;
+}): Promise<{ success: boolean; error?: string; fulfillment?: unknown }> {
+  return await db.transaction(async (tx) => {
+    // 1. Verify order is paid (fulfillment only starts after payment)
+    const order = await tx
+      .select({
+        id: orders.id,
+        paymentStatus: orders.paymentStatus,
+        trackingToken: orders.trackingToken,
+      })
+      .from(orders)
+      .where(eq(orders.id, input.orderId))
+      .limit(1);
+
+    if (order.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
+
+    if (order[0].paymentStatus !== "paid") {
+      return {
+        success: false,
+        error: "Order must be paid before fulfillment can begin",
+      };
+    }
+
+    // 2. Handle shipment creation or manual tracking entry
+    let trackingNumber: string;
+    let carrier: string;
+    let carrierCode: string;
+    let trackingUrl: string | undefined;
+    let easypostShipmentId: string | undefined;
+    let labelUrl: string | undefined;
+
+    let labelCostCents: number | null = null;
+
+    if (
+      input.createShipment &&
+      input.toAddress &&
+      input.fromAddress &&
+      input.parcel
+    ) {
+      // Create shipment via EasyPost and purchase label
+      const shipmentInfo = await createShipment(
+        input.toAddress,
+        input.fromAddress,
+        input.parcel
+      );
+
+      if (!shipmentInfo) {
+        return {
+          success: false,
+          error: "Failed to create shipment in EasyPost",
+        };
+      }
+
+      trackingNumber = shipmentInfo.tracking_code;
+      carrier = shipmentInfo.carrier;
+      carrierCode = shipmentInfo.carrier.toLowerCase();
+      trackingUrl = shipmentInfo.tracking_url || shipmentInfo.public_url;
+      easypostShipmentId = shipmentInfo.id;
+      labelUrl = shipmentInfo.label_url;
+      
+      // Capture label cost (rate is in currency units, convert to cents)
+      labelCostCents = Math.round(shipmentInfo.rate * 100);
+    } else {
+      // Manual tracking entry
+      if (!input.trackingNumber || !input.carrier) {
+        return {
+          success: false,
+          error: "Tracking number and carrier are required for manual entry",
+        };
+      }
+
+      trackingNumber = input.trackingNumber;
+      carrier = input.carrier;
+
+      // Map carrier name to EasyPost carrier code
+      const carrierCodeMap: Record<string, string> = {
+        USPS: "usps",
+        FedEx: "fedex",
+        UPS: "ups",
+        DHL: "dhl",
+        "Canada Post": "canada_post",
+        "Royal Mail": "royal_mail",
+      };
+
+      carrierCode =
+        carrierCodeMap[input.carrier] || input.carrier.toLowerCase();
+
+      // Generate tracking URL if not provided
+      trackingUrl =
+        input.trackingUrl ||
+        generateTrackingUrl(input.carrier, input.trackingNumber);
+    }
+
+    // 3. Check existing fulfillments for this vendor
+    const existingFulfillments = await tx
+      .select()
+      .from(fulfillments)
+      .where(
+        and(
+          eq(fulfillments.orderId, input.orderId),
+          eq(fulfillments.storeId, input.storeId)
+        )
+      );
+
+    // 5. Determine vendor fulfillment status
+    // For MVP: if vendor is creating first fulfillment, mark as "fulfilled"
+    // In future: calculate based on which items are fulfilled
+    const vendorFulfillmentStatus: "unfulfilled" | "partial" | "fulfilled" =
+      existingFulfillments.length === 0 ? "fulfilled" : "partial";
+
+    // 6. Create fulfillment record
+    const [fulfillmentRecord] = await tx
+      .insert(fulfillments)
+      .values({
+        orderId: input.orderId,
+        storeId: input.storeId,
+        vendorFulfillmentStatus: vendorFulfillmentStatus,
+        trackingNumber: trackingNumber,
+        trackingUrl: trackingUrl,
+        carrier: carrier,
+        carrierCode: carrierCode,
+        easypostShipmentId: easypostShipmentId,
+        labelUrl: labelUrl,
+        fulfilledBy: input.fulfilledBy || "vendor",
+        fulfilledAt: new Date(),
+      })
+      .returning();
+
+    // 7. Update orderShipments with label cost and deduct from balance if label was purchased
+    if (labelCostCents !== null && labelCostCents > 0) {
+      // Find the orderShipments record for this vendor
+      const [shipmentRecord] = await tx
+        .select()
+        .from(orderShipments)
+        .where(
+          and(
+            eq(orderShipments.orderId, input.orderId),
+            eq(orderShipments.storeId, input.storeId)
+          )
+        )
+        .limit(1);
+
+      if (shipmentRecord) {
+        // Update orderShipments with label cost
+        await tx
+          .update(orderShipments)
+          .set({
+            labelCostCents: labelCostCents,
+            labelCostDeducted: true,
+            deductedAt: new Date(),
+            trackingNumber: trackingNumber,
+            carrier: carrier,
+          })
+          .where(eq(orderShipments.id, shipmentRecord.id));
+
+        // Deduct label cost from seller balance
+        const { updateSellerBalance } = await import(
+          "@/app/[locale]/actions/seller-balance"
+        );
+        const labelCost = labelCostCents / 100; // Convert cents to currency
+
+        // Get order currency from orderShipments
+        await updateSellerBalance({
+          storeId: input.storeId,
+          type: "shipping_label",
+          amount: labelCost,
+          currency: shipmentRecord.currency,
+          orderId: input.orderId,
+          orderShipmentId: shipmentRecord.id,
+          description: `Shipping label purchased for order`,
+        });
+      }
+    }
+
+    // 8. Update master order fulfillment status (calculated from all vendors)
+    await updateOrderFulfillmentStatus(input.orderId);
+
+    // 9. Generate tracking token for the order if it doesn't exist
+    let finalTrackingToken = order[0].trackingToken;
+    if (!finalTrackingToken) {
+      finalTrackingToken = nanoid(32);
+      await tx
+        .update(orders)
+        .set({ trackingToken: finalTrackingToken })
+        .where(eq(orders.id, input.orderId));
+    }
+
+    // 10. Check if this is the first vendor to ship and send tracking email
+    const allFulfillments = await tx
+      .select()
+      .from(fulfillments)
+      .where(eq(fulfillments.orderId, input.orderId));
+
+    const isFirstVendor = allFulfillments.length === 1;
+
+    if (isFirstVendor && finalTrackingToken) {
+      // Get order customer info for email
+      const orderInfo = await tx
+        .select({
+          customerEmail: orders.customerEmail,
+          customerFirstName: orders.customerFirstName,
+          customerLastName: orders.customerLastName,
+          orderNumber: orders.orderNumber,
+        })
+        .from(orders)
+        .where(eq(orders.id, input.orderId))
+        .limit(1);
+
+      if (orderInfo.length > 0 && orderInfo[0].customerEmail) {
+        // Send tracking notification email (async, don't await to avoid blocking)
+        const trackingUrl = `${process.env.NEXT_PUBLIC_APP_URL}/track/${finalTrackingToken}`;
+        const customerName =
+          orderInfo[0].customerFirstName && orderInfo[0].customerLastName
+            ? `${orderInfo[0].customerFirstName} ${orderInfo[0].customerLastName}`
+            : orderInfo[0].customerEmail || "Customer";
+
+        // Send email in background (don't block fulfillment)
+        Promise.resolve().then(async () => {
+          try {
+            const resend = (await import("@/lib/resend")).default;
+            const TrackingNotificationEmail = (
+              await import(
+                "@/app/[locale]/components/tracking-notification-email"
+              )
+            ).default;
+
+            await resend.emails.send({
+              from:
+                process.env.RESEND_FROM_EMAIL ||
+                "Golden Market <goldenmarket@resend.dev>",
+              to: orderInfo[0].customerEmail!,
+              subject: `Your Order #${orderInfo[0].orderNumber} Has Shipped! 📦`,
+              react: TrackingNotificationEmail({
+                orderNumber: orderInfo[0].orderNumber,
+                customerName,
+                trackingUrl,
+                carrier,
+                trackingNumber,
+              }),
+            });
+            console.log("Tracking notification email sent successfully");
+          } catch (emailError) {
+            // Log error but don't fail fulfillment
+            console.error("Failed to send tracking email:", emailError);
+          }
+        });
+      }
+    }
+    // Subsequent vendors: No email sent, customer refreshes tracking page
+
+    return {
+      success: true,
+      fulfillment: fulfillmentRecord,
+    };
+  });
 }
