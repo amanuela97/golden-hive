@@ -1,10 +1,6 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "@/i18n/navigation";
 import { db } from "@/db";
-import { userRoles, roles, store, storeMembers } from "@/db/schema";
+import { store, storeMembers } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getLocale } from "next-intl/server";
 import {
   getCustomer,
   getCustomerOrders,
@@ -16,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import Link from "next/link";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
+import DashboardNotFound from "../../not-found";
 
 interface CustomerDetailPageProps {
   params: Promise<{ id: string }>;
@@ -24,40 +22,19 @@ interface CustomerDetailPageProps {
 export default async function CustomerDetailPage({
   params,
 }: CustomerDetailPageProps) {
-  // Parallelize independent operations
-  const [locale, headersList] = await Promise.all([getLocale(), headers()]);
-
-  const session = await auth.api.getSession({
-    headers: headersList,
+  // Automatically checks route access based on navigation config
+  const result = await protectDashboardRoute({
+    allowedRoles: ["admin", "seller"],
+    showNotFound: true,
   });
 
-  if (!session) {
-    redirect({ href: "/login", locale });
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (result.shouldShowNotFound) {
+    return <DashboardNotFound />;
   }
 
-  // Get user's role
-  const userRole = await db
-    .select({
-      roleName: roles.name,
-    })
-    .from(userRoles)
-    .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session?.user.id ?? ""))
-    .limit(1);
-
-  if (userRole.length === 0) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleName = userRole[0].roleName.toLowerCase() as
-    | "admin"
-    | "seller"
-    | "customer";
-
-  // Only admin and seller can access customers
-  if (roleName !== "admin" && roleName !== "seller") {
-    redirect({ href: "/dashboard", locale });
-  }
+  const { role: roleName, userId } = result;
 
   // Check if store exists (only required for sellers, not admins)
   if (roleName !== "admin") {
@@ -65,7 +42,7 @@ export default async function CustomerDetailPage({
       .select({ id: store.id })
       .from(storeMembers)
       .innerJoin(store, eq(storeMembers.storeId, store.id))
-      .where(eq(storeMembers.userId, session?.user.id ?? ""))
+      .where(eq(storeMembers.userId, userId))
       .limit(1);
 
     if (storeResult.length === 0) {

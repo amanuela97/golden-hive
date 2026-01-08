@@ -377,7 +377,6 @@ async function generateInvoicePdf(
     }
 
     console.log(`[Cloudinary] Uploading to folder: golden-hive/invoices`);
-    console.log(`[Cloudinary] Public ID: invoice-${order.invoiceNumber}`);
 
     const result = await cloudinary.uploader.upload(dataURI, {
       folder: `golden-hive/invoices/${order.id}`,
@@ -542,22 +541,12 @@ export async function generateInvoiceForOrder(orderId: string): Promise<{
       invoicePdfUrl = pdfResult.secureUrl;
       invoicePublicId = pdfResult.publicId;
       console.log("PDF generated and uploaded to Cloudinary:", invoicePdfUrl);
-      console.log("PDF public_id:", invoicePublicId);
     } catch (pdfError) {
       console.error("Error generating PDF:", pdfError);
       throw new Error(
         `Failed to generate PDF: ${pdfError instanceof Error ? pdfError.message : "Unknown error"}`
       );
     }
-
-    // Update order with invoice data and lock financials
-    console.log("Updating order with invoice data:", {
-      orderId,
-      invoiceNumber,
-      invoicePdfUrl,
-      invoicePublicId,
-      invoiceIssuedAt: invoiceIssuedAt.toISOString(),
-    });
 
     try {
       const updateResult = await db

@@ -1,452 +1,434 @@
-Great — this is very doable, but there are **important realities** about EasyPost + Finland/Nepal that you should design around from day one. I’ll give you a **clean, production-grade blueprint**: tools, UI, backend logic, and country-specific constraints.
+Creating a testing flow guide for cancellation and refund logic. Reviewing the implementation to ensure accuracy:
 
-I’ll structure this as:
+[4 tools called]
 
-1. **Reality check: EasyPost + Finland & Nepal**
-2. **Tools you’ll need (exact stack)**
-3. **Recommended UI (seller-facing)**
-4. **Backend logic (step-by-step)**
-5. **Country-specific carrier strategy**
-6. **How this fits your Stripe ledger**
-7. **MVP vs production roadmap**
+Testing flow guide for cancellation and refund logic:
 
----
+## Testing flow guide: cancellation and refund logic
 
-## 1. Reality check (very important)
+### Prerequisites
 
-### 🇫🇮 Finland
+1. Test accounts:
+   - Customer account (logged in)
+   - Seller account (has a store)
+   - Admin account (optional)
 
-✅ **Domestic shipping**: possible
-⚠️ **Carrier support is limited**
+2. Stripe test mode:
+   - Use Stripe test cards
+   - Monitor Stripe Dashboard → Payments
 
-EasyPost **does NOT directly support Posti (Finland’s national carrier)**.
-
-You have 3 realistic options:
-
-1. **UPS / DHL / FedEx** via EasyPost → works internationally but expensive
-2. **Bring Your Own Carrier (BYOC)** with Posti (advanced)
-3. **Hybrid model** (recommended):
-   - EasyPost for international
-   - Manual / Posti integration for domestic Finland later
+3. Database access:
+   - Access to verify order statuses, refund records, etc.
 
 ---
 
-### 🇳🇵 Nepal
+## Test flow 1: Customer cancellation (before capture — void payment)
 
-❌ **Domestic shipping via EasyPost: NOT supported**
-⚠️ International only (DHL / FedEx)
+Goal: Cancel before seller captures payment → void payment (no Stripe fees).
 
-Nepal has **no domestic EasyPost carriers**.
-This means:
+### Steps
 
-- You **cannot** auto-buy local labels in Nepal via EasyPost
-- You **must fall back to manual shipping or 3rd-party local APIs**
+1. Create an order as a customer:
+   - Add items to cart
+   - Complete checkout
+   - Note the order number
 
-👉 Etsy has the _same limitation_ in many countries.
+2. Verify initial state:
+   - Go to `/dashboard/orders` (customer view)
+   - Find the order
+   - Expected:
+     - Status: `open`
+     - Payment Status: `pending`
+     - Fulfillment Status: `unfulfilled`
+     - "Cancel Order" button visible
+
+3. Cancel the order:
+   - Click "Cancel Order"
+   - Select reason (e.g., "Changed my mind")
+   - Confirm cancellation
+
+4. Verify cancellation:
+   - Order status: `canceled`
+   - Payment status: `void`
+   - Fulfillment status: `canceled`
+   - "Cancel Order" button hidden
+
+5. Stripe verification:
+   - Stripe Dashboard → Payments
+   - Find the Payment Intent
+   - Status: `canceled`
+   - No refund created (voided, not refunded)
+
+6. Database verification:
+
+   ```sql
+   -- Check order
+   SELECT status, payment_status, fulfillment_status,
+          cancellation_reason, cancellation_requested_at
+   FROM orders
+   WHERE order_number = '<ORDER_NUMBER>';
+
+   -- Check payment
+   SELECT status, refunded_amount
+   FROM order_payments
+   WHERE order_id = '<ORDER_ID>';
+
+   -- Should be NO refund record
+   SELECT * FROM order_refunds WHERE order_id = '<ORDER_ID>';
+   ```
+
+Expected result: Payment voided, no Stripe fees, order canceled.
 
 ---
 
-### ✅ Conclusion
+## Test flow 2: Customer cancellation (after capture — refund)
 
-You **must design a system that supports both**:
+Goal: Cancel after seller captures payment → full refund (Stripe fee applies, platform absorbs).
 
-- Auto-labels (EasyPost-supported routes)
-- Manual shipping fallback
+### Steps
 
-This is **normal and expected**.
+1. Create an order as a customer:
+   - Complete checkout
+   - Note the order number
+
+2. Capture payment as seller:
+   - Log in as seller
+   - Go to `/dashboard/orders`
+   - Find the order
+   - Mark as "Processing" or "Accepted" (triggers `captureOrderPayment`)
+   - Or manually call the capture function
+
+3. Verify payment captured:
+   - Order payment status: `paid`
+   - Stripe Dashboard: Payment Intent status: `succeeded`
+
+4. Cancel as customer:
+   - Log in as customer
+   - Go to `/dashboard/orders`
+   - Find the order
+   - Click "Cancel Order"
+   - Select reason and confirm
+
+5. Verify refund:
+   - Order status: `canceled`
+   - Payment status: `refunded`
+   - Fulfillment status: `canceled`
+
+6. Stripe verification:
+   - Stripe Dashboard → Payments
+   - Find the Payment Intent
+   - Status: `succeeded`
+   - Refunds section: Full refund created
+   - Note: Stripe fee not returned (platform absorbs)
+
+7. Database verification:
+
+   ```sql
+   -- Check refund record
+   SELECT amount, status, fee_paid_by, refund_method, reason
+   FROM order_refunds
+   WHERE order_id = '<ORDER_ID>';
+
+   -- Should show:
+   -- fee_paid_by: 'platform'
+   -- refund_method: 'refund'
+   ```
+
+Expected result: Full refund issued, Stripe fee absorbed by platform, order canceled.
 
 ---
 
-## 2. Tools you will need
+## Test flow 3: Customer refund request (after fulfillment)
 
-### Core
+Goal: Request refund after order is fulfilled/shipped.
 
-- **EasyPost API** (labels, rates, tracking)
-- **Stripe Connect** (ledger & payouts)
-- **Database ledger** (critical)
-- **Address validation** (EasyPost does basic validation)
+### Steps
+
+1. Create and fulfill an order:
+   - Customer places order
+   - Seller captures payment
+   - Seller marks order as "Fulfilled" or "Shipped"
+
+2. Verify order state:
+   - Status: `open`
+   - Payment Status: `paid`
+   - Fulfillment Status: `fulfilled` or `partial`
+   - "Request Refund" button visible
+
+3. Request refund:
+   - Customer clicks "Request Refund"
+   - Fill form:
+     - Reason: e.g., "Damaged item", "Changed mind"
+     - Description (optional)
+     - Evidence images (optional)
+   - Submit
+
+4. Verify request created:
+   - Order `refundRequestStatus`: `pending`
+   - "Request Refund" button hidden
+   - Success message shown
+
+5. Database verification:
+
+   ```sql
+   -- Check refund request
+   SELECT reason, description, status, evidence_images
+   FROM refund_requests
+   WHERE order_id = '<ORDER_ID>';
+
+   -- Check order
+   SELECT refund_request_status, refund_requested_at, refund_request_reason
+   FROM orders
+   WHERE id = '<ORDER_ID>';
+   ```
+
+Expected result: Refund request created with status `pending`, order updated.
 
 ---
 
-### Shipping Providers (recommended)
+## Test flow 4: Seller review and approve refund
 
-| Purpose              | Tool                   |
-| -------------------- | ---------------------- |
-| Shipping labels      | EasyPost               |
-| Carrier fallback     | Manual upload          |
-| Tracking sync        | EasyPost Webhooks      |
-| Address autocomplete | Google Places / Mapbox |
-| Currency handling    | Stripe                 |
-| Tax/VAT (later)      | Stripe Tax / manual    |
+Goal: Seller approves refund request → processes refund.
+
+### Steps
+
+1. View refund requests:
+   - Log in as seller
+   - Go to `/dashboard/orders/refund-requests`
+   - Find the pending request
+
+2. Review request:
+   - Click "Review"
+   - Verify customer info, reason, amount
+
+3. Approve refund:
+   - Action: "Approve Refund"
+   - Fee Paid By: "Seller" or "Platform"
+   - Click "Approve & Process Refund"
+
+4. Verify processing:
+   - Success message
+   - Request status: `approved`
+   - Order `refundRequestStatus`: `approved`
+
+5. Stripe verification:
+   - Stripe Dashboard → Payments
+   - Refund created
+   - Amount matches order total (minus any previous refunds)
+
+6. Database verification:
+
+   ```sql
+   -- Check refund request
+   SELECT status, reviewed_by, reviewed_at
+   FROM refund_requests
+   WHERE id = '<REFUND_REQUEST_ID>';
+
+   -- Check refund record
+   SELECT amount, fee_paid_by, stripe_fee_amount, status
+   FROM order_refunds
+   WHERE order_id = '<ORDER_ID>';
+
+   -- Check order
+   SELECT refund_request_status, refunded_amount, payment_status
+   FROM orders
+   WHERE id = '<ORDER_ID>';
+   ```
+
+Expected result: Refund processed, fee ownership recorded, order updated.
 
 ---
 
-## 3. Seller UI (Etsy-style, proven)
+## Test flow 5: Seller review and reject refund
 
-### Seller Order Page
+Goal: Seller rejects refund request with reason.
 
-**Section: Shipping**
+### Steps
 
+1. View refund requests:
+   - Seller goes to `/dashboard/orders/refund-requests`
+   - Find pending request
+
+2. Reject request:
+   - Click "Review"
+   - Action: "Reject Request"
+   - Rejection reason: e.g., "Item was used" or "Outside return window"
+   - Click "Reject Request"
+
+3. Verify rejection:
+   - Success message
+   - Request status: `rejected`
+   - Order `refundRequestStatus`: `rejected`
+
+4. Customer view:
+   - Customer sees order
+   - "Request Refund" button hidden (already requested)
+   - Rejection reason visible (if implemented)
+
+5. Database verification:
+
+   ```sql
+   -- Check refund request
+   SELECT status, rejection_reason, reviewed_by, reviewed_at
+   FROM refund_requests
+   WHERE id = '<REFUND_REQUEST_ID>';
+
+   -- Should be NO refund record
+   SELECT * FROM order_refunds WHERE order_id = '<ORDER_ID>';
+   ```
+
+Expected result: Request rejected, no refund processed, reason recorded.
+
+---
+
+## Edge cases and validation tests
+
+### Test 6: Cancel already canceled order
+
+Steps:
+
+1. Try to cancel an order that is already `canceled`
+2. Expected: Error message "Order is already canceled"
+
+### Test 7: Cancel fulfilled order
+
+Steps:
+
+1. Try to cancel an order with `fulfillmentStatus: "fulfilled"`
+2. Expected: Error "Order cannot be cancelled. It has already been fulfilled or shipped."
+3. Should suggest using "Request Refund" instead
+
+### Test 8: Request refund for unfulfilled order
+
+Steps:
+
+1. Try to request refund for order with `fulfillmentStatus: "unfulfilled"`
+2. Expected: Error "Order not yet fulfilled. Please cancel the order instead."
+
+### Test 9: Request refund for unpaid order
+
+Steps:
+
+1. Try to request refund for order with `paymentStatus: "pending"`
+2. Expected: Error "Order payment not completed. Cannot request refund."
+
+### Test 10: Duplicate refund request
+
+Steps:
+
+1. Request refund (status becomes `pending`)
+2. Try to request refund again
+3. Expected: Error "Refund request already pending"
+
+### Test 11: Customer cancels another customer's order
+
+Steps:
+
+1. Customer A creates order
+2. Customer B tries to cancel Customer A's order
+3. Expected: Error "Unauthorized"
+
+### Test 12: Seller processes refund for another seller's order
+
+Steps:
+
+1. Seller A has an order
+2. Seller B tries to approve refund for Seller A's order
+3. Expected: Error "Unauthorized" (unless admin)
+
+---
+
+## Database verification checklist
+
+After each test, verify:
+
+```sql
+-- 1. Order status
+SELECT
+  id, order_number, status, payment_status, fulfillment_status,
+  cancellation_reason, cancellation_requested_at,
+  refund_request_status, refund_requested_at, refunded_amount
+FROM orders
+WHERE order_number = '<ORDER_NUMBER>';
+
+-- 2. Payment records
+SELECT
+  id, status, amount, refunded_amount, stripe_payment_intent_id
+FROM order_payments
+WHERE order_id = '<ORDER_ID>';
+
+-- 3. Refund records (if any)
+SELECT
+  id, amount, status, fee_paid_by, stripe_fee_amount,
+  refund_method, reason, stripe_refund_id
+FROM order_refunds
+WHERE order_id = '<ORDER_ID>';
+
+-- 4. Refund requests (if any)
+SELECT
+  id, reason, description, status, reviewed_by, reviewed_at,
+  rejection_reason, evidence_images
+FROM refund_requests
+WHERE order_id = '<ORDER_ID>';
 ```
-Shipping Status: Not shipped
-
-[ Buy Shipping Label ]
-[ Mark as Shipped Manually ]
-```
 
 ---
 
-### When clicking “Buy Shipping Label”
+## Stripe dashboard verification
 
-#### Step 1: Address confirmation
+For each test involving payments:
 
-```
-From:
-[ Seller warehouse address ]
+1. Stripe Dashboard → Payments:
+   - Payment Intent status
+   - Refunds section (if applicable)
+   - Amounts match
 
-To:
-[ Buyer shipping address ]
-```
+2. Stripe Dashboard → Events:
+   - `payment_intent.canceled` (for void)
+   - `charge.refunded` (for refunds)
+   - Metadata includes `orderId`
 
-✔ Editable
-✔ Validated
-
----
-
-#### Step 2: Package details
-
-```
-Weight: [ 1.2 ] kg
-Length: [ 30 ] cm
-Width:  [ 20 ] cm
-Height: [ 10 ] cm
-```
-
-⚠️ Required for international shipping
+3. Fee verification:
+   - Void: No fee charged
+   - Refund: Original fee not returned (check transaction details)
 
 ---
 
-#### Step 3: Available rates (dynamic)
+## Success criteria summary
 
-```
-Available shipping options:
-
-( ) DHL Express – €42.30 – 2–4 days
-( ) UPS Standard – €31.80 – 4–6 days
-( ) FedEx Intl – €39.10 – 3–5 days
-
-Shipping cost will be deducted from your balance.
-```
-
-✔ Clear cost disclosure
-✔ Exactly what Etsy does
+| Test                  | Expected Outcome                                  |
+| --------------------- | ------------------------------------------------- |
+| Cancel before capture | Payment voided, no fees, order canceled           |
+| Cancel after capture  | Full refund, platform absorbs fee, order canceled |
+| Request refund        | Refund request created, status `pending`          |
+| Approve refund        | Refund processed, fee ownership recorded          |
+| Reject refund         | Request rejected, no refund, reason saved         |
+| Validation errors     | Appropriate error messages shown                  |
+| Authorization         | Unauthorized users blocked                        |
 
 ---
 
-#### Step 4: Buy label
+## Quick test script
 
-```
-[ Buy label & mark as shipped ]
-```
+Run this sequence for a full flow:
 
----
+1. Customer places order → Order created, payment `pending`
+2. Customer cancels → Payment voided, no fees
+3. Customer places new order → Order created
+4. Seller captures payment → Payment `paid`
+5. Seller fulfills order → Fulfillment `fulfilled`
+6. Customer requests refund → Request `pending`
+7. Seller approves refund → Refund processed, fee recorded
 
-### Manual fallback UI
-
-If EasyPost fails or country unsupported:
-
-```
-⚠️ Shipping labels not available for this route.
-
-[ Enter tracking number manually ]
-Carrier: [ Posti ]
-Tracking number: [ _______ ]
-
-[ Mark as shipped ]
-```
+This covers the main cancellation and refund paths.
 
 ---
 
-## 4. Backend logic (the important part)
+## Troubleshooting
 
-### Step 1: Create shipment (EasyPost)
+- Payment not voiding: Check Payment Intent status is `requires_capture`
+- Refund not processing: Verify Payment Intent status is `succeeded`
+- Authorization errors: Check user role and order ownership
+- Database inconsistencies: Verify transactions are atomic
 
-```ts
-const shipment = await easypost.Shipment.create({
-  to_address: buyerAddress,
-  from_address: sellerAddress,
-  parcel: {
-    weight: 1200,
-    length: 30,
-    width: 20,
-    height: 10,
-  },
-});
-```
-
----
-
-### Step 2: Get rates
-
-```ts
-const rates = shipment.rates;
-```
-
-Filter by:
-
-- allowed carriers
-- max price
-- delivery days
-
----
-
-### Step 3: Seller selects rate → buy label
-
-```ts
-const boughtShipment = await shipment.buy({
-  rate: selectedRate,
-});
-```
-
-You receive:
-
-- `label_url`
-- `tracking_code`
-- `rate.cost`
-
----
-
-### Step 4: Pay carrier (platform money)
-
-EasyPost charges **your EasyPost account**
-You pay using **your platform Stripe account**
-
----
-
-### Step 5: Ledger update (critical)
-
-```ts
-ledger.create({
-  sellerId,
-  type: "shipping_label",
-  amount: -rate.cost,
-  currency: "EUR",
-  referenceId: shipment.id,
-});
-```
-
-⚠️ Do NOT charge seller via Stripe directly
-⚠️ Always update internal ledger
-
----
-
-### Step 6: Mark order shipped
-
-```ts
-order.update({
-  status: "shipped",
-  trackingNumber,
-  carrier,
-  labelUrl,
-});
-```
-
----
-
-### Step 7: Notify buyer
-
-- Email
-- Order page tracking link
-
----
-
-## 5. Country-specific strategy (important)
-
-### Finland 🇫🇮
-
-**MVP**
-
-- EasyPost → DHL / UPS / FedEx only
-- Manual Posti fallback
-
-**Later**
-
-- BYOC with Posti
-- Or custom Posti API integration
-
----
-
-### Nepal 🇳🇵
-
-**MVP**
-
-- International only (DHL / FedEx)
-- Domestic → manual only
-
-**Later**
-
-- Integrate local courier APIs directly
-- Still keep manual fallback forever
-
----
-
-## 6. Stripe ledger integration (how it fits)
-
-Your ledger entry types:
-
-```ts
-type LedgerEntry =
-  | "sale"
-  | "platform_fee"
-  | "stripe_fee"
-  | "shipping_label"
-  | "refund"
-  | "adjustment";
-```
-
-Shipping label:
-
-- Always a **negative seller balance**
-- Never refunded automatically unless label refunded
-
----
-
-## 7. MVP vs Production roadmap
-
-### MVP (launch-ready)
-
-✅ EasyPost test → prod
-✅ International shipping only
-✅ Manual fallback
-✅ Ledger deductions
-✅ Tracking sync
-
----
-
-### Phase 2
-
-- Posti (Finland) integration
-- Local Nepal couriers
-- Shipping presets (saved box sizes)
-- Bulk label buying
-- Auto-weight from product metadata
-
----
-
-## Final advice (this matters)
-
-If you try to make:
-
-> “Shipping labels work everywhere automatically”
-
-you **will fail or delay launch for months**.
-
-Etsy, Shopify, eBay **all rely on manual fallbacks**.
-
-✅ Build a **hybrid system**
-✅ Make label buying a **convenience, not a requirement**
-✅ Keep your ledger rock-solid
-
----
-
-If you want next, I can:
-
-- Design your **DB schema**
-- Give you **EasyPost webhook handlers**
-- Help you choose **carriers per country**
-- Review your **exact checkout + shipping fee logic**
-
-Just tell me what you want next.
-What label_url actually is (EasyPost)
-
-label_url is:
-
-a URL hosted by EasyPost
-
-that returns a downloadable file
-
-usually PDF or PNG
-
-So technically:
-
-❌ Not an image blob
-✅ A link to a file (PDF / PNG / ZPL)
-
-Common label formats
-
-When you buy a shipment, EasyPost generates the label in a format you choose or a default one.
-
-Most common:
-Format What it is Typical use
-PDF Multi-page or single-page PDF Printing on A4
-PNG Image file Preview in browser
-ZPL Printer command language Thermal label printers
-
-Example response:
-
-{
-"postage_label": {
-"label_url": "https://easypost-files.s3.us-west-2.amazonaws.com/files/postage_label/20240101/abc123.pdf",
-"label_file_type": "application/pdf"
-}
-}
-
-How you should use it in your marketplace
-✅ Store the URL, not the file
-
-Best practice:
-
-order.shippingLabel = {
-labelUrl,
-fileType,
-carrier,
-trackingCode,
-};
-
-Let EasyPost host the file unless you really need to store it yourself.
-
-✅ Show a preview in UI
-If PDF:
-<a href={labelUrl} target="_blank">
-Download shipping label (PDF)
-</a>
-
-or embed:
-
-<iframe src={labelUrl} width="100%" height="600" />
-
-If PNG:
-<img src={labelUrl} alt="Shipping label" />
-
-Can you choose the format?
-
-Yes.
-
-When buying a label:
-
-shipment.buy({
-rate,
-label_format: "PDF", // or PNG, ZPL
-});
-
-(Some carriers only support certain formats.)
-
-Important production notes (very important)
-
-1. Label URLs can expire
-
-EasyPost may expire or revoke URLs
-
-Don’t assume lifetime access
-
-👉 For important marketplaces:
-
-Either proxy-download and rehost
-
-Or allow re-generation via EasyPost
-
-2. Never expose EasyPost API keys
-
-label_url is safe to show
-
-API calls must be server-side only
+Use this guide to test the cancellation and refund logic end-to-end.

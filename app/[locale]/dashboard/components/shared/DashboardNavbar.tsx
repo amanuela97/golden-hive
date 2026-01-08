@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut } from "lucide-react";
+import { LogOut, Heart, Package, Store } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -104,6 +104,25 @@ export function DashboardNavbar({ userName, userImage }: DashboardNavbarProps) {
                   )}
                 </div>
               </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/favorites" className="cursor-pointer">
+                  <Heart className="mr-2 h-4 w-4" />
+                  <span>Favorites</span>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/products" className="cursor-pointer">
+                  <Package className="mr-2 h-4 w-4" />
+                  <span>Products</span>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/stores" className="cursor-pointer">
+                  <Store className="mr-2 h-4 w-4" />
+                  <span>Stores</span>
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={handleLogout}

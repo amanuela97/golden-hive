@@ -26,14 +26,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Eye, Edit, Ban, Trash2, Key } from "lucide-react";
+import { Search, Eye, Edit, Ban, Trash2, Key, Mail } from "lucide-react";
 import {
   useUsers,
   useUpdateUser,
   useSuspendUser,
   useDeleteUser,
 } from "../../../hooks/useAdminQueries";
-import { sendPasswordResetToUser } from "../../../actions/admin";
+import {
+  sendPasswordResetToUser,
+  resendVerificationEmail,
+} from "../../../actions/admin";
 import toast from "react-hot-toast";
 
 interface UserWithStats {
@@ -198,6 +201,20 @@ export default function UserManagement() {
     }
   };
 
+  const handleResendVerificationEmail = async (userId: string) => {
+    try {
+      const result = await resendVerificationEmail(userId);
+      if (result.success) {
+        toast.success("Verification email sent successfully");
+      } else {
+        toast.error(result.error || "Failed to send verification email");
+      }
+    } catch (error) {
+      console.error("Error sending verification email:", error);
+      toast.error("Failed to send verification email");
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Search and Filters */}
@@ -262,6 +279,7 @@ export default function UserManagement() {
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Email Verified</TableHead>
                 <TableHead>Last Login</TableHead>
                 <TableHead>Listings</TableHead>
                 <TableHead>Actions</TableHead>
@@ -298,6 +316,17 @@ export default function UserManagement() {
                       {user.status}
                     </span>
                   </TableCell>
+                  <TableCell>
+                    <span
+                      className={`px-2 py-1 text-xs rounded-full ${
+                        user.emailVerified
+                          ? "bg-green-100 text-green-800"
+                          : "bg-red-100 text-red-800"
+                      }`}
+                    >
+                      {user.emailVerified ? "Verified" : "Not Verified"}
+                    </span>
+                  </TableCell>
                   <TableCell>N/A</TableCell>
                   <TableCell>{user.listingsCount || 0}</TableCell>
                   <TableCell>
@@ -326,9 +355,20 @@ export default function UserManagement() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleSendPasswordReset(user.id)}
+                        title="Send Password Reset"
                       >
                         <Key className="w-4 h-4" />
                       </Button>
+                      {!user.emailVerified && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleResendVerificationEmail(user.id)}
+                          title="Resend Verification Email"
+                        >
+                          <Mail className="w-4 h-4" />
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"

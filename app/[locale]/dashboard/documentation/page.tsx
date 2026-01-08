@@ -1,47 +1,23 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "@/i18n/navigation";
-import { db } from "@/db";
-import { userRoles, roles } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { getLocale } from "next-intl/server";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
 import AdminDocumentationContent from "../components/shared/AdminDocumentationContent";
 import SellerDocumentationContent from "../components/shared/SellerDocumentationContent";
 import { DashboardWrapper } from "../components/shared/DashboardWrapper";
+import DashboardNotFound from "../not-found";
 
 export default async function DocumentationPage() {
-  const locale = await getLocale();
-  const session = await auth.api.getSession({
-    headers: await headers(),
+  // Automatically checks route access based on navigation config
+  const result = await protectDashboardRoute({
+    allowedRoles: ["admin", "seller"],
+    showNotFound: true,
   });
 
-  if (!session) {
-    redirect({ href: "/login", locale });
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (result.shouldShowNotFound) {
+    return <DashboardNotFound />;
   }
 
-  // Get user's role
-  const userRole = await db
-    .select({
-      roleName: roles.name,
-    })
-    .from(userRoles)
-    .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session?.user.id ?? ""))
-    .limit(1);
-
-  if (userRole.length === 0) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleName = userRole[0].roleName.toLowerCase() as
-    | "admin"
-    | "seller"
-    | "customer";
-
-  // Only admin and seller can access documentation
-  if (roleName !== "admin" && roleName !== "seller") {
-    redirect({ href: "/dashboard", locale });
-  }
+  const { role: roleName, userId } = result;
 
   // Render different content based on role
   return (
@@ -49,9 +25,8 @@ export default async function DocumentationPage() {
       {roleName === "admin" ? (
         <AdminDocumentationContent />
       ) : (
-        <SellerDocumentationContent sellerId={session?.user?.id ?? ""} />
+        <SellerDocumentationContent sellerId={userId} />
       )}
     </DashboardWrapper>
   );
 }
-

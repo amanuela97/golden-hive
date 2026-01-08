@@ -1,8 +1,12 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CreditCard } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CreditCard, CheckCircle2 } from "lucide-react";
+import { captureOrderPayment } from "@/app/[locale]/actions/orders";
+import toast from "react-hot-toast";
+import { useRouter } from "@/i18n/navigation";
 
 interface OrderData {
   currency: string;
@@ -25,19 +29,51 @@ interface OrderData {
 interface PaymentSummaryProps {
   orderData: OrderData;
   userRole: "admin" | "seller" | "customer";
+  orderId?: string; // Optional for draft orders
 }
 
-export function PaymentSummary({ orderData, userRole }: PaymentSummaryProps) {
+export function PaymentSummary({
+  orderData,
+  userRole,
+  orderId,
+}: PaymentSummaryProps) {
+  const router = useRouter();
+  const [capturing, setCapturing] = useState(false);
   const isCustomer = userRole === "customer";
   const isPaid = orderData.paymentStatus === "paid";
+  const isPending = orderData.paymentStatus === "pending";
   const isPartiallyRefunded = orderData.paymentStatus === "partially_refunded";
   const isRefunded = orderData.paymentStatus === "refunded";
+  const canCapturePayment =
+    (userRole === "admin" || userRole === "seller") && isPending && !!orderId; // Only allow capture if orderId is provided (not a draft)
 
   const subtotal = parseFloat(orderData.subtotalAmount);
   const discount = parseFloat(orderData.discountAmount);
   const shipping = parseFloat(orderData.shippingAmount);
   const tax = parseFloat(orderData.taxAmount);
   const total = parseFloat(orderData.totalAmount);
+
+  const handleCapturePayment = async () => {
+    if (!orderId) {
+      toast.error("Cannot capture payment for draft orders");
+      return;
+    }
+    setCapturing(true);
+    try {
+      const result = await captureOrderPayment(orderId);
+      if (result.success) {
+        toast.success("Payment captured successfully");
+        router.refresh();
+      } else {
+        toast.error(result.error || "Failed to capture payment");
+      }
+    } catch (error) {
+      console.error("Error capturing payment:", error);
+      toast.error("Failed to capture payment");
+    } finally {
+      setCapturing(false);
+    }
+  };
 
   return (
     <Card>
@@ -123,6 +159,22 @@ export function PaymentSummary({ orderData, userRole }: PaymentSummaryProps) {
                 <span className="font-medium">
                   {orderData.currency} {total.toFixed(2)}
                 </span>
+              </div>
+            )}
+            {canCapturePayment && (
+              <div className="pt-4 border-t mt-4">
+                <Button
+                  onClick={handleCapturePayment}
+                  disabled={capturing}
+                  className="w-full"
+                  size="sm"
+                >
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  {capturing ? "Capturing..." : "Capture Payment"}
+                </Button>
+                <p className="text-xs text-muted-foreground mt-2 text-center">
+                  Capture the authorized payment to complete the transaction
+                </p>
               </div>
             )}
           </>

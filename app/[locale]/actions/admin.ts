@@ -424,6 +424,131 @@ export async function sendPasswordResetToUser(
   }
 }
 
+/**
+ * Resend verification email to a user (admin only)
+ */
+export async function resendVerificationEmail(
+  userId: string
+): Promise<ActionResponse> {
+  try {
+    await getCurrentAdmin();
+
+    // Get user
+    const userRecord = await db
+      .select()
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+
+    if (userRecord.length === 0) {
+      return {
+        success: false,
+        error: "User not found",
+      };
+    }
+
+    const userData = userRecord[0];
+
+    // Check if email is already verified
+    if (userData.emailVerified) {
+      return {
+        success: false,
+        error: "User's email is already verified",
+      };
+    }
+
+    // Import verification table and nanoid
+    const { verification } = await import("@/db/schema");
+    const { nanoid } = await import("nanoid");
+    const resend = (await import("@/lib/resend")).default;
+
+    // Generate verification token (better-auth uses crypto.randomBytes internally, but nanoid is fine)
+    const token = nanoid(32);
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24); // Token expires in 24 hours
+
+    // Delete any existing verification tokens for this user
+    await db
+      .delete(verification)
+      .where(eq(verification.identifier, userData.email));
+
+    // Create new verification token
+    await db.insert(verification).values({
+      id: nanoid(),
+      identifier: userData.email,
+      value: token,
+      expiresAt,
+    });
+
+    // Generate verification URL using better-auth's format
+    // Better-auth uses /api/auth/verify-email endpoint with token parameter
+    const baseUrl =
+      process.env.NEXT_PUBLIC_BETTER_AUTH_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      "";
+    const verificationUrl = `${baseUrl}/api/auth/verify-email?token=${token}`;
+
+    console.log(
+      `[Admin] Sending verification email to ${userData.email} with URL: ${verificationUrl}`
+    );
+
+    // Send verification email using the same handler as configured in auth
+    const emailResult = await resend.emails.send({
+      from:
+        process.env.RESEND_FROM_EMAIL ||
+        "Golden Market <goldenmarket@resend.dev>",
+      to: userData.email,
+      subject: "Email Verification - Golden Market",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Verify Your Email Address</h2>
+          <p>Hello ${userData.name || "User"},</p>
+          <p>Please click the link below to verify your email address:</p>
+          <p style="margin: 20px 0;">
+            <a href="${verificationUrl}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+              Verify Email Address
+            </a>
+          </p>
+          <p>Or copy and paste this URL into your browser:</p>
+          <p style="word-break: break-all; color: #666;">${verificationUrl}</p>
+          <p style="color: #999; font-size: 12px; margin-top: 30px;">
+            This link will expire in 24 hours. If you didn't request this verification email, please ignore it.
+          </p>
+        </div>
+      `,
+    });
+
+    if (emailResult.error) {
+      console.error(
+        "[Admin] Failed to send verification email:",
+        emailResult.error
+      );
+      return {
+        success: false,
+        error: `Failed to send email: ${emailResult.error.message || "Unknown error"}`,
+      };
+    }
+
+    console.log(
+      `[Admin] Verification email sent successfully to ${userData.email}`
+    );
+
+    return {
+      success: true,
+      message: "Verification email sent successfully",
+    };
+  } catch (error) {
+    console.error("Error sending verification email:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to send verification email",
+    };
+  }
+}
+
 // Get user statistics
 export async function getUserStats(): Promise<
   ActionResponse & { result?: GetUserStatsResponse }

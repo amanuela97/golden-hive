@@ -35,6 +35,8 @@ import { OrderSidebar } from "./components/OrderSidebar";
 import { CancelOrderDialog } from "./components/CancelOrderDialog";
 import { SendInvoiceDialog } from "./components/SendInvoiceDialog";
 import { SendInvoicePdfDialog } from "./components/SendInvoicePdfDialog";
+import { CancelOrderModal } from "../components/CancelOrderModal";
+import { RefundRequestForm } from "../components/RefundRequestForm";
 import {
   archiveOrders,
   unarchiveOrders,
@@ -115,6 +117,13 @@ interface OrderData {
   invoiceNumber: string | null;
   invoicePdfUrl: string | null;
   refundedAmount?: string;
+  refundRequestStatus?: string | null;
+  refundRequest?: {
+    id: string;
+    status: string;
+    rejectionReason: string | null;
+    reviewedAt: Date | null;
+  } | null;
   items: OrderItem[];
   events: OrderEvent[];
 }
@@ -178,12 +187,34 @@ export default function OrderDetailsPageClient({
     !isArchived &&
     !isCanceled;
 
+  // Customer-specific permissions
+  const canCancelAsCustomer =
+    userRole === "customer" &&
+    !isArchived &&
+    !isCanceled &&
+    (orderData.fulfillmentStatus === "unfulfilled" ||
+      orderData.fulfillmentStatus === "partial");
+  const canRequestRefund =
+    userRole === "customer" &&
+    orderData.status === "open" &&
+    (orderData.fulfillmentStatus === "fulfilled" ||
+      orderData.fulfillmentStatus === "partial") &&
+    (orderData.paymentStatus === "paid" ||
+      orderData.paymentStatus === "partially_refunded") &&
+    orderData.refundRequestStatus !== "pending" &&
+    orderData.refundRequestStatus !== "approved" &&
+    orderData.refundRequestStatus !== "rejected";
+
+  const isRefundRequestRejected = orderData.refundRequestStatus === "rejected";
+
   // Dialog states
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [showSendInvoiceDialog, setShowSendInvoiceDialog] = useState(false);
   const [showSendInvoicePdfDialog, setShowSendInvoicePdfDialog] =
     useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showRefundRequestForm, setShowRefundRequestForm] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [storeOwnerEmail, setStoreOwnerEmail] = useState<string | null>(null);
 
@@ -416,6 +447,41 @@ export default function OrderDetailsPageClient({
               </DropdownMenu>
             </>
           )}
+          {/* Customer Actions */}
+          {userRole === "customer" && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                {canCancelAsCustomer && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowCancelModal(true)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    Cancel Order
+                  </Button>
+                )}
+                {canRequestRefund && (
+                  <Button
+                    variant="default"
+                    onClick={() => setShowRefundRequestForm(true)}
+                  >
+                    Request Refund
+                  </Button>
+                )}
+              </div>
+              {isRefundRequestRejected &&
+                orderData.refundRequest?.rejectionReason && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                    <p className="text-sm font-medium text-red-800">
+                      Refund Request Rejected
+                    </p>
+                    <p className="text-sm text-red-700 mt-1">
+                      {orderData.refundRequest.rejectionReason}
+                    </p>
+                  </div>
+                )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -433,7 +499,11 @@ export default function OrderDetailsPageClient({
           />
 
           {/* Payment Summary */}
-          <PaymentSummary orderData={orderData} userRole={userRole} />
+          <PaymentSummary
+            orderData={orderData}
+            userRole={userRole}
+            orderId={orderData.id}
+          />
 
           {/* Timeline */}
           <OrderTimeline
@@ -515,6 +585,29 @@ export default function OrderDetailsPageClient({
         invoiceNumber={orderData.invoiceNumber}
         customerEmail={orderData.customerEmail}
         storeOwnerEmail={storeOwnerEmail}
+        onSuccess={handleRefresh}
+      />
+
+      {/* Customer Cancel Order Modal */}
+      <CancelOrderModal
+        open={showCancelModal}
+        onOpenChange={setShowCancelModal}
+        orderId={orderData.id}
+        orderNumber={orderData.orderNumber}
+        totalAmount={orderData.totalAmount}
+        currency={orderData.currency}
+        fulfillmentStatus={orderData.fulfillmentStatus}
+        onSuccess={handleRefresh}
+      />
+
+      {/* Customer Refund Request Form */}
+      <RefundRequestForm
+        open={showRefundRequestForm}
+        onOpenChange={setShowRefundRequestForm}
+        orderId={orderData.id}
+        orderNumber={orderData.orderNumber}
+        totalAmount={orderData.totalAmount}
+        currency={orderData.currency}
         onSuccess={handleRefresh}
       />
     </div>

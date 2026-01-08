@@ -1,50 +1,30 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "@/i18n/navigation";
-import { getLocale } from "next-intl/server";
 import { getOrderWithItems } from "@/app/[locale]/actions/orders";
 import { DashboardWrapper } from "@/app/[locale]/dashboard/components/shared/DashboardWrapper";
-import { db } from "@/db";
-import { userRoles, roles } from "@/db/schema";
-import { eq } from "drizzle-orm";
 import RefundPageClient from "./RefundPageClient";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import Link from "next/link";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
+import DashboardNotFound from "../../../not-found";
 
 interface RefundPageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function RefundPage({ params }: RefundPageProps) {
-  const locale = await getLocale();
-  const session = await auth.api.getSession({
-    headers: await headers(),
+  // Automatically checks route access based on navigation config
+  // Refunds are only for admin and seller (not in nav but should be protected)
+  const { role: roleName, shouldShowNotFound } = await protectDashboardRoute({
+    allowedRoles: ["admin", "seller"],
+    showNotFound: true,
   });
 
-  if (!session) {
-    redirect({ href: "/login", locale });
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (shouldShowNotFound) {
+    return <DashboardNotFound />;
   }
-
-  // Get user's role
-  const userRole = await db
-    .select({
-      roleName: roles.name,
-    })
-    .from(userRoles)
-    .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session?.user.id ?? ""))
-    .limit(1);
-
-  if (userRole.length === 0) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleName = userRole[0].roleName.toLowerCase() as
-    | "admin"
-    | "seller"
-    | "customer";
 
   const { id } = await params;
 

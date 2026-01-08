@@ -471,24 +471,36 @@ export async function POST(req: NextRequest) {
                 description: `Stripe processing fee for order`,
               });
 
+              // Check payment intent status - with manual capture, payment might not be captured yet
+              // Only set paymentStatus to "paid" if payment is actually captured (succeeded)
+              // If status is "requires_capture", keep it as "pending" until seller captures
+              const paymentIntentStatus = paymentIntent.status;
+              const isPaymentCaptured = paymentIntentStatus === "succeeded";
+              
+              console.log(
+                `[Webhook] Payment Intent status: ${paymentIntentStatus}, isPaymentCaptured: ${isPaymentCaptured}`
+              );
+
               // Update order payment status and check if order should be completed
               const isFulfilled =
                 order.fulfillmentStatus === "fulfilled" ||
                 order.fulfillmentStatus === "partial";
 
               let newOrderStatus = order.status;
-              if (isFulfilled) {
+              if (isFulfilled && isPaymentCaptured) {
                 newOrderStatus = "completed";
                 console.log(
                   `[Webhook] Order ${orderId} is paid and fulfilled, setting status to completed`
                 );
               }
 
+              // Only update payment status to "paid" if payment is actually captured
+              // Otherwise, keep it as "pending" (manual capture mode)
               await db
                 .update(orders)
                 .set({
-                  paymentStatus: "paid",
-                  paidAt: new Date(),
+                  paymentStatus: isPaymentCaptured ? "paid" : "pending",
+                  paidAt: isPaymentCaptured ? new Date() : null,
                   status: newOrderStatus,
                 })
                 .where(eq(orders.id, orderId));
@@ -704,27 +716,41 @@ export async function POST(req: NextRequest) {
             ? orderFulfillmentData[0].status
             : "open";
 
+        // Check payment intent status - with manual capture, payment might not be captured yet
+        // Only set paymentStatus to "paid" if payment is actually captured (succeeded)
+        // If status is "requires_capture", keep it as "pending" until seller captures
+        const paymentIntentStatus = paymentIntent.status;
+        const isPaymentCaptured = paymentIntentStatus === "succeeded";
+        
+        console.log(
+          `[Webhook] Payment Intent status: ${paymentIntentStatus}, isPaymentCaptured: ${isPaymentCaptured}`
+        );
+
         const isFulfilled =
           fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
 
         // If paid and fulfilled → "completed"
         let newOrderStatus = currentStatus;
-        if (isFulfilled) {
+        if (isFulfilled && isPaymentCaptured) {
           newOrderStatus = "completed";
           console.log(
             `[Webhook] Order ${orderId} is paid and fulfilled, setting status to completed`
           );
         }
 
+        // Only update payment status to "paid" if payment is actually captured
+        // Otherwise, keep it as "pending" (manual capture mode)
         await db
           .update(orders)
           .set({
-            paymentStatus: "paid",
-            paidAt: new Date(),
+            paymentStatus: isPaymentCaptured ? "paid" : "pending",
+            paidAt: isPaymentCaptured ? new Date() : null,
             status: newOrderStatus,
           })
           .where(eq(orders.id, orderId));
-        console.log("✅ Order payment status updated");
+        console.log(
+          `✅ Order payment status updated to: ${isPaymentCaptured ? "paid" : "pending"}`
+        );
 
         // Generate invoice for regular order payment (don't await to avoid blocking)
         (async () => {
@@ -1014,6 +1040,160 @@ export async function POST(req: NextRequest) {
         {
           error:
             error instanceof Error ? error.message : "Failed to process refund",
+        },
+        { status: 500 }
+      );
+    }
+  }
+
+  // Handle payment_intent.succeeded event (when payment is captured)
+  if (event.type === "payment_intent.succeeded") {
+    console.log("✅ Processing payment_intent.succeeded event");
+    const paymentIntent = event.data.object as Stripe.PaymentIntent;
+
+    try {
+      // Find orders associated with this payment intent
+      const paymentRecords = await db
+        .select({
+          orderId: orderPayments.orderId,
+          id: orderPayments.id,
+        })
+        .from(orderPayments)
+        .where(eq(orderPayments.stripePaymentIntentId, paymentIntent.id));
+
+      if (paymentRecords.length === 0) {
+        console.log(
+          "⚠️ No payment records found for payment intent:",
+          paymentIntent.id
+        );
+        return NextResponse.json({ received: true });
+      }
+
+      // Update payment status for all associated orders
+      for (const paymentRecord of paymentRecords) {
+        const orderData = await db
+          .select({
+            id: orders.id,
+            fulfillmentStatus: orders.fulfillmentStatus,
+            status: orders.status,
+          })
+          .from(orders)
+          .where(eq(orders.id, paymentRecord.orderId))
+          .limit(1);
+
+        if (orderData.length === 0) {
+          console.error(
+            `❌ Order not found for payment record: ${paymentRecord.id}`
+          );
+          continue;
+        }
+
+        const order = orderData[0];
+        const isFulfilled =
+          order.fulfillmentStatus === "fulfilled" ||
+          order.fulfillmentStatus === "partial";
+
+        let newOrderStatus = order.status;
+        if (isFulfilled) {
+          newOrderStatus = "completed";
+          console.log(
+            `[Webhook] Order ${order.id} is paid and fulfilled, setting status to completed`
+          );
+        }
+
+        // Update order payment status to "paid" now that payment is captured
+        await db
+          .update(orders)
+          .set({
+            paymentStatus: "paid",
+            paidAt: new Date(),
+            status: newOrderStatus,
+          })
+          .where(eq(orders.id, order.id));
+
+        // Update payment record status
+        await db
+          .update(orderPayments)
+          .set({
+            status: "completed",
+            updatedAt: new Date(),
+          })
+          .where(eq(orderPayments.id, paymentRecord.id));
+
+        console.log(
+          `✅ Updated order ${order.id} payment status to "paid" after capture`
+        );
+      }
+
+      return NextResponse.json({ received: true });
+    } catch (error) {
+      console.error("❌ Error processing payment_intent.succeeded:", error);
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to process payment intent succeeded",
+        },
+        { status: 500 }
+      );
+    }
+  }
+
+  // Handle payment_intent.canceled event (when payment is voided before capture)
+  if (event.type === "payment_intent.canceled") {
+    console.log("🚫 Processing payment_intent.canceled event");
+    const paymentIntent = event.data.object as Stripe.PaymentIntent;
+
+    try {
+      // Find the order payment record
+      const paymentRecord = await db
+        .select({
+          id: orderPayments.id,
+          orderId: orderPayments.orderId,
+        })
+        .from(orderPayments)
+        .where(eq(orderPayments.stripePaymentIntentId, paymentIntent.id))
+        .limit(1);
+
+      if (paymentRecord.length === 0) {
+        console.error("❌ Payment record not found for canceled payment intent");
+        return NextResponse.json(
+          { error: "Payment record not found" },
+          { status: 404 }
+        );
+      }
+
+      const payment = paymentRecord[0];
+
+      // Update payment status to "void"
+      await db
+        .update(orderPayments)
+        .set({
+          status: "void",
+          updatedAt: new Date(),
+        })
+        .where(eq(orderPayments.id, payment.id));
+
+      // Update order payment status to "void"
+      await db
+        .update(orders)
+        .set({
+          paymentStatus: "void",
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, payment.orderId));
+
+      console.log("✅ Payment voided successfully");
+      return NextResponse.json({ received: true });
+    } catch (error) {
+      console.error("❌ Error processing payment_intent.canceled:", error);
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to process canceled payment",
         },
         { status: 500 }
       );

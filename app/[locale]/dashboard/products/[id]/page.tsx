@@ -1,52 +1,29 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
 import { redirect } from "@/i18n/navigation";
-import { db } from "@/db";
-import { userRoles, roles } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { getLocale } from "next-intl/server";
 import { getListingById, getListingVariantsWithInventory } from "@/lib/listing";
 import { notFound } from "next/navigation";
 import EditProductForm from "./EditProductForm";
 import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
+import DashboardNotFound from "../../not-found";
 
 export default async function EditProductPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const locale = await getLocale();
-  const session = await auth.api.getSession({
-    headers: await headers(),
+  // Automatically checks route access based on navigation config
+  const result = await protectDashboardRoute({
+    allowedRoles: ["admin", "seller"],
+    showNotFound: true,
   });
 
-  if (!session) {
-    redirect({ href: "/login", locale });
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (result.shouldShowNotFound) {
+    return <DashboardNotFound />;
   }
 
-  // Get user's role
-  const userRole = await db
-    .select({
-      roleName: roles.name,
-    })
-    .from(userRoles)
-    .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session?.user.id ?? ""))
-    .limit(1);
-
-  if (userRole.length === 0) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleName = userRole[0].roleName.toLowerCase() as
-    | "admin"
-    | "seller"
-    | "customer";
-
-  // Only admin and seller can access products
-  if (roleName !== "admin" && roleName !== "seller") {
-    redirect({ href: "/dashboard", locale });
-  }
+  const { role: roleName, userId, locale } = result;
 
   const { id } = await params;
 
@@ -62,7 +39,7 @@ export default async function EditProductPage({
   }
 
   // Admin can edit any product, seller can only edit their own
-  if (roleName === "seller" && product.producerId !== session?.user?.id) {
+  if (roleName === "seller" && product.producerId !== userId) {
     redirect({ href: "/dashboard/products", locale });
   }
 
@@ -73,8 +50,8 @@ export default async function EditProductPage({
 
   return (
     <DashboardWrapper userRole={roleName}>
-      <EditProductForm 
-        initialData={product} 
+      <EditProductForm
+        initialData={product}
         initialVariants={variantsWithInventory}
         isAdmin={isAdmin}
       />

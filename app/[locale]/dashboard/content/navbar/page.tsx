@@ -1,6 +1,21 @@
 import NavbarManager from "../NavbarManager";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
+import DashboardNotFound from "../../not-found";
 
-export default function NavbarContentPage() {
+export default async function NavbarContentPage() {
+  // Automatically checks route access based on navigation config
+  // Content pages are admin-only (from settings config)
+  const result = await protectDashboardRoute({
+    allowedRoles: ["admin"],
+    showNotFound: true,
+  });
+
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (result.shouldShowNotFound) {
+    return <DashboardNotFound />;
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-12">

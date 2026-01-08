@@ -334,6 +334,9 @@ export async function registerAction(
     // Attempt to create user using better-auth
     let response;
     try {
+      console.log(
+        `[Registration] Creating account for ${validatedData.data.email}`
+      );
       response = await auth.api.signUpEmail({
         body: {
           email: validatedData.data.email,
@@ -344,6 +347,16 @@ export async function registerAction(
         },
         headers: await headers(),
       });
+      console.log(
+        `[Registration] Account created successfully. Email verified: ${response.user.emailVerified}`
+      );
+
+      // Log if verification email should be sent
+      if (!response.user.emailVerified) {
+        console.log(
+          `[Registration] Verification email should be sent to ${validatedData.data.email}`
+        );
+      }
     } catch (err) {
       // Log specific internal reason while returning a generic message to the user
       const message = err instanceof Error ? err.message.toLowerCase() : "";

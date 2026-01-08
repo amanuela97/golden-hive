@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { getAllCategoryRules } from "../../../actions/category-rules";
 import CategoryManagement from "../admin/CategoryManagement";
-import TranslationsPage from "../../translations/page";
+import TranslationsPageClient from "../../translations/TranslationsPageClient";
 import ProfileTab from "./settings/ProfileTab";
 import SecurityTab from "./settings/SecurityTab";
 import PaymentsTab from "./settings/PaymentsTab";
@@ -119,7 +119,13 @@ export default function SettingsContent({
       return <ProfileTab />;
     case "payments":
       return (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-[400px]"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div></div>}>
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center min-h-[400px]">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          }
+        >
           <PaymentsTab />
         </Suspense>
       );
@@ -130,7 +136,7 @@ export default function SettingsContent({
     case "shipping-settings":
       return <ShippingProfilesTab />;
     case "translations":
-      return <TranslationsPage />;
+      return <TranslationsPageClient />;
     case "categories":
       if (loadingCategories) {
         return (

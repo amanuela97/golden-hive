@@ -1,49 +1,22 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "@/i18n/navigation";
-import { db } from "@/db";
-import { userRoles, roles } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { getLocale } from "next-intl/server";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
 import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
-import MarketForm from "../components/MarketForm";
 import MarketFormClient from "./MarketFormClient";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
+import DashboardNotFound from "../../not-found";
 
 export default async function NewMarketPage() {
-  const locale = await getLocale();
-  const session = await auth.api.getSession({
-    headers: await headers(),
+  // Automatically checks route access based on navigation config
+  const { role: roleName, shouldShowNotFound } = await protectDashboardRoute({
+    allowedRoles: ["admin", "seller"],
+    showNotFound: true,
   });
 
-  if (!session) {
-    redirect({ href: "/login", locale });
-  }
-
-  // Get user's role
-  const userRole = await db
-    .select({
-      roleName: roles.name,
-    })
-    .from(userRoles)
-    .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session?.user.id ?? ""))
-    .limit(1);
-
-  if (userRole.length === 0) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleName = userRole[0].roleName.toLowerCase() as
-    | "admin"
-    | "seller"
-    | "customer";
-
-  // Only admin and seller can create markets
-  if (roleName !== "admin" && roleName !== "seller") {
-    redirect({ href: "/dashboard", locale });
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (shouldShowNotFound) {
+    return <DashboardNotFound />;
   }
 
   return (
@@ -67,4 +40,3 @@ export default async function NewMarketPage() {
     </DashboardWrapper>
   );
 }
-

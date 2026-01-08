@@ -1,40 +1,26 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "@/i18n/navigation";
-import { getLocale } from "next-intl/server";
 import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
-import { getUserRole } from "@/lib/user-role";
 import { getDiscountById } from "../../../actions/discounts";
 import EditDiscountFormClient from "./EditDiscountFormClient";
 import { notFound } from "next/navigation";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
+import DashboardNotFound from "../../not-found";
 
 export default async function EditDiscountPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const locale = await getLocale();
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  // Automatically checks route access based on navigation config
+  const { role: roleNameTyped, shouldShowNotFound } =
+    await protectDashboardRoute({
+      allowedRoles: ["admin", "seller"],
+      showNotFound: true,
+    });
 
-  if (!session) {
-    redirect({ href: "/login", locale });
-  }
-
-  const { roleName, error: roleError } = await getUserRole(
-    session?.user?.id ?? ""
-  );
-
-  if (roleError || !roleName) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleNameTyped = roleName as "admin" | "seller" | "customer";
-
-  // Only admin and seller can access discounts
-  if (roleNameTyped !== "admin" && roleNameTyped !== "seller") {
-    redirect({ href: "/dashboard", locale });
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (shouldShowNotFound) {
+    return <DashboardNotFound />;
   }
 
   const { id } = await params;

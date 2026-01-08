@@ -696,6 +696,25 @@ export default function CheckoutPage() {
       return;
     }
 
+    // Validate checkout permissions (if user is logged in)
+    if (session?.user?.id) {
+      try {
+        const { validateCheckoutPermissions } = await import(
+          "../actions/checkout-validation"
+        );
+        const listingIds = items.map((item) => item.listingId);
+        const permissionCheck = await validateCheckoutPermissions(listingIds);
+
+        if (!permissionCheck.allowed) {
+          toast.error(permissionCheck.error || "Cannot proceed with checkout");
+          return;
+        }
+      } catch (error) {
+        console.error("Error validating checkout permissions:", error);
+        // Continue anyway - backend will catch it
+      }
+    }
+
     setIsProcessing(true);
 
     try {
@@ -1795,7 +1814,7 @@ export default function CheckoutPage() {
                     <span className="font-bold text-foreground">Total</span>
                     <span className="font-bold text-foreground">
                       €
-                      {(total - (appliedDiscount?.totalAmount || 0)).toFixed(2)}
+                      {(total + shippingCost - (appliedDiscount?.totalAmount || 0)).toFixed(2)}
                     </span>
                   </div>
                 </div>

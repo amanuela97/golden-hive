@@ -1,42 +1,31 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "@/i18n/navigation";
-import { getLocale } from "next-intl/server";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
 import { DashboardWrapper } from "../components/shared/DashboardWrapper";
-import { getUserRole } from "@/lib/user-role";
 import DiscountsPageClient from "./DiscountsPageClient";
 import { getDiscounts } from "../../actions/discounts";
+import DashboardNotFound from "../not-found";
 
 export default async function DiscountsPage() {
-  const locale = await getLocale();
-  const session = await auth.api.getSession({
-    headers: await headers(),
+  // Automatically checks route access based on navigation config
+  const result = await protectDashboardRoute({
+    allowedRoles: ["admin", "seller"],
+    showNotFound: true,
   });
 
-  if (!session) {
-    redirect({ href: "/login", locale });
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (result.shouldShowNotFound) {
+    return <DashboardNotFound />;
   }
 
-  const { roleName, error: roleError } = await getUserRole(
-    session?.user?.id ?? ""
-  );
-
-  if (roleError || !roleName) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleNameTyped = roleName as "admin" | "seller" | "customer";
-
-  // Only admin and seller can access discounts
-  if (roleNameTyped !== "admin" && roleNameTyped !== "seller") {
-    redirect({ href: "/dashboard", locale });
-  }
+  const { role: roleNameTyped } = result;
 
   const isAdmin = roleNameTyped === "admin";
 
   // Fetch discounts
   const discountsResult = await getDiscounts();
-  const discounts = discountsResult.success ? discountsResult.discounts || [] : [];
+  const discounts = discountsResult.success
+    ? discountsResult.discounts || []
+    : [];
 
   return (
     <DashboardWrapper userRole={roleNameTyped}>
@@ -52,12 +41,8 @@ export default async function DiscountsPage() {
           </div>
         </div>
 
-        <DiscountsPageClient
-          discounts={discounts}
-          isAdmin={isAdmin}
-        />
+        <DiscountsPageClient discounts={discounts} isAdmin={isAdmin} />
       </div>
     </DashboardWrapper>
   );
 }
-

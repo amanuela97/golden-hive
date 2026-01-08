@@ -11,8 +11,10 @@ import {
   discounts,
   orderShipments,
 } from "@/db/schema";
-import { eq, inArray, and } from "drizzle-orm";
+import { eq, inArray, and, isNull } from "drizzle-orm";
 import { generateOrderNumber } from "@/lib/order-number";
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
 
 interface CreateOrderRequest {
   customerEmail: string;
@@ -80,6 +82,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
+      );
+    }
+
+    // Validate checkout permissions based on user role
+    // Block admins and sellers buying from their own store
+    const listingIdsForValidation = body.lineItems.map(
+      (item) => item.listingId
+    );
+    const { validateCheckoutPermissions } = await import(
+      "@/app/[locale]/actions/checkout-validation"
+    );
+    const permissionCheck = await validateCheckoutPermissions(
+      listingIdsForValidation
+    );
+
+    if (!permissionCheck.allowed) {
+      return NextResponse.json(
+        {
+          error: permissionCheck.error || "Checkout not allowed",
+          code: "CHECKOUT_NOT_ALLOWED",
+        },
+        { status: 403 }
       );
     }
 
@@ -202,26 +226,90 @@ export async function POST(req: NextRequest) {
         let customerId: string | null = null;
 
         if (body.customerEmail) {
-          const existingCustomer = await tx
-            .select({ id: customers.id })
-            .from(customers)
-            .where(
-              and(
-                eq(customers.email, body.customerEmail),
-                eq(customers.storeId, storeId)
+          // Check if there's a logged-in user
+          const session = await auth.api.getSession({
+            headers: await headers(),
+          });
+          const loggedInUserId = session?.user?.id;
+          const loggedInUserEmail = session?.user?.email;
+          const isLoggedInUser =
+            loggedInUserEmail &&
+            loggedInUserEmail.toLowerCase() ===
+              body.customerEmail.toLowerCase();
+
+          let existingCustomer;
+
+          if (isLoggedInUser && loggedInUserId) {
+            // Priority 1: Check for customer with SAME userId AND SAME storeId (multi-store support)
+            existingCustomer = await tx
+              .select({ id: customers.id, userId: customers.userId })
+              .from(customers)
+              .where(
+                and(
+                  eq(customers.userId, loggedInUserId),
+                  storeId
+                    ? eq(customers.storeId, storeId)
+                    : isNull(customers.storeId)
+                )
               )
-            )
-            .limit(1);
+              .limit(1);
+
+            // Priority 2: If no customer found for this store, check by userId only (any store)
+            // This handles cases where customer was created for a different store
+            if (existingCustomer.length === 0) {
+              existingCustomer = await tx
+                .select({ id: customers.id, userId: customers.userId })
+                .from(customers)
+                .where(eq(customers.userId, loggedInUserId))
+                .limit(1);
+            }
+
+            // Priority 3: If still no customer found, check by email (regardless of storeId)
+            // This handles cases where customer was created before userId linking was implemented
+            if (existingCustomer.length === 0) {
+              existingCustomer = await tx
+                .select({ id: customers.id, userId: customers.userId })
+                .from(customers)
+                .where(eq(customers.email, body.customerEmail))
+                .limit(1);
+            }
+          } else {
+            // For guest users or different emails: Check if customer exists with SAME email AND SAME storeId
+            existingCustomer = await tx
+              .select({ id: customers.id, userId: customers.userId })
+              .from(customers)
+              .where(
+                and(
+                  eq(customers.email, body.customerEmail),
+                  storeId
+                    ? eq(customers.storeId, storeId)
+                    : isNull(customers.storeId)
+                )
+              )
+              .limit(1);
+          }
 
           if (existingCustomer.length > 0) {
             customerId = existingCustomer[0].id;
+            // Update userId if it's null but we have a logged-in user
+            if (
+              isLoggedInUser &&
+              loggedInUserId &&
+              !existingCustomer[0].userId
+            ) {
+              await tx
+                .update(customers)
+                .set({ userId: loggedInUserId })
+                .where(eq(customers.id, customerId));
+            }
           } else {
             // Create new customer
             const newCustomer = await tx
               .insert(customers)
               .values({
                 storeId: storeId,
-                userId: null, // Guest user
+                userId:
+                  isLoggedInUser && loggedInUserId ? loggedInUserId : null,
                 email: body.customerEmail,
                 firstName: body.customerFirstName || null,
                 lastName: body.customerLastName || null,

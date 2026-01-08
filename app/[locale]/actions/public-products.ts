@@ -107,12 +107,6 @@ export async function getPublicProducts(options?: {
         {} as Record<string, number>
       );
       console.log("Status distribution:", statusCounts);
-      console.log(
-        "Sample listings:",
-        allListings
-          .slice(0, 3)
-          .map((l) => ({ id: l.id, name: l.name, status: l.status }))
-      );
     }
 
     // Build where conditions for both count and select queries
@@ -305,7 +299,11 @@ export async function getPublicProductBySlug(
     // Use unstable_cache for performance
     return await unstable_cache(
       async () => {
-        return await fetchProductBySlug(slugLower, validLocale, options?.customerCountry);
+        return await fetchProductBySlug(
+          slugLower,
+          validLocale,
+          options?.customerCountry
+        );
       },
       [cacheKey],
       {
@@ -431,11 +429,14 @@ async function fetchProductBySlug(
     }
 
     const p = result[0];
-    
+
     // Check shipping availability if customer country is provided
     let shippingAvailable: boolean | null = null;
     if (customerCountry) {
-      const availability = await checkShippingAvailability(p.id, customerCountry);
+      const availability = await checkShippingAvailability(
+        p.id,
+        customerCountry
+      );
       shippingAvailable = availability.available;
     }
 

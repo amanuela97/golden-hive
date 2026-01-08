@@ -16,11 +16,8 @@ export default function RootNotFound() {
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button asChild>
-              <Link href="/en">Go to Homepage</Link>
-            </Button>
             <Button asChild variant="outline">
-              <Link href="/en/products">Browse Products</Link>
+              <Link href="/en/">Go to Homepage</Link>
             </Button>
           </div>
         </div>

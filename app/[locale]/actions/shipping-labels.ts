@@ -1000,6 +1000,8 @@ export async function markOrderShippedManually(params: {
     const finalTrackingUrl =
       trackingUrl || generateTrackingUrl(carrier, trackingNumber);
 
+    let finalTrackingToken: string | null = null;
+
     await db.transaction(async (tx) => {
       // 1. Find or create fulfillment record
       const existingFulfillments = await tx
@@ -1041,22 +1043,34 @@ export async function markOrderShippedManually(params: {
         });
       }
 
-      // 2. Update master fulfillment status
-      const updatedStatus = await updateOrderFulfillmentStatus(orderId);
-      console.log(
-        `[Manual Shipping] Updated order fulfillment status to: ${updatedStatus}`
-      );
+      // 2. Ensure order status remains "open" (not "completed")
+      // According to idea.md: Status should be "open", Payment Status "paid", Fulfillment Status "fulfilled" or "partial"
+      await tx
+        .update(orders)
+        .set({
+          status: "open", // Keep status as "open" when fulfilled
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, orderId));
 
-      // 3. Generate tracking token if not exists
-      if (!order.trackingToken) {
-        const trackingToken = nanoid(32);
+      // 4. Generate tracking token if not exists
+      const orderWithToken = await tx
+        .select({ trackingToken: orders.trackingToken })
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1);
+
+      if (!orderWithToken[0]?.trackingToken) {
+        finalTrackingToken = nanoid(32);
         await tx
           .update(orders)
-          .set({ trackingToken })
+          .set({ trackingToken: finalTrackingToken })
           .where(eq(orders.id, orderId));
+      } else {
+        finalTrackingToken = orderWithToken[0].trackingToken;
       }
 
-      // 4. Create order event
+      // 5. Create order event
       await tx.insert(orderEvents).values({
         orderId,
         type: "fulfillment",
@@ -1068,65 +1082,73 @@ export async function markOrderShippedManually(params: {
         },
         createdBy: session.user.id,
       });
-
-      // 5. Check if this is first vendor to ship and send email
-      const allFulfillments = await tx
-        .select()
-        .from(fulfillments)
-        .where(eq(fulfillments.orderId, orderId));
-
-      const isFirstVendor = allFulfillments.length === 1;
-
-      if (isFirstVendor && order.trackingToken) {
-        // Send tracking notification email (async)
-        Promise.resolve().then(async () => {
-          try {
-            const resend = (await import("@/lib/resend")).default;
-            const TrackingNotificationEmail = (
-              await import(
-                "@/app/[locale]/components/tracking-notification-email"
-              )
-            ).default;
-
-            const orderInfo = await db
-              .select({
-                customerEmail: orders.customerEmail,
-                customerFirstName: orders.customerFirstName,
-                customerLastName: orders.customerLastName,
-                orderNumber: orders.orderNumber,
-              })
-              .from(orders)
-              .where(eq(orders.id, orderId))
-              .limit(1);
-
-            if (orderInfo.length > 0 && orderInfo[0].customerEmail) {
-              const trackingUrl = `${process.env.NEXT_PUBLIC_APP_URL}/track/${order.trackingToken}`;
-              const customerName =
-                orderInfo[0].customerFirstName && orderInfo[0].customerLastName
-                  ? `${orderInfo[0].customerFirstName} ${orderInfo[0].customerLastName}`
-                  : orderInfo[0].customerEmail || "Customer";
-
-              await resend.emails.send({
-                from:
-                  process.env.RESEND_FROM_EMAIL ||
-                  "Golden Market <goldenmarket@resend.dev>",
-                to: orderInfo[0].customerEmail!,
-                subject: `Your Order #${orderInfo[0].orderNumber} Has Shipped! 📦`,
-                react: TrackingNotificationEmail({
-                  orderNumber: orderInfo[0].orderNumber,
-                  customerName,
-                  trackingUrl,
-                  carrier,
-                  trackingNumber,
-                }),
-              });
-            }
-          } catch (emailError) {
-            console.error("Failed to send tracking email:", emailError);
-          }
-        });
-      }
     });
+
+    // 2. Update master fulfillment status (after transaction commits)
+    // This must be done after the transaction so it can see the fulfillment record
+    await updateOrderFulfillmentStatus(orderId);
+
+    // 6. Check if this is first vendor to ship and send email (after transaction)
+    const allFulfillments = await db
+      .select()
+      .from(fulfillments)
+      .where(eq(fulfillments.orderId, orderId));
+
+    const isFirstVendor = allFulfillments.length === 1;
+
+    if (isFirstVendor && finalTrackingToken) {
+      // Send tracking notification email (async)
+      Promise.resolve().then(async () => {
+        try {
+          const resend = (await import("@/lib/resend")).default;
+          const TrackingNotificationEmail = (
+            await import(
+              "@/app/[locale]/components/tracking-notification-email"
+            )
+          ).default;
+
+          const orderInfo = await db
+            .select({
+              customerEmail: orders.customerEmail,
+              customerFirstName: orders.customerFirstName,
+              customerLastName: orders.customerLastName,
+              orderNumber: orders.orderNumber,
+            })
+            .from(orders)
+            .where(eq(orders.id, orderId))
+            .limit(1);
+
+          if (orderInfo.length > 0 && orderInfo[0].customerEmail) {
+            const trackingUrl = `${process.env.NEXT_PUBLIC_APP_URL}/track/${finalTrackingToken}`;
+            const customerName =
+              orderInfo[0].customerFirstName && orderInfo[0].customerLastName
+                ? `${orderInfo[0].customerFirstName} ${orderInfo[0].customerLastName}`
+                : orderInfo[0].customerEmail || "Customer";
+
+            await resend.emails.send({
+              from:
+                process.env.RESEND_FROM_EMAIL ||
+                "Golden Market <goldenmarket@resend.dev>",
+              to: orderInfo[0].customerEmail!,
+              subject: `Your Order #${orderInfo[0].orderNumber} Has Shipped! 📦`,
+              react: TrackingNotificationEmail({
+                orderNumber: orderInfo[0].orderNumber,
+                customerName,
+                trackingUrl,
+                carrier,
+                trackingNumber,
+              }),
+            });
+
+            console.log(
+              `[Manual Shipping] Tracking email sent to ${orderInfo[0].customerEmail}`
+            );
+          }
+        } catch (emailError) {
+          console.error("Failed to send tracking email:", emailError);
+        }
+      });
+    }
 
     return { success: true };
   } catch (error) {

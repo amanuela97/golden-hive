@@ -69,6 +69,7 @@ export default async function LocaleLayout({
 
   // Validate locale
   if (!hasLocale(routing.locales, locale)) {
+    console.error("Invalid locale:", locale);
     notFound();
   }
 

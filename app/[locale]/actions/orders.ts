@@ -21,6 +21,7 @@ import {
   orderPayments,
   orderRefunds,
   orderRefundItems,
+  refundRequests,
   orderDiscounts,
   discounts,
   type Order,
@@ -71,6 +72,9 @@ export type OrderRow = {
   itemsCount: number;
   shippingMethod: string | null;
   archivedAt: Date | null;
+  refundRequestStatus?: string | null;
+  refundRequestReason?: string | null;
+  storeName?: string | null;
   // Warning flags (derived)
   hasAddressWarning?: boolean;
   hasRiskWarning?: boolean;
@@ -508,6 +512,9 @@ async function canChangeStatus(
 export async function getStoreIdForUser(): Promise<{
   storeId: string | null;
   isAdmin: boolean;
+  isCustomer: boolean;
+  customerId: string | null;
+  allCustomerIds: string[];
   error?: string;
 }> {
   const session = await auth.api.getSession({
@@ -515,7 +522,14 @@ export async function getStoreIdForUser(): Promise<{
   });
 
   if (!session?.user?.id) {
-    return { storeId: null, isAdmin: false, error: "Unauthorized" };
+    return {
+      storeId: null,
+      isAdmin: false,
+      isCustomer: false,
+      customerId: null,
+      allCustomerIds: [],
+      error: "Unauthorized",
+    };
   }
 
   // Check if user is admin
@@ -532,7 +546,34 @@ export async function getStoreIdForUser(): Promise<{
     userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
 
   if (isAdmin) {
-    return { storeId: null, isAdmin: true };
+    return {
+      storeId: null,
+      isAdmin: true,
+      isCustomer: false,
+      customerId: null,
+      allCustomerIds: [],
+    };
+  }
+
+  // Check if user is a customer (has customer record)
+  const customerRecords = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .where(eq(customers.userId, session.user.id));
+
+  const allCustomerIds = customerRecords.map((c) => c.id);
+  const customerId = allCustomerIds.length > 0 ? allCustomerIds[0] : null;
+  const isCustomer = allCustomerIds.length > 0;
+
+  // If customer, return early
+  if (isCustomer) {
+    return {
+      storeId: null,
+      isAdmin: false,
+      isCustomer: true,
+      customerId,
+      allCustomerIds,
+    };
   }
 
   // Get store for current user through storeMembers
@@ -547,11 +588,20 @@ export async function getStoreIdForUser(): Promise<{
     return {
       storeId: null,
       isAdmin: false,
+      isCustomer: false,
+      customerId: null,
+      allCustomerIds: [],
       error: "Store not found. Please set up your store information.",
     };
   }
 
-  return { storeId: storeResult[0].id, isAdmin: false };
+  return {
+    storeId: storeResult[0].id,
+    isAdmin: false,
+    isCustomer: false,
+    customerId: null,
+    allCustomerIds: [],
+  };
 }
 
 /**
@@ -937,7 +987,13 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
   error?: string;
 }> {
   try {
-    const { storeId, isAdmin, error: storeError } = await getStoreIdForUser();
+    const {
+      storeId,
+      isAdmin,
+      isCustomer,
+      allCustomerIds,
+      error: storeError,
+    } = await getStoreIdForUser();
 
     if (storeError) {
       return { success: false, error: storeError };
@@ -947,7 +1003,23 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
     const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof sql>> =
       [];
 
-    if (!isAdmin && storeId) {
+    // Filter orders for customers
+    if (isCustomer && allCustomerIds.length > 0) {
+      conditions.push(inArray(orders.customerId, allCustomerIds));
+    } else if (isCustomer) {
+      // Fallback: filter by email if no customer IDs found
+      const session = await auth.api.getSession({
+        headers: await headers(),
+      });
+      if (session?.user?.email) {
+        conditions.push(eq(orders.customerEmail, session.user.email));
+      } else {
+        // No customer IDs and no email - return empty
+        return { success: true, data: [], totalCount: 0 };
+      }
+    }
+
+    if (!isAdmin && !isCustomer && storeId) {
       // For stores, show orders that have at least one item from their listings
       // This ensures stores see orders with their products, even if order.storeId is set to a different store
       // (e.g., when an admin creates an order with items from multiple stores)
@@ -1055,12 +1127,13 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
       }
       totalCount = uniqueSessions.size;
     } else {
-      // For stores, count distinct orders as before
+      // For stores and customers, count distinct orders
       const countQuery = db
         .selectDistinct({ id: orders.id })
         .from(orders)
         .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
         .leftJoin(listing, eq(orderItems.listingId, listing.id))
+        .leftJoin(store, eq(orders.storeId, store.id))
         .where(
           conditions.length > 0
             ? searchCondition
@@ -1098,10 +1171,10 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
     const offset = (page - 1) * pageSize;
 
     // For stores, we need to count only items from their listings
-    // For admins, count all items
+    // For admins and customers, count all items
     let itemsCountExpression: ReturnType<typeof sql<number>>;
 
-    if (!isAdmin && storeId) {
+    if (!isAdmin && !isCustomer && storeId) {
       // Count only items from this store's listings
       itemsCountExpression = sql<number>`COUNT(CASE WHEN ${listing.storeId} = ${storeId} THEN ${orderItems.id} END)::int`;
     } else {
@@ -1135,12 +1208,23 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
           shippingAddressLine1: orders.shippingAddressLine1,
           shippingCity: orders.shippingCity,
           shippingCountry: orders.shippingCountry,
+          refundRequestStatus: orders.refundRequestStatus,
+          refundRequestReason: refundRequests.rejectionReason,
+          storeName: store.storeName,
           sessionId: orderPayments.stripeCheckoutSessionId,
         })
         .from(orders)
         .leftJoin(orderPayments, eq(orders.id, orderPayments.orderId))
         .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
         .leftJoin(listing, eq(orderItems.listingId, listing.id))
+        .leftJoin(store, eq(orders.storeId, store.id))
+        .leftJoin(
+          refundRequests,
+          and(
+            eq(refundRequests.orderId, orders.id),
+            eq(refundRequests.status, "rejected")
+          )
+        )
         .where(
           conditions.length > 0
             ? searchCondition
@@ -1168,6 +1252,9 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
           orders.shippingAddressLine1,
           orders.shippingCity,
           orders.shippingCountry,
+          orders.refundRequestStatus,
+          refundRequests.rejectionReason,
+          store.storeName,
           orderPayments.stripeCheckoutSessionId
         );
 
@@ -1251,6 +1338,8 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
           paymentStatus: overallPaymentStatus,
           fulfillmentStatus: overallFulfillmentStatus,
           status: overallStatus,
+          storeName: primaryOrder.storeName, // Include storeName from primary order
+          refundRequestReason: primaryOrder.refundRequestReason, // Include rejection reason from primary order
           // Mark as grouped order
           isGrouped: orderGroup.length > 1,
           groupedOrderIds: orderGroup.map((o) => o.id),
@@ -1289,11 +1378,22 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
           shippingAddressLine1: orders.shippingAddressLine1,
           shippingCity: orders.shippingCity,
           shippingCountry: orders.shippingCountry,
+          refundRequestStatus: orders.refundRequestStatus,
+          refundRequestReason: refundRequests.rejectionReason,
+          storeName: store.storeName,
           itemsCount: itemsCountExpression,
         })
         .from(orders)
         .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
         .leftJoin(listing, eq(orderItems.listingId, listing.id))
+        .leftJoin(store, eq(orders.storeId, store.id))
+        .leftJoin(
+          refundRequests,
+          and(
+            eq(refundRequests.orderId, orders.id),
+            eq(refundRequests.status, "rejected")
+          )
+        )
         .where(
           conditions.length > 0
             ? searchCondition
@@ -1320,7 +1420,10 @@ export async function listOrders(filters: OrderFilters = {}): Promise<{
           orders.archivedAt,
           orders.shippingAddressLine1,
           orders.shippingCity,
-          orders.shippingCountry
+          orders.shippingCountry,
+          orders.refundRequestStatus,
+          refundRequests.rejectionReason,
+          store.storeName
         )
         .orderBy(orderBy)
         .limit(pageSize)
@@ -2013,6 +2116,63 @@ export async function updateFulfillmentStatus(
 
     // Wrap in transaction
     await db.transaction(async (tx) => {
+      // Capture payment when fulfillment starts (if payment is still pending)
+      // This minimizes platform loss by capturing only when seller confirms order
+      if (
+        paymentStatus === "pending" &&
+        (newStatus === "partial" || newStatus === "fulfilled")
+      ) {
+        // Get payment intent ID
+        const paymentData = await tx
+          .select({
+            id: orderPayments.id,
+            stripePaymentIntentId: orderPayments.stripePaymentIntentId,
+          })
+          .from(orderPayments)
+          .where(eq(orderPayments.orderId, orderId))
+          .limit(1);
+
+        if (paymentData.length > 0 && paymentData[0].stripePaymentIntentId) {
+          try {
+            const { stripe } = await import("@/lib/stripe");
+            const paymentIntent = await stripe.paymentIntents.retrieve(
+              paymentData[0].stripePaymentIntentId
+            );
+
+            // Only capture if payment is still in requires_capture status
+            if (paymentIntent.status === "requires_capture") {
+              await stripe.paymentIntents.capture(
+                paymentData[0].stripePaymentIntentId
+              );
+              // Update payment status to completed
+              await tx
+                .update(orderPayments)
+                .set({
+                  status: "completed",
+                  updatedAt: new Date(),
+                })
+                .where(eq(orderPayments.id, paymentData[0].id));
+
+              // Update order payment status to paid
+              await tx
+                .update(orders)
+                .set({
+                  paymentStatus: "paid",
+                  paidAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .where(eq(orders.id, orderId));
+            }
+          } catch (captureError) {
+            console.error(
+              "Error capturing payment during fulfillment:",
+              captureError
+            );
+            // Don't fail fulfillment if capture fails - can be retried
+          }
+        }
+      }
+
       // Handle transitions
       if (
         currentFulfillmentStatus === "unfulfilled" &&
@@ -2797,10 +2957,36 @@ export async function getOrderWithItems(orderId: string): Promise<{
             labelFileType: null,
           };
 
+    // Get refund request details if exists (for rejection reason)
+    const refundRequestData = await db
+      .select({
+        id: refundRequests.id,
+        status: refundRequests.status,
+        rejectionReason: refundRequests.rejectionReason,
+        reviewedAt: refundRequests.reviewedAt,
+      })
+      .from(refundRequests)
+      .where(eq(refundRequests.orderId, orderId))
+      .orderBy(desc(refundRequests.createdAt))
+      .limit(1);
+
+    const refundRequestInfo =
+      refundRequestData.length > 0
+        ? {
+            id: refundRequestData[0].id,
+            status: refundRequestData[0].status,
+            rejectionReason: refundRequestData[0].rejectionReason,
+            reviewedAt: refundRequestData[0].reviewedAt,
+          }
+        : null;
+
     return {
       success: true,
       data: {
         ...order,
+        refundRequestedAt: refundRequestInfo?.reviewedAt || null,
+        refundRequestStatus: refundRequestInfo?.status || null,
+        refundRequestReason: refundRequestInfo?.rejectionReason || null,
         items: items.map((item) => {
           const refundedQty = refundedQuantities.get(item.id) || 0;
           const refundableQty = Math.max(0, item.quantity - refundedQty);
@@ -5136,6 +5322,636 @@ export async function processRefund(input: {
     return { success: true };
   } catch (error) {
     console.error("Error processing refund:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to process refund",
+    };
+  }
+}
+
+/**
+ * Capture payment for an order (called when seller confirms order)
+ * This should be called when seller marks order as "processing" or "accepted"
+ */
+export async function captureOrderPayment(orderId: string): Promise<{
+  success: boolean;
+  error?: string;
+  paymentIntentId?: string;
+}> {
+  try {
+    const { storeId, isAdmin } = await getStoreIdForUser();
+
+    // Get order and payment info
+    const orderData = await db
+      .select({
+        id: orders.id,
+        storeId: orders.storeId,
+        paymentStatus: orders.paymentStatus,
+        status: orders.status,
+      })
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1);
+
+    if (orderData.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
+
+    const order = orderData[0];
+
+    // Permission check: seller can only capture their own orders
+    if (!isAdmin && order.storeId !== storeId) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    // Only capture if payment is still pending
+    if (order.paymentStatus !== "pending") {
+      return {
+        success: false,
+        error: `Payment already ${order.paymentStatus}. Cannot capture.`,
+      };
+    }
+
+    // Get payment intent ID from orderPayments
+    const paymentData = await db
+      .select({
+        stripePaymentIntentId: orderPayments.stripePaymentIntentId,
+      })
+      .from(orderPayments)
+      .where(eq(orderPayments.orderId, orderId))
+      .limit(1);
+
+    if (paymentData.length === 0 || !paymentData[0].stripePaymentIntentId) {
+      return { success: false, error: "Payment intent not found" };
+    }
+
+    const paymentIntentId = paymentData[0].stripePaymentIntentId;
+
+    // Capture payment in Stripe
+    const { stripe } = await import("@/lib/stripe");
+    const paymentIntent = await stripe.paymentIntents.capture(paymentIntentId);
+
+    // Update order payment status
+    await updatePaymentStatus(orderId, "paid");
+
+    return {
+      success: true,
+      paymentIntentId: paymentIntent.id,
+    };
+  } catch (error) {
+    console.error("Error capturing payment:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to capture payment",
+    };
+  }
+}
+
+/**
+ * Cancel order (customer-initiated, before fulfillment)
+ *
+ * Rules:
+ * - Only allowed if fulfillmentStatus === "unfulfilled"
+ * - If payment not captured → void payment (no fees)
+ * - If payment captured → refund (Stripe fee applies, platform absorbs)
+ */
+export async function cancelOrderByCustomer(
+  orderId: string,
+  reason?: string
+): Promise<{
+  success: boolean;
+  error?: string;
+  refundMethod?: "void" | "refund";
+}> {
+  try {
+    // Get current user
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session?.user?.id) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    // Get order
+    const orderData = await db
+      .select({
+        id: orders.id,
+        customerId: orders.customerId,
+        customerEmail: orders.customerEmail,
+        storeId: orders.storeId,
+        status: orders.status,
+        paymentStatus: orders.paymentStatus,
+        fulfillmentStatus: orders.fulfillmentStatus,
+        totalAmount: orders.totalAmount,
+        currency: orders.currency,
+      })
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1);
+
+    if (orderData.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
+
+    const order = orderData[0];
+
+    // Permission: Only customers can cancel orders, and only their own orders
+    const { isCustomer, allCustomerIds } = await getStoreIdForUser();
+    if (!isCustomer) {
+      return {
+        success: false,
+        error: "Unauthorized. Only customers can cancel orders.",
+      };
+    }
+
+    // Check if order belongs to any of the user's customer records
+    if (!order.customerId || !allCustomerIds.includes(order.customerId)) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    // Validation: Can only cancel if not fulfilled
+    if (
+      order.fulfillmentStatus !== "unfulfilled" &&
+      order.fulfillmentStatus !== "partial"
+    ) {
+      return {
+        success: false,
+        error:
+          "Order cannot be cancelled. It has already been fulfilled or shipped.",
+      };
+    }
+
+    // Validation: Cannot cancel if already canceled
+    if (order.status === "canceled") {
+      return { success: false, error: "Order is already canceled" };
+    }
+
+    return await db.transaction(async (tx) => {
+      // Get payment info
+      const paymentData = await tx
+        .select({
+          id: orderPayments.id,
+          stripePaymentIntentId: orderPayments.stripePaymentIntentId,
+          amount: orderPayments.amount,
+          status: orderPayments.status,
+        })
+        .from(orderPayments)
+        .where(eq(orderPayments.orderId, orderId))
+        .limit(1);
+
+      let refundMethod: "void" | "refund" = "refund";
+
+      // Handle payment based on capture status
+      if (paymentData.length > 0 && paymentData[0].stripePaymentIntentId) {
+        const paymentIntentId = paymentData[0].stripePaymentIntentId;
+
+        // Check if payment is captured
+        const { stripe } = await import("@/lib/stripe");
+        const paymentIntent =
+          await stripe.paymentIntents.retrieve(paymentIntentId);
+
+        if (paymentIntent.status === "requires_capture") {
+          // ✅ BEST CASE: Payment not captured → void (no fees)
+          await stripe.paymentIntents.cancel(paymentIntentId);
+          refundMethod = "void";
+
+          // Update payment status
+          await tx
+            .update(orderPayments)
+            .set({
+              status: "void",
+              updatedAt: new Date(),
+            })
+            .where(eq(orderPayments.id, paymentData[0].id));
+        } else if (paymentIntent.status === "succeeded") {
+          // Payment captured → must refund (Stripe fee applies)
+          const refund = await stripe.refunds.create({
+            payment_intent: paymentIntentId,
+            amount: Math.round(parseFloat(order.totalAmount) * 100), // Full refund
+            reason: "requested_by_customer",
+            metadata: {
+              orderId: orderId,
+              reason: reason || "Customer cancellation",
+              refundMethod: "cancellation",
+            },
+          });
+
+          // Create refund record
+          await tx.insert(orderRefunds).values({
+            orderId: orderId,
+            orderPaymentId: paymentData[0].id,
+            provider: "stripe",
+            amount: order.totalAmount,
+            reason: reason || "Customer cancellation",
+            stripeRefundId: refund.id,
+            status: refund.status === "succeeded" ? "succeeded" : "pending",
+            feePaidBy: "platform", // Platform absorbs fee for cancellations
+            refundMethod: "refund",
+            metadata: {
+              cancellation: true,
+              requestedBy: session.user.id,
+            },
+            createdBy: session.user.id,
+          });
+
+          // Update payment record
+          await tx
+            .update(orderPayments)
+            .set({
+              refundedAmount: order.totalAmount,
+              status: "refunded",
+              updatedAt: new Date(),
+            })
+            .where(eq(orderPayments.id, paymentData[0].id));
+
+          refundMethod = "refund";
+        }
+      }
+
+      // Update order status
+      await tx
+        .update(orders)
+        .set({
+          status: "canceled",
+          paymentStatus: refundMethod === "void" ? "void" : "refunded",
+          fulfillmentStatus: "canceled",
+          canceledAt: new Date(),
+          cancellationReason: reason || null,
+          cancellationRequestedBy: session.user.id,
+          cancellationRequestedAt: new Date(),
+        })
+        .where(eq(orders.id, orderId));
+
+      // Release inventory (if any was reserved)
+      // TODO: Add inventory release logic here if needed
+
+      return {
+        success: true,
+        refundMethod,
+      };
+    });
+  } catch (error) {
+    console.error("Error canceling order:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to cancel order",
+    };
+  }
+}
+
+/**
+ * Request refund (customer-initiated, after fulfillment)
+ */
+export async function requestRefund(
+  orderId: string,
+  reason: string,
+  description?: string,
+  evidenceImages?: string[]
+): Promise<{
+  success: boolean;
+  error?: string;
+  refundRequestId?: string;
+}> {
+  try {
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (!session?.user?.id) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    // Get order
+    const orderData = await db
+      .select({
+        id: orders.id,
+        customerId: orders.customerId,
+        status: orders.status,
+        paymentStatus: orders.paymentStatus,
+        fulfillmentStatus: orders.fulfillmentStatus,
+        refundRequestStatus: orders.refundRequestStatus,
+      })
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1);
+
+    if (orderData.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
+
+    const order = orderData[0];
+
+    // Permission check: Only customers can request refunds
+    const { isCustomer, allCustomerIds } = await getStoreIdForUser();
+    if (!isCustomer) {
+      return {
+        success: false,
+        error: "Unauthorized. Only customers can request refunds.",
+      };
+    }
+
+    // Check if order belongs to any of the user's customer records
+    if (!order.customerId || !allCustomerIds.includes(order.customerId)) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    // Validation: Can only request refund if order is fulfilled/shipped
+    if (order.fulfillmentStatus === "unfulfilled") {
+      return {
+        success: false,
+        error: "Order not yet fulfilled. Please cancel the order instead.",
+      };
+    }
+
+    // Validation: Cannot request if already requested/approved/rejected
+    if (order.refundRequestStatus && order.refundRequestStatus !== "none") {
+      if (order.refundRequestStatus === "pending") {
+        return {
+          success: false,
+          error: "Refund request already pending",
+        };
+      }
+      return {
+        success: false,
+        error: `Refund request already ${order.refundRequestStatus}`,
+      };
+    }
+
+    // Validation: Must be paid
+    if (
+      order.paymentStatus !== "paid" &&
+      order.paymentStatus !== "partially_refunded"
+    ) {
+      return {
+        success: false,
+        error: "Order payment not completed. Cannot request refund.",
+      };
+    }
+
+    // Create refund request
+    const [refundRequest] = await db
+      .insert(refundRequests)
+      .values({
+        orderId: orderId,
+        customerId: order.customerId,
+        reason: reason,
+        description: description || null,
+        evidenceImages: evidenceImages || [],
+        status: "pending",
+      })
+      .returning();
+
+    // Update order
+    await db
+      .update(orders)
+      .set({
+        refundRequestStatus: "pending",
+        refundRequestedAt: new Date(),
+        refundRequestReason: reason,
+      })
+      .where(eq(orders.id, orderId));
+
+    // TODO: Send notification to seller
+
+    return {
+      success: true,
+      refundRequestId: refundRequest.id,
+    };
+  } catch (error) {
+    console.error("Error requesting refund:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to request refund",
+    };
+  }
+}
+
+/**
+ * Process refund request (seller/admin approval)
+ *
+ * Fee ownership logic:
+ * - Seller fault → seller pays fee
+ * - Customer reason → seller pays fee
+ * - Platform error → platform pays fee
+ */
+export async function processRefundRequest(
+  refundRequestId: string,
+  action: "approve" | "reject",
+  feePaidBy: "platform" | "seller" = "seller",
+  rejectionReason?: string
+): Promise<{
+  success: boolean;
+  error?: string;
+  refundId?: string;
+}> {
+  try {
+    const { storeId, isAdmin } = await getStoreIdForUser();
+
+    // Get refund request
+    const requestData = await db
+      .select({
+        id: refundRequests.id,
+        orderId: refundRequests.orderId,
+        status: refundRequests.status,
+        reason: refundRequests.reason,
+      })
+      .from(refundRequests)
+      .where(eq(refundRequests.id, refundRequestId))
+      .limit(1);
+
+    if (requestData.length === 0) {
+      return { success: false, error: "Refund request not found" };
+    }
+
+    const request = requestData[0];
+
+    if (request.status !== "pending") {
+      return {
+        success: false,
+        error: `Refund request already ${request.status}`,
+      };
+    }
+
+    // Get order
+    const orderData = await db
+      .select({
+        id: orders.id,
+        storeId: orders.storeId,
+        totalAmount: orders.totalAmount,
+        currency: orders.currency,
+        refundedAmount: orders.refundedAmount,
+        paymentStatus: orders.paymentStatus,
+      })
+      .from(orders)
+      .where(eq(orders.id, request.orderId))
+      .limit(1);
+
+    if (orderData.length === 0) {
+      return { success: false, error: "Order not found" };
+    }
+
+    const order = orderData[0];
+
+    // Permission: Seller can only process their own orders, admin can process any
+    if (!isAdmin && order.storeId !== storeId) {
+      return { success: false, error: "Unauthorized" };
+    }
+
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+
+    if (action === "reject") {
+      // Reject refund request
+      await db
+        .update(refundRequests)
+        .set({
+          status: "rejected",
+          reviewedBy: session?.user?.id || null,
+          reviewedAt: new Date(),
+          rejectionReason: rejectionReason || null,
+        })
+        .where(eq(refundRequests.id, refundRequestId));
+
+      await db
+        .update(orders)
+        .set({
+          refundRequestStatus: "rejected",
+        })
+        .where(eq(orders.id, request.orderId));
+
+      return { success: true };
+    }
+
+    // Approve refund
+    return await db.transaction(async (tx) => {
+      // Get payment info
+      const paymentData = await tx
+        .select({
+          id: orderPayments.id,
+          stripePaymentIntentId: orderPayments.stripePaymentIntentId,
+          amount: orderPayments.amount,
+          refundedAmount: orderPayments.refundedAmount,
+        })
+        .from(orderPayments)
+        .where(eq(orderPayments.orderId, request.orderId))
+        .limit(1);
+
+      if (paymentData.length === 0 || !paymentData[0].stripePaymentIntentId) {
+        throw new Error("Payment not found");
+      }
+
+      const payment = paymentData[0];
+      const refundAmount =
+        parseFloat(order.totalAmount) - parseFloat(order.refundedAmount);
+
+      // Process Stripe refund
+      const { stripe } = await import("@/lib/stripe");
+      if (!payment.stripePaymentIntentId) {
+        throw new Error("Payment intent ID not found");
+      }
+      const refund = await stripe.refunds.create({
+        payment_intent: payment.stripePaymentIntentId,
+        amount: Math.round(refundAmount * 100),
+        reason: "requested_by_customer",
+        metadata: {
+          orderId: request.orderId,
+          refundRequestId: refundRequestId,
+          feePaidBy: feePaidBy,
+        },
+      });
+
+      // Calculate Stripe fee (not refunded)
+      // Stripe fee = original payment amount * 0.029 + 0.30 (example, adjust to your rates)
+      const originalAmount = parseFloat(payment.amount);
+      const stripeFee = originalAmount * 0.029 + 0.3; // Adjust based on your Stripe rates
+
+      // Create refund record
+      const [refundRecord] = await tx
+        .insert(orderRefunds)
+        .values({
+          orderId: request.orderId,
+          orderPaymentId: payment.id,
+          provider: "stripe",
+          amount: refundAmount.toFixed(2),
+          reason: request.reason,
+          stripeRefundId: refund.id,
+          status: refund.status === "succeeded" ? "succeeded" : "pending",
+          feePaidBy: feePaidBy,
+          stripeFeeAmount: stripeFee.toFixed(2),
+          refundMethod: "refund",
+          createdBy: session?.user?.id || null,
+        })
+        .returning();
+
+      // Update payment record
+      const newRefundedAmount =
+        parseFloat(payment.refundedAmount) + refundAmount;
+      const newPaymentStatus =
+        newRefundedAmount >= originalAmount ? "refunded" : "partially_refunded";
+
+      await tx
+        .update(orderPayments)
+        .set({
+          refundedAmount: newRefundedAmount.toFixed(2),
+          status: newPaymentStatus,
+          updatedAt: new Date(),
+        })
+        .where(eq(orderPayments.id, payment.id));
+
+      // Update order
+      const newOrderRefundedAmount =
+        parseFloat(order.refundedAmount) + refundAmount;
+      const newOrderPaymentStatus =
+        newOrderRefundedAmount >= parseFloat(order.totalAmount)
+          ? "refunded"
+          : "partially_refunded";
+
+      await tx
+        .update(orders)
+        .set({
+          refundedAmount: newOrderRefundedAmount.toFixed(2),
+          paymentStatus: newOrderPaymentStatus,
+          refundRequestStatus: "approved",
+        })
+        .where(eq(orders.id, request.orderId));
+
+      // Update refund request
+      await tx
+        .update(refundRequests)
+        .set({
+          status: "approved",
+          reviewedBy: session?.user?.id || null,
+          reviewedAt: new Date(),
+        })
+        .where(eq(refundRequests.id, refundRequestId));
+
+      // Update seller balance (deduct if seller pays fee)
+      if (feePaidBy === "seller" && order.storeId) {
+        const { updateSellerBalance } = await import(
+          "@/app/[locale]/actions/seller-balance"
+        );
+        await updateSellerBalance({
+          storeId: order.storeId,
+          type: "stripe_fee", // Use stripe_fee type for refund fees
+          amount: stripeFee, // Amount is always positive, type determines debit
+          currency: order.currency,
+          orderId: request.orderId,
+          description: `Stripe fee for refund: ${request.reason}`,
+        });
+      }
+
+      return {
+        success: true,
+        refundId: refundRecord.id,
+      };
+    });
+  } catch (error) {
+    console.error("Error processing refund request:", error);
     return {
       success: false,
       error:

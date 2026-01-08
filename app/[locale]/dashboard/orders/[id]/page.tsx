@@ -1,10 +1,4 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "@/i18n/navigation";
-import { db } from "@/db";
-import { userRoles, roles, store, storeMembers } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { getLocale } from "next-intl/server";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
 import { getOrderWithItems } from "@/app/[locale]/actions/orders";
 import { DashboardWrapper } from "@/app/[locale]/dashboard/components/shared/DashboardWrapper";
 import OrderDetailsPageClient from "./OrderDetailsPageClient";
@@ -12,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import Link from "next/link";
+import DashboardNotFound from "../../not-found";
 
 interface OrderDetailPageProps {
   params: Promise<{ id: string }>;
@@ -20,47 +15,16 @@ interface OrderDetailPageProps {
 export default async function OrderDetailPage({
   params,
 }: OrderDetailPageProps) {
-  const locale = await getLocale();
-  const session = await auth.api.getSession({
-    headers: await headers(),
+  // Automatically checks route access based on navigation config
+  const { role: roleName, shouldShowNotFound } = await protectDashboardRoute({
+    allowedRoles: ["admin", "seller", "customer"],
+    showNotFound: true,
   });
 
-  if (!session) {
-    redirect({ href: "/login", locale });
-  }
-
-  // Get user's role
-  const userRole = await db
-    .select({
-      roleName: roles.name,
-    })
-    .from(userRoles)
-    .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session?.user.id ?? ""))
-    .limit(1);
-
-  if (userRole.length === 0) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleName = userRole[0].roleName.toLowerCase() as
-    | "admin"
-    | "seller"
-    | "customer";
-
-  // Check if user has store (for sellers) or is admin
-  if (roleName !== "admin") {
-    const storeResult = await db
-      .select({ id: store.id })
-      .from(storeMembers)
-      .innerJoin(store, eq(storeMembers.storeId, store.id))
-      .where(eq(storeMembers.userId, session?.user.id ?? ""))
-      .limit(1);
-
-    if (storeResult.length === 0) {
-      // User doesn't have store setup, but we'll still show the page
-      // They just won't see any orders until they set up a store
-    }
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (shouldShowNotFound) {
+    return <DashboardNotFound />;
   }
 
   const { id } = await params;

@@ -120,6 +120,8 @@ export async function POST(req: NextRequest) {
       }> = [];
 
       let currency = "eur";
+      let totalShippingAmount = 0;
+      let totalTaxAmount = 0;
 
       for (const currentOrderId of orderIdsArray) {
         // Fetch order from database
@@ -230,6 +232,10 @@ export async function POST(req: NextRequest) {
           orderSubtotal + orderShipping + orderTax - orderDiscount;
         const orderTotalCentsFromDB = Math.round(orderTotal * 100);
 
+        // Accumulate shipping and tax for all orders
+        totalShippingAmount += orderShipping;
+        totalTaxAmount += orderTax;
+
         // Use the order total from DB (includes shipping/tax/discount)
         orderTotalCents = orderTotalCentsFromDB;
 
@@ -272,14 +278,43 @@ export async function POST(req: NextRequest) {
         };
       }
 
+      // Add shipping and tax as separate line items if they exist
+      if (totalShippingAmount > 0) {
+        allLineItems.push({
+          quantity: 1,
+          price_data: {
+            currency: currency,
+            unit_amount: Math.round(totalShippingAmount * 100),
+            product_data: {
+              name: "Shipping",
+              description: undefined,
+            },
+          },
+        });
+      }
+      if (totalTaxAmount > 0) {
+        allLineItems.push({
+          quantity: 1,
+          price_data: {
+            currency: currency,
+            unit_amount: Math.round(totalTaxAmount * 100),
+            product_data: {
+              name: "Tax",
+              description: undefined,
+            },
+          },
+        });
+      }
+
       // Create ONE checkout session that collects payment to platform account
       // (No destination charges - we'll transfer manually after payment)
+      // Use manual capture to allow cancellation before capture (no Stripe fees)
       const checkoutSession = await stripe.checkout.sessions.create({
         mode: "payment",
         customer_email: customerEmail || undefined,
         line_items: allLineItems,
-        // No payment_intent_data with transfer_data - payment goes to platform
         payment_intent_data: {
+          capture_method: "manual", // ✅ Manual capture - allows voiding before capture
           metadata: {
             orderIds: JSON.stringify(orderIdsArray),
             storeBreakdown: JSON.stringify(storeBreakdownMetadata),
@@ -638,9 +673,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Calculate platform fee from the actual total (which includes discounts)
-    const platformFeeCents = Math.round(total * 0.05 * 100); // 5% platform fee in cents
-
     // Create Stripe Checkout Session with Connect (Destination Charges)
     // Use discounted unit prices to ensure discounts are correctly applied
     const stripeLineItems = lineItemsData.map((item) => ({
@@ -690,11 +722,13 @@ export async function POST(req: NextRequest) {
 
     // Create checkout session - payment goes to platform account (no destination charges)
     // Funds will be held and managed via ledger system
+    // Use manual capture to allow cancellation before capture (no Stripe fees)
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: customerEmail || undefined,
       line_items: stripeLineItems,
       payment_intent_data: {
+        capture_method: "manual", // ✅ Manual capture - allows voiding before capture
         // No transfer_data or application_fee_amount - payment goes to platform
         metadata: {
           orderId: finalOrderId,

@@ -1,57 +1,13 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "@/i18n/navigation";
-import { db } from "@/db";
-import { userRoles, roles, store, storeMembers } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { getLocale } from "next-intl/server";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
 import { DashboardWrapper } from "../components/shared/DashboardWrapper";
 import OrdersPageClient from "../components/shared/OrdersPageClient";
+import CustomerOrdersPageClient from "./components/CustomerOrdersPageClient";
 import { listOrders } from "@/app/[locale]/actions/orders";
 
 export default async function OrdersPage() {
-  const locale = await getLocale();
-  const session = await auth.api.getSession({
-    headers: await headers(),
+  const { role } = await protectDashboardRoute({
+    allowedRoles: ["admin", "seller", "customer"],
   });
-
-  if (!session) {
-    redirect({ href: "/login", locale });
-  }
-
-  // Get user's role
-  const userRole = await db
-    .select({
-      roleName: roles.name,
-    })
-    .from(userRoles)
-    .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session?.user.id ?? ""))
-    .limit(1);
-
-  if (userRole.length === 0) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleName = userRole[0].roleName.toLowerCase() as
-    | "admin"
-    | "seller"
-    | "customer";
-
-  // Check if user has store (for sellers) or is admin
-  if (roleName !== "admin") {
-    const storeResult = await db
-      .select({ id: store.id })
-      .from(storeMembers)
-      .innerJoin(store, eq(storeMembers.storeId, store.id))
-      .where(eq(storeMembers.userId, session?.user.id ?? ""))
-      .limit(1);
-
-    if (storeResult.length === 0) {
-      // User doesn't have store setup, but we'll still show the page
-      // They just won't see any orders until they set up a store
-    }
-  }
 
   // Fetch initial orders - sorted by latest (date, descending)
   const initialResult = await listOrders({
@@ -63,7 +19,7 @@ export default async function OrdersPage() {
 
   if (!initialResult.success) {
     return (
-      <DashboardWrapper userRole={roleName}>
+      <DashboardWrapper userRole={role}>
         <div className="p-6">
           <div className="text-red-600">
             {initialResult.error || "Failed to load orders"}
@@ -73,8 +29,21 @@ export default async function OrdersPage() {
     );
   }
 
+  // Render customer-specific view for customers
+  if (role === "customer") {
+    return (
+      <DashboardWrapper userRole={role}>
+        <CustomerOrdersPageClient
+          initialData={initialResult.data || []}
+          initialTotalCount={initialResult.totalCount || 0}
+        />
+      </DashboardWrapper>
+    );
+  }
+
+  // Render admin/seller view
   return (
-    <DashboardWrapper userRole={roleName}>
+    <DashboardWrapper userRole={role}>
       <OrdersPageClient
         initialData={initialResult.data || []}
         initialTotalCount={initialResult.totalCount || 0}

@@ -61,7 +61,12 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
       <Sidebar
         userRole={userRole}
         onSettingsClick={() => {
-          router.push("/dashboard/settings/store");
+          // Redirect to appropriate settings section based on role
+          if (userRole === "customer") {
+            router.push("/dashboard/settings/profile");
+          } else {
+            router.push("/dashboard/settings/store");
+          }
         }}
       />
       <main className="pl-56 pt-14">

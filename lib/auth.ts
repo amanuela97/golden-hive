@@ -21,7 +21,9 @@ export const auth = betterAuth({
       enabled: true,
       sendDeleteAccountVerification: async ({ user, url }) => {
         await resend.emails.send({
-          from: "Golden Market <goldenmarket@resend.dev>",
+          from:
+            process.env.RESEND_FROM_EMAIL ||
+            "Golden Market <goldenmarket@resend.dev>",
           to: user.email,
           subject: "Verify Account Deletion",
           html: `Click the link to verify your account deletion: ${url}`,
@@ -75,7 +77,9 @@ export const auth = betterAuth({
     sendResetPassword: async ({ user, token }) => {
       const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL}/reset-password?token=${token}`;
       await resend.emails.send({
-        from: "Golden Market <goldenmarket@resend.dev>",
+        from:
+          process.env.RESEND_FROM_EMAIL ||
+          "Golden Market <goldenmarket@resend.dev>",
         to: user.email,
         subject: "Reset your password",
         react: ResetPasswordEmail({ url: resetUrl }),
@@ -90,13 +94,54 @@ export const auth = betterAuth({
     sendOnSignUp: true, // Automatically sends a verification email at signup
     autoSignInAfterVerification: true, // Automatically signIn the user after verification
     sendVerificationEmail: async ({ user, url }) => {
-      await resend.emails.send({
-        from: "Golden Market <goldenmarket@resend.dev>", // You could add your custom domain
-        to: user.email, // email of the user to want to end
-        subject: "Email Verification", // Main subject of the email
-        html: `Click the link to verify your email: ${url}`, // Content of the email
-        // you could also use "React:" option for sending the email template and there content to user
-      });
+      console.log(
+        `[Auth] Sending verification email to ${user.email} with URL: ${url}`
+      );
+      try {
+        const emailResult = await resend.emails.send({
+          from:
+            process.env.RESEND_FROM_EMAIL ||
+            "Golden Market <goldenmarket@resend.dev>",
+          to: user.email, // email of the user to want to end
+          subject: "Email Verification - Golden Market", // Main subject of the email
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2>Verify Your Email Address</h2>
+              <p>Hello ${user.name || "User"},</p>
+              <p>Please click the link below to verify your email address:</p>
+              <p style="margin: 20px 0;">
+                <a href="${url}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+                  Verify Email Address
+                </a>
+              </p>
+              <p>Or copy and paste this URL into your browser:</p>
+              <p style="word-break: break-all; color: #666;">${url}</p>
+              <p style="color: #999; font-size: 12px; margin-top: 30px;">
+                This link will expire in 24 hours. If you didn't create an account, please ignore this email.
+              </p>
+            </div>
+          `,
+        });
+
+        if (emailResult.error) {
+          console.error(
+            `[Auth] Failed to send verification email to ${user.email}:`,
+            emailResult.error
+          );
+          throw emailResult.error;
+        }
+
+        console.log(
+          `[Auth] Verification email sent successfully to ${user.email}`
+        );
+      } catch (error) {
+        console.error(
+          `[Auth] Error sending verification email to ${user.email}:`,
+          error
+        );
+        // Re-throw to let better-auth handle it
+        throw error;
+      }
     },
   },
   socialProviders: {

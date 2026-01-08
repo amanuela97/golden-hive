@@ -1,12 +1,8 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
+import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
 import { redirect } from "@/i18n/navigation";
-import { db } from "@/db";
-import { userRoles, roles } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { getLocale } from "next-intl/server";
 import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
 import SettingsContent from "../../components/shared/SettingsContent";
+import DashboardNotFound from "../../not-found";
 
 type SettingsSection =
   | "store"
@@ -31,37 +27,26 @@ export default async function SettingsSectionPage({
 }: {
   params: Promise<{ section: string }>;
 }) {
-  const locale = await getLocale();
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
-  if (!session) {
-    redirect({ href: "/login", locale });
-  }
-
-  // Get user's role
-  const userRole = await db
-    .select({
-      roleName: roles.name,
-    })
-    .from(userRoles)
-    .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session?.user.id ?? ""))
-    .limit(1);
-
-  if (userRole.length === 0) {
-    redirect({ href: "/onboarding", locale });
-  }
-
-  const roleName = userRole[0].roleName.toLowerCase() as
-    | "admin"
-    | "seller"
-    | "customer";
-
   const { section } = await params;
 
-  // Validate section
+  // Use protectDashboardRoute to automatically check route access based on navigation config
+  // Explicitly pass the pathname to ensure it's detected correctly
+  const result = await protectDashboardRoute({
+    pathname: `/dashboard/settings/${section}`,
+    showNotFound: true,
+  });
+
+  // Debug logging
+
+  // Render 404 content directly instead of calling notFound()
+  // This ensures proper layout inheritance
+  if (result.shouldShowNotFound) {
+    return <DashboardNotFound />;
+  }
+
+  const { role: roleName, locale } = result;
+
+  // Validate section exists
   const validSections = [
     "users",
     "roles",
@@ -82,27 +67,9 @@ export default async function SettingsSectionPage({
   ];
 
   if (!validSections.includes(section)) {
-    redirect({ href: "/dashboard/settings/store", locale });
-  }
-
-  // Role-based access control
-  const adminOnlySections = [
-    "users",
-    "roles",
-    "permissions",
-    "contents",
-    "translations",
-    "categories",
-    "feedbacks",
-    "communications",
-  ];
-  if (adminOnlySections.includes(section) && roleName !== "admin") {
-    redirect({ href: "/dashboard/settings/store", locale });
-  }
-
-  const sellerOnlySections: string[] = [];
-  if (sellerOnlySections.includes(section) && roleName !== "seller") {
-    redirect({ href: "/dashboard/settings/store", locale });
+    // Invalid section - redirect to appropriate default based on role
+    const defaultSection = roleName === "customer" ? "profile" : "store";
+    redirect({ href: `/dashboard/settings/${defaultSection}`, locale });
   }
 
   return (

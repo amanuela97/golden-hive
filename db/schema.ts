@@ -998,6 +998,19 @@ export const orders = pgTable("orders", {
   shippingService: text("shipping_service"), // Service level (e.g., "Priority", "Express")
   shippingRateId: text("shipping_rate_id"), // EasyPost rate ID (for label purchase)
 
+  // Cancellation fields
+  cancellationRequestedAt: timestamp("cancellation_requested_at"),
+  cancellationReason: text("cancellation_reason"),
+  cancellationRequestedBy: text("cancellation_requested_by").references(
+    () => user.id,
+    { onDelete: "set null" }
+  ),
+
+  // Refund request fields
+  refundRequestedAt: timestamp("refund_requested_at"),
+  refundRequestReason: text("refund_request_reason"),
+  refundRequestStatus: text("refund_request_status").default("none"), // "none" | "pending" | "approved" | "rejected"
+
   // Important timestamps
   placedAt: timestamp("placed_at").defaultNow(), // when the order is placed
   paidAt: timestamp("paid_at"),
@@ -1414,6 +1427,13 @@ export const orderRefunds = pgTable("order_refunds", {
   createdBy: text("created_by").references(() => user.id, {
     onDelete: "set null",
   }),
+  // Fee tracking fields
+  feePaidBy: text("fee_paid_by"), // "platform" | "seller" | "customer"
+  stripeFeeAmount: numeric("stripe_fee_amount", {
+    precision: 10,
+    scale: 2,
+  }), // Stripe fee that was not refunded
+  refundMethod: text("refund_method"), // "void" | "refund" | "manual"
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -1434,6 +1454,33 @@ export const orderRefundItems = pgTable("order_refund_items", {
     .references(() => orderItems.id, { onDelete: "cascade" }),
   quantity: integer("quantity").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ===================================
+// REFUND REQUESTS
+// ===================================
+export const refundRequests = pgTable("refund_requests", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  customerId: uuid("customer_id").references(() => customers.id, {
+    onDelete: "set null",
+  }),
+  reason: text("reason").notNull(),
+  description: text("description"),
+  evidenceImages: text("evidence_images").array(), // URLs to uploaded images
+  status: text("status").default("pending").notNull(), // "pending" | "approved" | "rejected"
+  reviewedBy: text("reviewed_by").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  reviewedAt: timestamp("reviewed_at"),
+  rejectionReason: text("rejection_reason"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
 });
 
 // ===================================
@@ -1999,6 +2046,7 @@ export type OrderItem = InferSelectModel<typeof orderItems>;
 export type OrderPayment = InferSelectModel<typeof orderPayments>;
 export type OrderRefund = InferSelectModel<typeof orderRefunds>;
 export type OrderRefundItem = InferSelectModel<typeof orderRefundItems>;
+export type RefundRequest = InferSelectModel<typeof refundRequests>;
 export type OrderEvent = InferSelectModel<typeof orderEvents>;
 export type OrderShippingRates = InferSelectModel<typeof orderShippingRates>;
 export type ShippingProfile = InferSelectModel<typeof shippingProfiles>;

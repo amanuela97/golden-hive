@@ -5,27 +5,11 @@ import { useRouter, usePathname } from "@/i18n/navigation";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  Users,
-  Shield,
-  Key,
-  Image as ImageIcon,
-  Languages,
-  Tag,
-  MessageSquare,
-  CreditCard,
-  User,
-  Truck,
-  Store,
-  Package,
-} from "lucide-react";
 import SettingsContent from "./SettingsContent";
-
-interface SettingsModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  userRole: "admin" | "seller" | "customer";
-}
+import {
+  settingsSections,
+  type UserRole,
+} from "@/app/[locale]/dashboard/config/navigation";
 
 type SettingsSection =
   | "users"
@@ -44,13 +28,10 @@ type SettingsSection =
   | "shipping-settings"
   | "store";
 
-interface SettingsSectionConfig {
-  id: SettingsSection;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  roles?: ("admin" | "seller" | "customer")[];
-  href?: string; // If href is provided, it's a link instead of inline content
-  component?: React.ReactNode;
+interface SettingsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  userRole: UserRole;
 }
 
 export function SettingsModal({
@@ -113,106 +94,6 @@ export function SettingsModal({
   }, [pathname]);
 
   if (!isOpen) return null;
-
-  const settingsSections: SettingsSectionConfig[] = [
-    // Store (A, S) - for managing store information (moved to first)
-    {
-      id: "store",
-      label: "Store",
-      icon: Store,
-      roles: ["admin", "seller"], // A, S
-    },
-    // Users (A) - with Roles and Permissions as sub-items
-    {
-      id: "users",
-      label: "Users",
-      icon: Users,
-      roles: ["admin"], // A
-    },
-    {
-      id: "roles",
-      label: "Roles",
-      icon: Shield,
-      roles: ["admin"], // A (sub-item of Users)
-    },
-    {
-      id: "permissions",
-      label: "Permissions",
-      icon: Key,
-      roles: ["admin"], // A (sub-item of Users)
-    },
-    // Account & Security (C, S, A)
-    {
-      id: "account",
-      label: "Account & Security",
-      icon: Shield,
-      roles: ["admin", "seller", "customer"], // C, S, A
-    },
-    {
-      id: "profile",
-      label: "Profile",
-      icon: User,
-      roles: ["admin", "seller", "customer"], // C, S, A
-    },
-    // Contents (A)
-    {
-      id: "contents",
-      label: "Contents",
-      icon: ImageIcon,
-      roles: ["admin"], // A
-      href: "/dashboard/content",
-    },
-    // Translations (A) - now renders component
-    {
-      id: "translations",
-      label: "Translations",
-      icon: Languages,
-      roles: ["admin"], // A
-    },
-    // Categories (A) - now renders component
-    {
-      id: "categories",
-      label: "Categories",
-      icon: Tag,
-      roles: ["admin"], // A
-    },
-    // Feedbacks (A) - now renders component
-    {
-      id: "feedbacks",
-      label: "Feedbacks",
-      icon: MessageSquare,
-      roles: ["admin"], // A
-    },
-    // Communications (A)
-    {
-      id: "communications",
-      label: "Communications",
-      icon: MessageSquare,
-      roles: ["admin"], // A
-    },
-    // Payments (A, S)
-    {
-      id: "payments",
-      label: "Payments",
-      icon: CreditCard,
-      roles: ["admin", "seller"], // A, S
-    },
-
-    // Shipping (A, S) - keeping for admin/seller
-    {
-      id: "shipping-billing",
-      label: "Shipping & Billing",
-      icon: Truck,
-      roles: ["admin", "seller"], // A, S
-    },
-    // Shipping Profiles (A, S) - for managing shipping profiles
-    {
-      id: "shipping-settings",
-      label: "Shipping Settings",
-      icon: Package,
-      roles: ["admin", "seller"], // A, S
-    },
-  ];
 
   // Filter sections based on user role
   const visibleSections = settingsSections.filter(
