@@ -8,6 +8,7 @@ import {
   Globe,
   Percent,
   Store,
+  Wallet,
 } from "lucide-react";
 import {
   Users as UsersIcon,
@@ -97,6 +98,16 @@ export const allNavItems: NavItem[] = [
     href: "/dashboard/stores",
     icon: Store,
     roles: ["admin"],
+  },
+  {
+    label: "Finances",
+    href: "/dashboard/finances/payouts",
+    icon: Wallet,
+    children: [
+      { label: "Balance & Payouts", href: "/dashboard/finances/payouts" },
+      { label: "Transaction History", href: "/dashboard/finances/transactions" },
+    ],
+    roles: ["admin", "seller"],
   },
 ];
 

@@ -1,0 +1,19 @@
+name: Process Scheduled Payouts
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # Daily at midnight UTC
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  process-payouts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Process Scheduled Payouts
+        run: |
+          curl -X POST ${{ secrets.APP_URL }}/api/cron/process-scheduled-payouts \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

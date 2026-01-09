@@ -1,7 +1,11 @@
 "use server";
 
 import { db } from "@/db";
-import { sellerBalances, sellerBalanceTransactions } from "@/db/schema";
+import {
+  sellerBalances,
+  sellerBalanceTransactions,
+  sellerPayoutSettings,
+} from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { InferSelectModel } from "drizzle-orm";
@@ -74,18 +78,36 @@ export async function updateSellerBalance(
     let balanceBefore: number;
     let balanceAfter: number;
 
-    if (existingBalance) {
-      balanceBefore = parseFloat(existingBalance.availableBalance);
-      balanceAfter = balanceBefore + amountChange;
+    // Determine if this should go to pending or available balance
+    const isPending = type === "order_payment";
 
-      // Update balance
-      await db
-        .update(sellerBalances)
-        .set({
-          availableBalance: balanceAfter.toFixed(2),
-          updatedAt: new Date(),
-        })
-        .where(eq(sellerBalances.storeId, storeId));
+    if (existingBalance) {
+      const currentAvailable = parseFloat(existingBalance.availableBalance);
+      const currentPending = parseFloat(existingBalance.pendingBalance);
+
+      if (isPending) {
+        // Add to pending balance
+        balanceBefore = currentPending;
+        balanceAfter = currentPending + amountChange;
+        await db
+          .update(sellerBalances)
+          .set({
+            pendingBalance: balanceAfter.toFixed(2),
+            updatedAt: new Date(),
+          })
+          .where(eq(sellerBalances.storeId, storeId));
+      } else {
+        // Add to available balance (or subtract for debits)
+        balanceBefore = currentAvailable;
+        balanceAfter = currentAvailable + amountChange;
+        await db
+          .update(sellerBalances)
+          .set({
+            availableBalance: balanceAfter.toFixed(2),
+            updatedAt: new Date(),
+          })
+          .where(eq(sellerBalances.storeId, storeId));
+      }
     } else {
       // Create new balance record
       balanceBefore = 0;
@@ -93,10 +115,33 @@ export async function updateSellerBalance(
 
       await db.insert(sellerBalances).values({
         storeId,
-        availableBalance: balanceAfter.toFixed(2),
-        pendingBalance: "0",
+        availableBalance: isPending ? "0" : balanceAfter.toFixed(2),
+        pendingBalance: isPending ? balanceAfter.toFixed(2) : "0",
         currency,
       });
+    }
+
+    // Get hold period from settings (default 7 days)
+    const [settings] = await db
+      .select()
+      .from(sellerPayoutSettings)
+      .where(eq(sellerPayoutSettings.storeId, storeId))
+      .limit(1);
+
+    const holdPeriodDays = settings?.holdPeriodDays || 7;
+
+    // Calculate availableAt date (only for credits that need hold period)
+    let availableAt: Date | null = null;
+    let status: "pending" | "available" | "paid" = "available";
+
+    // Only order_payment transactions need hold period
+    if (type === "order_payment") {
+      availableAt = new Date();
+      availableAt.setDate(availableAt.getDate() + holdPeriodDays);
+      status = "pending";
+    } else if (type === "payout") {
+      // Payouts are immediately marked as paid
+      status = "paid";
     }
 
     // Create immutable ledger entry
@@ -111,6 +156,8 @@ export async function updateSellerBalance(
       payoutId,
       balanceBefore: balanceBefore.toFixed(2),
       balanceAfter: balanceAfter.toFixed(2),
+      status,
+      availableAt,
       description,
       metadata,
     });

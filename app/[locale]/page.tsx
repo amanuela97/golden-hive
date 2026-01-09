@@ -8,7 +8,9 @@ import { NewArrivalsSkeleton } from "./components/new-arrivals-skeleton";
 import { TrendingProductsSkeleton } from "./components/trending-products-skeleton";
 import { FeaturedStoresSkeleton } from "./components/featured-stores-skeleton";
 
-export const revalidate = 3600; // ISR: revalidate every hour
+// Mark as dynamic to avoid DYNAMIC_SERVER_USAGE errors
+// The page uses components that may need dynamic data (locale, headers, etc.)
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations();

@@ -1321,3 +1321,31 @@ Add shipping label deduction
 Build payout request system
 Create seller payout dashboard
 Test thoroughly
+
+Admin-side controls (Etsy has these internally)
+
+You should build admin-only tools:
+
+- Override payout delay
+- Manually hold seller funds
+- Force early payout
+- View seller ledger
+- Freeze payouts during disputes
+
+2026-01-09 22:30:50.659 [error] [Error: An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error.] {
+digest: 'DYNAMIC_SERVER_USAGE'
+}
+2026-01-09 22:30:50.661 [error] ⨯ [Error: An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error.] {
+digest: 'DYNAMIC_SERVER_USAGE',
+page: '/en'
+}
+2026-01-09 22:30:50.662 [error] ⨯ Error: Failed to load static file for page: /500 ENOENT: no such file or directory, open '/var/task/.next/server/pages/500.html'
+at async Object.handler (\_\_\_next_launcher.cjs:57:3)
+2026-01-09 22:30:50.662 [error] [Error: An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error.] {
+digest: 'DYNAMIC_SERVER_USAGE',
+page: '/en'
+}
+2026-01-09 22:30:50.663 [error] [Error: An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error.] {
+digest: 'DYNAMIC_SERVER_USAGE',
+page: '/en'
+}

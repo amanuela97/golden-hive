@@ -1,14 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import {
-  sellerPayouts,
-  sellerBalances,
-  payoutStatusEnum,
-} from "@/db/schema";
-import type { InferSelectModel } from "drizzle-orm";
-
-type PayoutStatus = InferSelectModel<typeof sellerPayouts>["status"];
+import { sellerPayouts, sellerBalances, store } from "@/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
@@ -108,10 +101,7 @@ export async function processPayout(
       .select()
       .from(sellerPayouts)
       .where(
-        and(
-          eq(sellerPayouts.id, payoutId),
-          eq(sellerPayouts.status, "pending")
-        )
+        and(eq(sellerPayouts.id, payoutId), eq(sellerPayouts.status, "pending"))
       )
       .limit(1);
 
@@ -120,15 +110,11 @@ export async function processPayout(
     }
 
     // Get store's Stripe account ID
-    const [store] = await db
+    const [storeData] = await db
       .select()
-      .from(sellerBalances)
-      .where(eq(sellerBalances.storeId, payout.storeId))
+      .from(store)
+      .where(eq(store.id, payout.storeId))
       .limit(1);
-
-    // TODO: Get Stripe account ID from store settings
-    // For now, we'll need to add a stripeAccountId field to the store table
-    // const stripeAccountId = store.stripeAccountId;
 
     // Update payout status to processing
     await db
@@ -140,16 +126,27 @@ export async function processPayout(
       .where(eq(sellerPayouts.id, payoutId));
 
     // Create Stripe transfer
-    // Note: This requires the store to have a connected Stripe account
-    // const transfer = await stripe.transfers.create({
-    //   amount: Math.round(parseFloat(payout.amount) * 100), // Convert to cents
-    //   currency: payout.currency.toLowerCase(),
-    //   destination: stripeAccountId,
-    // });
-
-    // For now, we'll simulate the transfer
-    // In production, uncomment the above and use the actual transfer ID
-    const transferId = `tr_sim_${Date.now()}`;
+    let transferId: string;
+    if (storeData?.stripeAccountId) {
+      try {
+        const transfer = await stripe.transfers.create({
+          amount: Math.round(parseFloat(payout.amount) * 100), // Convert to cents
+          currency: payout.currency.toLowerCase(),
+          destination: storeData.stripeAccountId,
+        });
+        transferId = transfer.id;
+      } catch (error) {
+        console.error("Error creating Stripe transfer:", error);
+        throw new Error(
+          `Failed to create Stripe transfer: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`
+        );
+      }
+    } else {
+      // Fallback for testing (remove in production)
+      transferId = `tr_sim_${Date.now()}`;
+    }
 
     // Update payout with transfer ID
     await db
@@ -205,6 +202,53 @@ export async function processPayout(
 }
 
 /**
+ * Process payout by store ID (for cron jobs)
+ */
+export async function processPayoutByStoreId(params: {
+  storeId: string;
+  amount: number;
+  currency: string;
+}): Promise<{
+  success: boolean;
+  error?: string;
+  payoutId?: string;
+  transferId?: string;
+}> {
+  try {
+    // Create payout request
+    const [payout] = await db
+      .insert(sellerPayouts)
+      .values({
+        storeId: params.storeId,
+        amount: params.amount.toFixed(2),
+        currency: params.currency,
+        status: "pending",
+        requestedBy: null, // System-initiated
+      })
+      .returning();
+
+    // Process the payout
+    const result = await processPayout(payout.id);
+
+    if (result.success) {
+      return {
+        success: true,
+        payoutId: payout.id,
+        transferId: result.transferId,
+      };
+    }
+
+    return { success: false, error: result.error };
+  } catch (error) {
+    console.error("Error processing payout by store ID:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+/**
  * Get payout history for a store
  */
 export async function getPayouts(storeId: string) {
@@ -238,4 +282,3 @@ export async function getPayouts(storeId: string) {
     };
   }
 }
-

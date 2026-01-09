@@ -1,434 +1,759 @@
-Creating a testing flow guide for cancellation and refund logic. Reviewing the implementation to ensure accuracy:
+You’re essentially building a **Stripe Connect–based escrow + ledger system**. The key to doing this cleanly (and safely) is to **separate money movement from accounting** and to **treat Stripe as the source of truth for cash, and your DB as the source of truth for balances**.
 
-[4 tools called]
-
-Testing flow guide for cancellation and refund logic:
-
-## Testing flow guide: cancellation and refund logic
-
-### Prerequisites
-
-1. Test accounts:
-   - Customer account (logged in)
-   - Seller account (has a store)
-   - Admin account (optional)
-
-2. Stripe test mode:
-   - Use Stripe test cards
-   - Monitor Stripe Dashboard → Payments
-
-3. Database access:
-   - Access to verify order statuses, refund records, etc.
+Below is a **battle-tested architecture** used by marketplaces like Etsy, Shopify, and Uber (simplified but solid).
 
 ---
 
-## Test flow 1: Customer cancellation (before capture — void payment)
+# 1. High-level payout architecture
 
-Goal: Cancel before seller captures payment → void payment (no Stripe fees).
+### Stripe accounts
 
-### Steps
+You should have:
 
-1. Create an order as a customer:
-   - Add items to cart
-   - Complete checkout
-   - Note the order number
+1. **Platform Stripe account**
+   - Collects all customer payments
+   - Holds funds temporarily
+   - Charges platform fees
+   - Pays Stripe fees
+   - Executes payouts
 
-2. Verify initial state:
-   - Go to `/dashboard/orders` (customer view)
-   - Find the order
-   - Expected:
-     - Status: `open`
-     - Payment Status: `pending`
-     - Fulfillment Status: `unfulfilled`
-     - "Cancel Order" button visible
+2. **Connected Stripe accounts (Sellers + Admin store)**
+   - Receive payouts
+   - Never directly charge customers
+   - Do not immediately receive funds
 
-3. Cancel the order:
-   - Click "Cancel Order"
-   - Select reason (e.g., "Changed my mind")
-   - Confirm cancellation
+This implies:
 
-4. Verify cancellation:
-   - Order status: `canceled`
-   - Payment status: `void`
-   - Fulfillment status: `canceled`
-   - "Cancel Order" button hidden
-
-5. Stripe verification:
-   - Stripe Dashboard → Payments
-   - Find the Payment Intent
-   - Status: `canceled`
-   - No refund created (voided, not refunded)
-
-6. Database verification:
-
-   ```sql
-   -- Check order
-   SELECT status, payment_status, fulfillment_status,
-          cancellation_reason, cancellation_requested_at
-   FROM orders
-   WHERE order_number = '<ORDER_NUMBER>';
-
-   -- Check payment
-   SELECT status, refunded_amount
-   FROM order_payments
-   WHERE order_id = '<ORDER_ID>';
-
-   -- Should be NO refund record
-   SELECT * FROM order_refunds WHERE order_id = '<ORDER_ID>';
-   ```
-
-Expected result: Payment voided, no Stripe fees, order canceled.
+➡️ **Destination charges with delayed transfers**
+or
+➡️ **Separate charges and transfers (recommended)**
 
 ---
 
-## Test flow 2: Customer cancellation (after capture — refund)
+# 2. Recommended Stripe flow (IMPORTANT)
 
-Goal: Cancel after seller captures payment → full refund (Stripe fee applies, platform absorbs).
+### Use **Separate Charges and Transfers**
 
-### Steps
+Why?
 
-1. Create an order as a customer:
-   - Complete checkout
-   - Note the order number
+- Allows partial refunds
+- Allows delayed payouts
+- Allows fee adjustments
+- Clean accounting
+- Matches your “store now, pay later” requirement
 
-2. Capture payment as seller:
-   - Log in as seller
-   - Go to `/dashboard/orders`
-   - Find the order
-   - Mark as "Processing" or "Accepted" (triggers `captureOrderPayment`)
-   - Or manually call the capture function
+### Payment flow
 
-3. Verify payment captured:
-   - Order payment status: `paid`
-   - Stripe Dashboard: Payment Intent status: `succeeded`
+1. Customer pays
+2. Money goes **only** to platform balance
+3. You record ledger entries
+4. Later, you transfer funds to sellers
 
-4. Cancel as customer:
-   - Log in as customer
-   - Go to `/dashboard/orders`
-   - Find the order
-   - Click "Cancel Order"
-   - Select reason and confirm
-
-5. Verify refund:
-   - Order status: `canceled`
-   - Payment status: `refunded`
-   - Fulfillment status: `canceled`
-
-6. Stripe verification:
-   - Stripe Dashboard → Payments
-   - Find the Payment Intent
-   - Status: `succeeded`
-   - Refunds section: Full refund created
-   - Note: Stripe fee not returned (platform absorbs)
-
-7. Database verification:
-
-   ```sql
-   -- Check refund record
-   SELECT amount, status, fee_paid_by, refund_method, reason
-   FROM order_refunds
-   WHERE order_id = '<ORDER_ID>';
-
-   -- Should show:
-   -- fee_paid_by: 'platform'
-   -- refund_method: 'refund'
-   ```
-
-Expected result: Full refund issued, Stripe fee absorbed by platform, order canceled.
-
----
-
-## Test flow 3: Customer refund request (after fulfillment)
-
-Goal: Request refund after order is fulfilled/shipped.
-
-### Steps
-
-1. Create and fulfill an order:
-   - Customer places order
-   - Seller captures payment
-   - Seller marks order as "Fulfilled" or "Shipped"
-
-2. Verify order state:
-   - Status: `open`
-   - Payment Status: `paid`
-   - Fulfillment Status: `fulfilled` or `partial`
-   - "Request Refund" button visible
-
-3. Request refund:
-   - Customer clicks "Request Refund"
-   - Fill form:
-     - Reason: e.g., "Damaged item", "Changed mind"
-     - Description (optional)
-     - Evidence images (optional)
-   - Submit
-
-4. Verify request created:
-   - Order `refundRequestStatus`: `pending`
-   - "Request Refund" button hidden
-   - Success message shown
-
-5. Database verification:
-
-   ```sql
-   -- Check refund request
-   SELECT reason, description, status, evidence_images
-   FROM refund_requests
-   WHERE order_id = '<ORDER_ID>';
-
-   -- Check order
-   SELECT refund_request_status, refund_requested_at, refund_request_reason
-   FROM orders
-   WHERE id = '<ORDER_ID>';
-   ```
-
-Expected result: Refund request created with status `pending`, order updated.
-
----
-
-## Test flow 4: Seller review and approve refund
-
-Goal: Seller approves refund request → processes refund.
-
-### Steps
-
-1. View refund requests:
-   - Log in as seller
-   - Go to `/dashboard/orders/refund-requests`
-   - Find the pending request
-
-2. Review request:
-   - Click "Review"
-   - Verify customer info, reason, amount
-
-3. Approve refund:
-   - Action: "Approve Refund"
-   - Fee Paid By: "Seller" or "Platform"
-   - Click "Approve & Process Refund"
-
-4. Verify processing:
-   - Success message
-   - Request status: `approved`
-   - Order `refundRequestStatus`: `approved`
-
-5. Stripe verification:
-   - Stripe Dashboard → Payments
-   - Refund created
-   - Amount matches order total (minus any previous refunds)
-
-6. Database verification:
-
-   ```sql
-   -- Check refund request
-   SELECT status, reviewed_by, reviewed_at
-   FROM refund_requests
-   WHERE id = '<REFUND_REQUEST_ID>';
-
-   -- Check refund record
-   SELECT amount, fee_paid_by, stripe_fee_amount, status
-   FROM order_refunds
-   WHERE order_id = '<ORDER_ID>';
-
-   -- Check order
-   SELECT refund_request_status, refunded_amount, payment_status
-   FROM orders
-   WHERE id = '<ORDER_ID>';
-   ```
-
-Expected result: Refund processed, fee ownership recorded, order updated.
-
----
-
-## Test flow 5: Seller review and reject refund
-
-Goal: Seller rejects refund request with reason.
-
-### Steps
-
-1. View refund requests:
-   - Seller goes to `/dashboard/orders/refund-requests`
-   - Find pending request
-
-2. Reject request:
-   - Click "Review"
-   - Action: "Reject Request"
-   - Rejection reason: e.g., "Item was used" or "Outside return window"
-   - Click "Reject Request"
-
-3. Verify rejection:
-   - Success message
-   - Request status: `rejected`
-   - Order `refundRequestStatus`: `rejected`
-
-4. Customer view:
-   - Customer sees order
-   - "Request Refund" button hidden (already requested)
-   - Rejection reason visible (if implemented)
-
-5. Database verification:
-
-   ```sql
-   -- Check refund request
-   SELECT status, rejection_reason, reviewed_by, reviewed_at
-   FROM refund_requests
-   WHERE id = '<REFUND_REQUEST_ID>';
-
-   -- Should be NO refund record
-   SELECT * FROM order_refunds WHERE order_id = '<ORDER_ID>';
-   ```
-
-Expected result: Request rejected, no refund processed, reason recorded.
-
----
-
-## Edge cases and validation tests
-
-### Test 6: Cancel already canceled order
-
-Steps:
-
-1. Try to cancel an order that is already `canceled`
-2. Expected: Error message "Order is already canceled"
-
-### Test 7: Cancel fulfilled order
-
-Steps:
-
-1. Try to cancel an order with `fulfillmentStatus: "fulfilled"`
-2. Expected: Error "Order cannot be cancelled. It has already been fulfilled or shipped."
-3. Should suggest using "Request Refund" instead
-
-### Test 8: Request refund for unfulfilled order
-
-Steps:
-
-1. Try to request refund for order with `fulfillmentStatus: "unfulfilled"`
-2. Expected: Error "Order not yet fulfilled. Please cancel the order instead."
-
-### Test 9: Request refund for unpaid order
-
-Steps:
-
-1. Try to request refund for order with `paymentStatus: "pending"`
-2. Expected: Error "Order payment not completed. Cannot request refund."
-
-### Test 10: Duplicate refund request
-
-Steps:
-
-1. Request refund (status becomes `pending`)
-2. Try to request refund again
-3. Expected: Error "Refund request already pending"
-
-### Test 11: Customer cancels another customer's order
-
-Steps:
-
-1. Customer A creates order
-2. Customer B tries to cancel Customer A's order
-3. Expected: Error "Unauthorized"
-
-### Test 12: Seller processes refund for another seller's order
-
-Steps:
-
-1. Seller A has an order
-2. Seller B tries to approve refund for Seller A's order
-3. Expected: Error "Unauthorized" (unless admin)
-
----
-
-## Database verification checklist
-
-After each test, verify:
-
-```sql
--- 1. Order status
-SELECT
-  id, order_number, status, payment_status, fulfillment_status,
-  cancellation_reason, cancellation_requested_at,
-  refund_request_status, refund_requested_at, refunded_amount
-FROM orders
-WHERE order_number = '<ORDER_NUMBER>';
-
--- 2. Payment records
-SELECT
-  id, status, amount, refunded_amount, stripe_payment_intent_id
-FROM order_payments
-WHERE order_id = '<ORDER_ID>';
-
--- 3. Refund records (if any)
-SELECT
-  id, amount, status, fee_paid_by, stripe_fee_amount,
-  refund_method, reason, stripe_refund_id
-FROM order_refunds
-WHERE order_id = '<ORDER_ID>';
-
--- 4. Refund requests (if any)
-SELECT
-  id, reason, description, status, reviewed_by, reviewed_at,
-  rejection_reason, evidence_images
-FROM refund_requests
-WHERE order_id = '<ORDER_ID>';
+```txt
+Customer → Platform Stripe balance
+Platform Stripe → Seller Stripe (later)
 ```
 
 ---
 
-## Stripe dashboard verification
+# 3. Core concept: Internal Ledger (non-negotiable)
 
-For each test involving payments:
+Stripe **cannot** track your internal business rules.
+You must maintain a **ledger table**.
 
-1. Stripe Dashboard → Payments:
-   - Payment Intent status
-   - Refunds section (if applicable)
-   - Amounts match
+### Ledger entry example
 
-2. Stripe Dashboard → Events:
-   - `payment_intent.canceled` (for void)
-   - `charge.refunded` (for refunds)
-   - Metadata includes `orderId`
+```ts
+LedgerEntry {
+  id
+  sellerId
+  orderId
+  type:
+    | sale
+    | platform_fee
+    | stripe_fee
+    | shipping_label
+    | refund
+    | adjustment
+    | payout
+  amount: number (signed)
+  currency
+  status: pending | available | paid
+  stripeReferenceId
+  createdAt
+}
+```
 
-3. Fee verification:
-   - Void: No fee charged
-   - Refund: Original fee not returned (check transaction details)
-
----
-
-## Success criteria summary
-
-| Test                  | Expected Outcome                                  |
-| --------------------- | ------------------------------------------------- |
-| Cancel before capture | Payment voided, no fees, order canceled           |
-| Cancel after capture  | Full refund, platform absorbs fee, order canceled |
-| Request refund        | Refund request created, status `pending`          |
-| Approve refund        | Refund processed, fee ownership recorded          |
-| Reject refund         | Request rejected, no refund, reason saved         |
-| Validation errors     | Appropriate error messages shown                  |
-| Authorization         | Unauthorized users blocked                        |
-
----
-
-## Quick test script
-
-Run this sequence for a full flow:
-
-1. Customer places order → Order created, payment `pending`
-2. Customer cancels → Payment voided, no fees
-3. Customer places new order → Order created
-4. Seller captures payment → Payment `paid`
-5. Seller fulfills order → Fulfillment `fulfilled`
-6. Customer requests refund → Request `pending`
-7. Seller approves refund → Refund processed, fee recorded
-
-This covers the main cancellation and refund paths.
+➡️ **Never calculate balances from orders directly**
+➡️ **Always calculate balances from ledger entries**
 
 ---
 
-## Troubleshooting
+# 4. Order-level calculations
 
-- Payment not voiding: Check Payment Intent status is `requires_capture`
-- Refund not processing: Verify Payment Intent status is `succeeded`
-- Authorization errors: Check user role and order ownership
-- Database inconsistencies: Verify transactions are atomic
+### Per order (per seller)
 
-Use this guide to test the cancellation and refund logic end-to-end.
+```txt
+Product subtotal
++ Shipping cost
+- Discount
+----------------
+= Gross order amount
+```
+
+### Fees
+
+```txt
+Platform fee (percentage or fixed)
+Stripe fee (from webhook)
+Shipping label cost (optional)
+Refund adjustments (optional)
+```
+
+### Net seller earnings
+
+```txt
+Seller gross
+- platform fee
+- stripe fee (if you pass it to seller)
+- shipping label cost
+- refunds
+----------------
+= Seller net earnings
+```
+
+➡️ This number is **ledger-based**, not Stripe-based.
+
+---
+
+# 5. Stripe fees & refunds handling (critical)
+
+### Stripe fees
+
+- Stripe fees are deducted **only when payment is captured**
+- For refunds:
+  - Stripe may **partially return** fees
+  - Webhooks tell you exact refunded fee amount
+
+👉 **Never estimate Stripe fees**
+👉 Always listen to:
+
+- `charge.succeeded`
+- `balance.transaction.created`
+- `charge.refunded`
+
+### Ledger approach
+
+- Add Stripe fee as **negative ledger entry**
+- If refunded, add **positive adjustment entry**
+
+---
+
+# 6. When should seller funds become “available”?
+
+### Recommended holding periods
+
+| Scenario           | Availability                |
+| ------------------ | --------------------------- |
+| Card payment       | After capture               |
+| Refund window      | After X days (7–14 typical) |
+| Shipping confirmed | Optional condition          |
+| High-risk sellers  | Longer delay                |
+
+### Example rule
+
+```txt
+available_at = max(
+  payment_captured_at + 7 days,
+  order_shipped_at
+)
+```
+
+This protects you from:
+
+- Chargebacks
+- Refund abuse
+- Shipping fraud
+
+---
+
+# 7. Payout execution logic
+
+### Payout eligibility check
+
+Seller can request payout if:
+
+- Available balance ≥ minimum payout (e.g. €20)
+- No open disputes
+- Stripe account fully verified
+- No pending refunds
+
+### Payout execution
+
+1. Calculate seller available balance
+2. Create Stripe transfer
+3. Create Stripe payout (optional auto)
+4. Add `payout` ledger entry
+5. Mark entries as paid
+
+```ts
+stripe.transfers.create({
+  amount,
+  currency,
+  destination: sellerStripeAccountId,
+});
+```
+
+---
+
+# 8. What to show in the Seller Payout UI
+
+### Balance summary (VERY IMPORTANT)
+
+```txt
+Available balance
+Pending balance
+On-hold balance
+Lifetime earnings
+Lifetime payouts
+```
+
+### Breakdown per order
+
+- Order ID
+- Sale amount
+- Platform fee
+- Stripe fee
+- Shipping cost
+- Net earnings
+- Status (Pending / Available / Paid)
+
+### Payout history
+
+- Payout ID
+- Date
+- Amount
+- Status
+- Stripe reference
+- Download CSV
+
+### Upcoming payouts
+
+- Estimated payout date
+- Estimated amount
+
+---
+
+# 9. Admin payout dashboard (you need this)
+
+Admins should see:
+
+- Platform revenue
+- Stripe fees paid
+- Seller liabilities (money owed)
+- Float balance (money you’re holding)
+- Refund exposure
+- Chargeback exposure
+
+⚠️ This is **legally important**.
+
+---
+
+# 10. Refund logic (critical)
+
+### Refund scenarios
+
+| Scenario       | Effect                    |
+| -------------- | ------------------------- |
+| Before capture | No Stripe fee             |
+| After capture  | Stripe fee partially lost |
+| After payout   | Negative seller balance   |
+
+### Negative balances
+
+If seller already paid:
+
+- Carry negative balance forward
+- Deduct from next payout
+- Or charge seller’s payment method (advanced)
+
+---
+
+# 11. Shipping label accounting
+
+Shipping label purchase:
+
+- Platform pays carrier
+- Create negative ledger entry for seller
+- Deduct from payout
+
+Optional:
+
+- Add shipping markup → platform revenue
+
+---
+
+# 12. Webhooks you MUST handle
+
+```txt
+payment_intent.succeeded
+charge.succeeded
+charge.refunded
+balance.transaction.created
+transfer.created
+payout.paid
+dispute.created
+dispute.closed
+```
+
+Your DB must reconcile with Stripe events.
+
+---
+
+# 13. Legal & compliance considerations
+
+You **must** consider:
+
+- VAT on platform fees (EU)
+- VAT on shipping markup
+- KYC requirements (Stripe handles but you must enforce)
+- Terms clearly stating payout timing
+- Refund & dispute responsibility clarity
+
+---
+
+# 14. Common mistakes to avoid
+
+❌ Paying sellers immediately
+❌ Calculating balances from orders
+❌ Estimating Stripe fees
+❌ No ledger system
+❌ No negative balance handling
+❌ No webhook reconciliation
+
+---
+
+# 15. Recommended payout cadence
+
+| Seller type     | Payout  |
+| --------------- | ------- |
+| New sellers     | Weekly  |
+| Trusted sellers | Daily   |
+| Admin store     | Instant |
+
+---
+
+Below I’ll **refine the payout system design** specifically to match the Etsy-style behavior you want, and I’ll be very concrete about **states, calculations, timing, and UI**.
+
+---
+
+## 1. Core balance states (Etsy-style)
+
+You should explicitly model **three balances** per seller:
+
+### 1️⃣ Pending balance
+
+Money from sales that:
+
+- Is paid by customer
+- Is captured by Stripe
+- **Is still in hold period**
+
+**Not withdrawable**
+
+---
+
+### 2️⃣ Available for payout
+
+Money that:
+
+- Passed hold period
+- Has no open disputes/refund risk
+- Can be withdrawn or scheduled
+
+**Withdrawable**
+
+---
+
+### 3️⃣ Paid out
+
+Money that:
+
+- Has already been transferred to seller
+
+---
+
+### Balance formula (important)
+
+```txt
+Pending = Σ ledger entries where status = pending
+Available = Σ ledger entries where status = available
+Paid = Σ ledger entries where status = paid
+```
+
+Never compute balances from orders directly.
+
+---
+
+## 2. Hold period logic (new vs established sellers)
+
+### Seller trust tiers
+
+You’ll want to classify sellers dynamically:
+
+| Seller age | Hold period |
+| ---------- | ----------- |
+| 0–30 days  | 20 days     |
+| 31–90 days | 7–10 days   |
+| 90+ days   | 3 days      |
+| Trusted    | 0–1 days    |
+
+You can store this as:
+
+```ts
+Seller {
+  id
+  createdAt
+  trustLevel: "new" | "standard" | "trusted"
+  payoutDelayDays
+}
+```
+
+### How hold period is applied
+
+When a sale occurs:
+
+```txt
+sale_date + payoutDelayDays = available_at
+```
+
+Until `available_at`, funds stay **Pending**.
+
+---
+
+## 3. Ledger entry lifecycle (VERY IMPORTANT)
+
+### On successful charge
+
+Create ledger entries like:
+
+```txt
++ Sale amount (pending)
+- Platform fee (pending)
+- Stripe fee (pending)
+- Shipping label cost (pending, if any)
+```
+
+Each entry includes:
+
+```ts
+{
+  sellerId,
+  amount,
+  type,
+  status: "pending",
+  availableAt
+}
+```
+
+---
+
+### Background job / cron (daily or hourly)
+
+```ts
+if (now >= availableAt && no_dispute && no_refund) {
+  status = "available";
+}
+```
+
+This is how Etsy moves funds automatically.
+
+---
+
+## 4. Refunds during hold period (Etsy behavior)
+
+### If refund happens while funds are pending
+
+- Cancel the pending ledger entries
+- No payout impact
+- Stripe fee often avoided
+
+This is why Etsy holds funds early.
+
+---
+
+### Refund after funds become available but before payout
+
+- Convert available balance back to zero
+- Create refund ledger entry
+- Seller never receives the money
+
+---
+
+### Refund after payout
+
+- Create **negative available balance**
+- Deduct from next payout
+- Etsy does this too
+
+---
+
+## 5. Stripe fees handling (Etsy-aligned)
+
+Stripe fees should be:
+
+- Recorded **after capture**
+- Adjusted via webhook
+- Refunded partially when applicable
+
+Ledger entries:
+
+```txt
+Stripe fee → pending → available → paid
+Stripe fee refund → adjustment entry
+```
+
+Never estimate.
+
+---
+
+## 6. Seller payout configuration (manual + scheduled)
+
+### Seller payout settings
+
+```ts
+PayoutSettings {
+  sellerId
+  method: "manual" | "automatic"
+  schedule: "weekly" | "biweekly" | "monthly"
+  minimumAmount
+  payoutDayOfWeek?
+  payoutDayOfMonth?
+}
+```
+
+---
+
+### Manual payout (Etsy-style button)
+
+**Button enabled when:**
+
+- Available balance ≥ minimum
+- Stripe account verified
+- No payout hold
+
+Clicking:
+
+1. Lock balance
+2. Create Stripe transfer
+3. Create payout ledger entry
+4. Mark entries as paid
+
+---
+
+### Scheduled payouts
+
+Cron job runs daily:
+
+```txt
+If today matches seller schedule AND available balance ≥ minimum
+→ execute payout
+```
+
+---
+
+## 7. What the Seller UI should show (Etsy-style)
+
+````
+
+Tooltip explanations (important).
+
+---
+
+### “Available for deposit” section
+
+- Big CTA: **Request payout**
+- Show next automatic payout date
+- Show minimum payout threshold
+
+---
+
+Here’s how your **Seller Payout Page UI & logic** can be designed:
+
+---
+
+## 8. **Top-level balance summary**
+
+**Shows the current net balance** (your ledger-based balance calculation):
+
+```txt
+Current Balance: €1,200.50
+Available for Deposit: €950.30
+Pending (on hold): €250.20
+Amount Due: €120.00 (due by 15th Jan)
+````
+
+**Explanation of fields:**
+
+- **Current Balance:** Net of all ledger entries (Available + Pending - Amount Due).
+- **Available for Deposit:** Funds that can be withdrawn immediately (passed hold period, no disputes).
+- **Pending (on hold):** Funds still in hold period or under review.
+- **Amount Due:** Costs that the seller owes the platform (e.g., negative ledger balances from shipping labels, platform fees exceeding sales, etc.). Can be highlighted in red if >0.
+
+**Logic for Amount Due:**
+
+```ts
+amountDue = SUM(ledger entries where type = fee/negative adjustment AND balance < 0)
+```
+
+- Due date can be set (e.g., 7 days after entry creation) and stored per ledger entry.
+
+---
+
+## 9. **Recent Activity Feed**
+
+Instead of a “Sales Activity Table”, have **all events in a single timeline**, latest first.
+
+### Columns / Fields:
+
+| Date   | Type     | Description         | Amount  | Fee   | Tax   | Balance |
+| ------ | -------- | ------------------- | ------- | ----- | ----- | ------- |
+| 09 Jan | Sale     | Order #123          | €50.00  | €8.00 | €0.00 | €950.30 |
+| 08 Jan | Fee      | Platform commission | -€5.00  | -     | -     | €900.30 |
+| 07 Jan | Refund   | Order #122          | -€20.00 | €1.50 | €0.00 | €905.30 |
+| 06 Jan | Shipping | Label cost          | -€10.00 | -     | -     | €925.30 |
+
+**Details:**
+
+- **Date:** Exact date of ledger entry.
+- **Type:** Sale, Refund, Fee, Shipping, Adjustment, Payout.
+- **Description:** Optional text describing order, payout, fee, or shipping.
+- **Amount:** Positive for incoming, negative for outgoing.
+- **Fee:** Stripe fee or platform fee portion.
+- **Tax:** Will be implemented later.
+- **Balance:** Running balance after this ledger entry.
+
+**UI features:**
+
+- Latest entries appear **on top** (like a bank statement).
+- Color-coded amounts: green for positive, red for negative.
+- Optional filters: type, date range, order ID.
+
+**Logic:**
+
+- Each row’s **Balance** is computed as:
+
+```ts
+rowBalance = previousRowBalance + rowAmount - rowFee - rowTax;
+```
+
+- Easier to calculate if you precompute in the backend for display.
+
+---
+
+## 10. **Payout History Table (optional separate section)**
+
+Columns:
+
+| Date   | Amount | Status | Method             | Reference |
+| ------ | ------ | ------ | ------------------ | --------- |
+| 05 Jan | €500   | Paid   | Manual             | STRP12345 |
+| 01 Jan | €450   | Paid   | Scheduled (Weekly) | STRP12210 |
+
+- Shows **completed payouts only**.
+- Status: Paid, Pending, Failed.
+- Reference: Stripe Transfer ID for traceability.
+
+---
+
+## 11. **Workflow/Logic for Ledger → UI**
+
+1. **Aggregate balances**
+   - Compute **Available**, **Pending**, **Amount Due**, **Current Balance** from ledger entries.
+
+2. **Recent activity**
+   - Pull **all ledger entries**, sorted by **date descending**.
+   - Include all relevant fields (amount, fees, balance).
+
+3. **Payout history**
+   - Pull **all ledger entries where type = payout**, sorted by date descending.
+
+---
+
+## 12. **Special Notes / Enhancements**
+
+- **Amount Due**:
+  - Could be negative balance that arises if costs (shipping label, platform fees, refunds) exceed the seller’s Available funds.
+  - Show **due date** clearly; optionally allow payment via platform wallet or external payment.
+
+- **Recent activity**:
+  - Combines **sales, fees, refunds, shipping costs, adjustments** — one single list.
+  - Makes auditing easy for sellers.
+
+- **Payout button / schedule**
+  - Only enabled if **Available balance > 0** and **Amount Due ≤ 0**.
+  - Show next scheduled payout date if automatic scheduling is active.
+
+---
+
+---
+
+### Payout history
+
+| Date   | Amount | Status | Method |
+| ------ | ------ | ------ | ------ |
+| Jun 10 | €300   | Paid   | Weekly |
+
+Include CSV export.
+
+---
+
+## 13. Shipping labels (Etsy-compatible)
+
+Shipping label purchase:
+
+- Immediately deduct from **Available** if possible
+- Otherwise deduct from **Pending**
+- Otherwise create **negative balance**
+
+Ledger entry:
+
+```txt
+- Shipping label cost (available)
+```
+
+---
+
+## 14. Chargebacks & disputes (non-negotiable)
+
+### On dispute opened
+
+- Freeze related funds
+- Move available → on-hold
+- Prevent payout
+
+### On dispute lost
+
+- Deduct full amount + fee
+- Create negative balance if needed
+
+Etsy does exactly this.
+
+---
+
+## 15. Accounting & legal notes (important)
+
+Because you are:
+
+- Holding funds
+- Delaying payouts
+- Deducting fees
+
+You must:
+
+- Clearly state payout timing in ToS
+- Clarify refund responsibility
+- Track VAT on platform fees (EU)
+- Treat seller balance as **liability**, not revenue
+
+---

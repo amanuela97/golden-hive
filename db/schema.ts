@@ -78,6 +78,13 @@ export const payoutStatusEnum = pgEnum("payout_status", [
   "canceled",
 ]);
 
+// Transaction status for ledger entries
+export const transactionStatusEnum = pgEnum("transaction_status", [
+  "pending",
+  "available",
+  "paid",
+]);
+
 // Transfer status for order payments
 export const transferStatusEnum = pgEnum("transfer_status", [
   "held",
@@ -2141,6 +2148,10 @@ export const sellerBalanceTransactions = pgTable(
     balanceBefore: numeric("balance_before", { precision: 10, scale: 2 }).notNull(),
     balanceAfter: numeric("balance_after", { precision: 10, scale: 2 }).notNull(),
 
+    // Status and availability tracking
+    status: transactionStatusEnum("status").default("pending").notNull(),
+    availableAt: timestamp("available_at"), // When funds become available (for hold periods)
+
     description: text("description"), // Human-readable description
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
 
@@ -2192,6 +2203,33 @@ export const sellerPayouts = pgTable("seller_payouts", {
 });
 
 // ===================================
+// SELLER PAYOUT SETTINGS
+// ===================================
+export const sellerPayoutSettings = pgTable("seller_payout_settings", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  storeId: uuid("store_id")
+    .notNull()
+    .references(() => store.id, { onDelete: "cascade" })
+    .unique(), // One settings record per store
+
+  method: text("method").default("manual").notNull(), // "manual" | "automatic"
+  schedule: text("schedule"), // "weekly" | "biweekly" | "monthly" | null
+  minimumAmount: numeric("minimum_amount", { precision: 10, scale: 2 })
+    .default("20.00")
+    .notNull(),
+  payoutDayOfWeek: integer("payout_day_of_week"), // 0-6 (Sunday-Saturday)
+  payoutDayOfMonth: integer("payout_day_of_month"), // 1-31
+  holdPeriodDays: integer("hold_period_days").default(7).notNull(), // Hold period in days
+  nextPayoutAt: timestamp("next_payout_at"), // Next scheduled payout date
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// ===================================
 // SHIPPING PACKAGES (Custom Packages)
 // ===================================
 export const shippingPackages = pgTable("shipping_packages", {
@@ -2228,4 +2266,5 @@ export type SellerBalanceTransaction = InferSelectModel<
   typeof sellerBalanceTransactions
 >;
 export type SellerPayout = InferSelectModel<typeof sellerPayouts>;
+export type SellerPayoutSettings = InferSelectModel<typeof sellerPayoutSettings>;
 export type ShippingPackage = InferSelectModel<typeof shippingPackages>;

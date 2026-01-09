@@ -9,6 +9,12 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: "pg", // or whatever DB you use
   }),
+  trustedOrigins: [
+    process.env.NEXT_PUBLIC_APP_URL || "https://golden-hive-six.vercel.app",
+    "https://www.vendorsgalaxy.com",
+    "https://vendorsgalaxy.com",
+    "https://golden-hive-six.vercel.app",
+  ],
   user: {
     additionalFields: {
       phone: { type: "string", required: false },
