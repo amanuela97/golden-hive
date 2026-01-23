@@ -63,6 +63,12 @@ export const allNavItems: NavItem[] = [
     roles: ["admin", "seller", "customer"],
   },
   {
+    label: "Messages",
+    href: "/dashboard/messages",
+    icon: MessageSquare,
+    roles: ["admin", "seller", "customer"],
+  },
+  {
     label: "Customers",
     href: "/dashboard/customers",
     icon: Users,
@@ -105,7 +111,10 @@ export const allNavItems: NavItem[] = [
     icon: Wallet,
     children: [
       { label: "Balance & Payouts", href: "/dashboard/finances/payouts" },
-      { label: "Transaction History", href: "/dashboard/finances/transactions" },
+      {
+        label: "Transaction History",
+        href: "/dashboard/finances/transactions",
+      },
     ],
     roles: ["admin", "seller"],
   },

@@ -1833,6 +1833,33 @@ export async function createOrder(input: CreateOrderInput): Promise<{
         }
       }
 
+      // Create chat room for this order
+      try {
+        // Get buyer ID (customer's userId if linked, otherwise logged-in user)
+        let buyerId: string | null = userId; // Use the logged-in user ID
+
+        // If we have a customerId, try to get userId from customer record
+        if (customerId) {
+          const [customer] = await db
+            .select({ userId: customers.userId })
+            .from(customers)
+            .where(eq(customers.id, customerId))
+            .limit(1);
+          buyerId = customer?.userId || buyerId;
+        }
+
+        // Only create chat room if we have a buyerId and storeId
+        if (buyerId && finalStoreId) {
+          const { ensureChatRoomExists } = await import(
+            "@/app/[locale]/actions/chat"
+          );
+          await ensureChatRoomExists(orderId, finalStoreId, buyerId);
+        }
+      } catch (chatError) {
+        // Log error but don't fail order creation
+        console.error("Error creating chat room:", chatError);
+      }
+
       return {
         success: true,
         orderId,
@@ -2141,9 +2168,41 @@ export async function updateFulfillmentStatus(
 
             // Only capture if payment is still in requires_capture status
             if (paymentIntent.status === "requires_capture") {
-              await stripe.paymentIntents.capture(
-                paymentData[0].stripePaymentIntentId
-              );
+              // Capture payment
+              let capturedPaymentIntent;
+              try {
+                capturedPaymentIntent = await stripe.paymentIntents.capture(
+                  paymentData[0].stripePaymentIntentId
+                );
+                console.log("✅ Payment Captured During Fulfillment:", {
+                  paymentIntentId: capturedPaymentIntent.id,
+                  status: capturedPaymentIntent.status,
+                  amount: capturedPaymentIntent.amount,
+                  amount_received: capturedPaymentIntent.amount_received,
+                });
+
+                // Verify capture succeeded
+                if (capturedPaymentIntent.status !== "succeeded") {
+                  console.warn(
+                    "⚠️ Payment Intent not succeeded after capture:",
+                    {
+                      paymentIntentId: capturedPaymentIntent.id,
+                      status: capturedPaymentIntent.status,
+                    }
+                  );
+                  throw new Error(
+                    `Payment capture completed but status is ${capturedPaymentIntent.status}, not succeeded`
+                  );
+                }
+              } catch (captureError) {
+                console.error(
+                  "❌ Error capturing payment during fulfillment:",
+                  captureError
+                );
+                // Don't fail fulfillment if capture fails - can be retried
+                throw captureError;
+              }
+
               // Update payment status to completed
               await tx
                 .update(orderPayments)
@@ -2162,6 +2221,77 @@ export async function updateFulfillmentStatus(
                   updatedAt: new Date(),
                 })
                 .where(eq(orders.id, orderId));
+
+              // Update seller balance now that payment is captured
+              // Import here to avoid circular dependency issues
+              const { updateSellerBalance } = await import("./seller-balance");
+
+              // Get payment details for balance update
+              const paymentDetails = await tx
+                .select({
+                  amount: orderPayments.amount,
+                  currency: orderPayments.currency,
+                  platformFeeAmount: orderPayments.platformFeeAmount,
+                })
+                .from(orderPayments)
+                .where(eq(orderPayments.id, paymentData[0].id))
+                .limit(1);
+
+              if (paymentDetails.length > 0) {
+                const payment = paymentDetails[0];
+                const totalAmount = parseFloat(payment.amount);
+                const platformFee = parseFloat(
+                  payment.platformFeeAmount || "0"
+                );
+
+                // Calculate Stripe fee (2.9% + €0.30)
+                const stripeFeeRate = 0.029;
+                const stripeFeeFixed = 0.3;
+                const stripeFee = totalAmount * stripeFeeRate + stripeFeeFixed;
+
+                // Get order store ID
+                const orderInfo = await tx
+                  .select({ storeId: orders.storeId })
+                  .from(orders)
+                  .where(eq(orders.id, orderId))
+                  .limit(1);
+
+                if (orderInfo.length > 0 && orderInfo[0].storeId) {
+                  // Update seller balance with captured payment
+                  // 1. Order payment (CREDIT)
+                  await updateSellerBalance({
+                    storeId: orderInfo[0].storeId,
+                    type: "order_payment",
+                    amount: totalAmount,
+                    currency: payment.currency,
+                    orderId: orderId,
+                    orderPaymentId: paymentData[0].id,
+                    description: `Order payment captured`,
+                  });
+
+                  // 2. Platform fee (DEBIT)
+                  await updateSellerBalance({
+                    storeId: orderInfo[0].storeId,
+                    type: "platform_fee",
+                    amount: platformFee,
+                    currency: payment.currency,
+                    orderId: orderId,
+                    orderPaymentId: paymentData[0].id,
+                    description: `Platform fee (5%) for order`,
+                  });
+
+                  // 3. Stripe fee (DEBIT)
+                  await updateSellerBalance({
+                    storeId: orderInfo[0].storeId,
+                    type: "stripe_fee",
+                    amount: stripeFee,
+                    currency: payment.currency,
+                    orderId: orderId,
+                    orderPaymentId: paymentData[0].id,
+                    description: `Stripe processing fee for order`,
+                  });
+                }
+              }
             }
           } catch (captureError) {
             console.error(
@@ -5373,10 +5503,14 @@ export async function captureOrderPayment(orderId: string): Promise<{
       };
     }
 
-    // Get payment intent ID from orderPayments
+    // Get payment intent ID and payment details from orderPayments
     const paymentData = await db
       .select({
+        id: orderPayments.id,
         stripePaymentIntentId: orderPayments.stripePaymentIntentId,
+        amount: orderPayments.amount,
+        currency: orderPayments.currency,
+        platformFeeAmount: orderPayments.platformFeeAmount,
       })
       .from(orderPayments)
       .where(eq(orderPayments.orderId, orderId))
@@ -5386,14 +5520,157 @@ export async function captureOrderPayment(orderId: string): Promise<{
       return { success: false, error: "Payment intent not found" };
     }
 
-    const paymentIntentId = paymentData[0].stripePaymentIntentId;
+    const paymentRecord = paymentData[0];
+    const paymentIntentId = paymentRecord.stripePaymentIntentId;
+
+    if (!paymentIntentId) {
+      return { success: false, error: "Payment intent ID is missing" };
+    }
+
+    // Import Stripe
+    const { stripe } = await import("@/lib/stripe");
+
+    // First, retrieve the payment intent to check its current status
+    let paymentIntentBefore;
+    try {
+      paymentIntentBefore =
+        await stripe.paymentIntents.retrieve(paymentIntentId);
+      console.log("🔍 Payment Intent Before Capture:", {
+        id: paymentIntentBefore.id,
+        status: paymentIntentBefore.status,
+        amount: paymentIntentBefore.amount,
+        currency: paymentIntentBefore.currency,
+        amount_capturable: paymentIntentBefore.amount_capturable,
+        amount_received: paymentIntentBefore.amount_received,
+      });
+    } catch (retrieveError) {
+      console.error("❌ Error retrieving payment intent:", retrieveError);
+      return {
+        success: false,
+        error: `Failed to retrieve payment intent: ${retrieveError instanceof Error ? retrieveError.message : "Unknown error"}`,
+      };
+    }
+
+    // Only capture if payment is still in requires_capture status
+    if (paymentIntentBefore.status !== "requires_capture") {
+      console.warn("⚠️ Payment intent not in requires_capture status:", {
+        paymentIntentId,
+        currentStatus: paymentIntentBefore.status,
+      });
+      return {
+        success: false,
+        error: `Payment intent is in ${paymentIntentBefore.status} status. Cannot capture. Expected: requires_capture`,
+      };
+    }
 
     // Capture payment in Stripe
-    const { stripe } = await import("@/lib/stripe");
-    const paymentIntent = await stripe.paymentIntents.capture(paymentIntentId);
+    let paymentIntent;
+    try {
+      paymentIntent = await stripe.paymentIntents.capture(paymentIntentId);
+      console.log("✅ Payment Captured Successfully:", {
+        id: paymentIntent.id,
+        status: paymentIntent.status,
+        amount: paymentIntent.amount,
+        currency: paymentIntent.currency,
+        amount_received: paymentIntent.amount_received,
+        charge: paymentIntent.latest_charge,
+      });
+    } catch (captureError) {
+      console.error("❌ Capture Failed:", {
+        error: captureError,
+        paymentIntentId,
+        message:
+          captureError instanceof Error
+            ? captureError.message
+            : "Unknown error",
+      });
+      return {
+        success: false,
+        error: `Failed to capture payment: ${captureError instanceof Error ? captureError.message : "Unknown error"}`,
+      };
+    }
+
+    // Verify capture succeeded
+    if (paymentIntent.status !== "succeeded") {
+      console.warn("⚠️ Payment Intent not succeeded after capture:", {
+        paymentIntentId: paymentIntent.id,
+        status: paymentIntent.status,
+      });
+      return {
+        success: false,
+        error: `Payment capture completed but status is ${paymentIntent.status}, not succeeded. Please check Stripe dashboard.`,
+      };
+    }
+
+    // Verify amount was actually received
+    if (paymentIntent.amount_received !== paymentIntent.amount) {
+      console.warn("⚠️ Amount received doesn't match amount:", {
+        paymentIntentId: paymentIntent.id,
+        amount: paymentIntent.amount,
+        amount_received: paymentIntent.amount_received,
+      });
+      return {
+        success: false,
+        error: `Payment captured but amount received (${paymentIntent.amount_received / 100}) doesn't match expected amount (${paymentIntent.amount / 100}). Please check Stripe dashboard.`,
+      };
+    }
 
     // Update order payment status
     await updatePaymentStatus(orderId, "paid");
+
+    // Update seller balance now that payment is captured
+    // This ensures the ledger reflects actual funds available in Stripe
+    if (!order.storeId) {
+      return {
+        success: false,
+        error: "Order has no associated store",
+      };
+    }
+
+    const orderStoreId: string = order.storeId; // TypeScript now knows this is string
+    const { updateSellerBalance } = await import("./seller-balance");
+
+    const totalAmount = parseFloat(paymentRecord.amount);
+    const platformFee = parseFloat(paymentRecord.platformFeeAmount || "0");
+
+    // Calculate Stripe fee (2.9% + €0.30)
+    const stripeFeeRate = 0.029;
+    const stripeFeeFixed = 0.3;
+    const stripeFee = totalAmount * stripeFeeRate + stripeFeeFixed;
+
+    // Update seller balance with captured payment
+    // 1. Order payment (CREDIT)
+    await updateSellerBalance({
+      storeId: orderStoreId,
+      type: "order_payment",
+      amount: totalAmount,
+      currency: paymentRecord.currency,
+      orderId: orderId,
+      orderPaymentId: paymentRecord.id,
+      description: `Order payment captured`,
+    });
+
+    // 2. Platform fee (DEBIT)
+    await updateSellerBalance({
+      storeId: orderStoreId,
+      type: "platform_fee",
+      amount: platformFee,
+      currency: paymentRecord.currency,
+      orderId: orderId,
+      orderPaymentId: paymentRecord.id,
+      description: `Platform fee (5%) for order`,
+    });
+
+    // 3. Stripe fee (DEBIT)
+    await updateSellerBalance({
+      storeId: orderStoreId,
+      type: "stripe_fee",
+      amount: stripeFee,
+      currency: paymentRecord.currency,
+      orderId: orderId,
+      orderPaymentId: paymentRecord.id,
+      description: `Stripe processing fee for order`,
+    });
 
     return {
       success: true,

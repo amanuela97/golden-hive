@@ -241,8 +241,14 @@ export default function StoreTab() {
   };
 
   const handleRemoveLogo = () => {
-    setLogoFile(null);
-    setLogoPreview(existingLogoUrl);
+    // If there's an existing logo, allow removal of new file (reverts to existing)
+    if (existingLogoUrl) {
+      setLogoFile(null);
+      setLogoPreview(existingLogoUrl);
+    } else {
+      // If no existing logo, prevent removal (logo is required)
+      toast.error("Store logo is required. Please upload a logo image.");
+    }
   };
 
   const handleSlugChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -256,6 +262,13 @@ export default function StoreTab() {
     setIsLoading(true);
 
     try {
+      // Validate that logo is provided (either new file or existing logo)
+      if (!logoFile && !existingLogoUrl) {
+        toast.error("Store logo is required. Please upload a logo image.");
+        setIsLoading(false);
+        return;
+      }
+
       // Validate that at least one location has all required fields
       const completeLocations = locations.filter(
         (loc) =>
@@ -640,7 +653,9 @@ export default function StoreTab() {
                 </div>
 
                 <div className="lg:col-span-2 space-y-2">
-                  <Label className="text-sm font-medium">Store Logo</Label>
+                  <Label className="text-sm font-medium">
+                    Store Logo <span className="text-red-500">*</span>
+                  </Label>
                   <div className="flex items-start gap-4">
                     {logoPreview && (
                       <div className="relative w-24 h-24 rounded-lg border border-gray-200 overflow-hidden bg-gray-50">

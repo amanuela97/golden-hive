@@ -7,6 +7,8 @@ import { PayoutHistory } from "../components/PayoutHistory";
 import { RequestPayoutButton } from "../components/RequestPayoutButton";
 import { ActivityFilters } from "../components/ActivityFilters";
 import { ExportButton } from "../components/ExportButton";
+import { PayoutScheduleSettings } from "../components/PayoutScheduleSettings";
+import { PayoutScheduleInfo } from "../components/PayoutScheduleInfo";
 import {
   Card,
   CardContent,
@@ -16,7 +18,11 @@ import {
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useRouter } from "@/i18n/navigation";
-import { getRecentActivity } from "@/app/[locale]/actions/finances";
+import {
+  getRecentActivity,
+  getBalanceSummary,
+} from "@/app/[locale]/actions/finances";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 interface BalanceData {
   availableBalance: number;
@@ -55,7 +61,7 @@ interface Payout {
 
 interface PayoutSettings {
   method: "manual" | "automatic";
-  schedule?: "weekly" | "biweekly" | "monthly" | null;
+  schedule?: "daily" | "weekly" | "biweekly" | "monthly" | null;
   minimumAmount: number;
   payoutDayOfWeek?: number | null;
   payoutDayOfMonth?: number | null;
@@ -71,13 +77,15 @@ interface PayoutsPageClientProps {
 }
 
 export default function PayoutsPageClient({
-  balanceData,
+  balanceData: initialBalanceData,
   activities: initialActivities,
-  payouts,
+  payouts: initialPayouts,
   payoutSettings,
 }: PayoutsPageClientProps) {
   const router = useRouter();
+  const [balanceData, setBalanceData] = useState(initialBalanceData);
   const [activities, setActivities] = useState(initialActivities);
+  const [payouts] = useState(initialPayouts);
   const [isLoading, setIsLoading] = useState(false);
   const [filters, setFilters] = useState<{
     type?: string;
@@ -86,8 +94,32 @@ export default function PayoutsPageClient({
     search?: string;
   }>({});
 
-  const handleRefresh = () => {
-    router.refresh();
+  const handleRefresh = async () => {
+    setIsLoading(true);
+    try {
+      // Refresh all data
+      const [balanceResult, activityResult] = await Promise.all([
+        getBalanceSummary(),
+        getRecentActivity(50, 0, filters),
+      ]);
+
+      if (balanceResult.success && balanceResult.data) {
+        setBalanceData(balanceResult.data);
+      }
+
+      if (activityResult.success && activityResult.data) {
+        setActivities(activityResult.data);
+      }
+
+      // Trigger router refresh to update server components (including payouts)
+      router.refresh();
+    } catch (error) {
+      console.error("Error refreshing data:", error);
+      // Fallback to router refresh
+      router.refresh();
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleFilterChange = async (newFilters: {
@@ -146,13 +178,31 @@ export default function PayoutsPageClient({
           onSuccess={handleRefresh}
         />
       </div>
+      <TooltipProvider delayDuration={100}>
+        <BalanceSummary
+          availableBalance={balanceData.availableBalance}
+          pendingBalance={balanceData.pendingBalance}
+          amountDue={balanceData.amountDue}
+          currentBalance={balanceData.currentBalance}
+          currency={balanceData.currency}
+        />
+      </TooltipProvider>
 
-      <BalanceSummary
-        availableBalance={balanceData.availableBalance}
-        pendingBalance={balanceData.pendingBalance}
-        amountDue={balanceData.amountDue}
-        currentBalance={balanceData.currentBalance}
-        currency={balanceData.currency}
+      {/* Payout Schedule Info */}
+      {payoutSettings && (
+        <PayoutScheduleInfo
+          nextPayoutAt={payoutSettings.nextPayoutAt || null}
+          lastPayoutAt={balanceData.lastPayoutAt}
+          lastPayoutAmount={balanceData.lastPayoutAmount}
+          schedule={payoutSettings.schedule || null}
+          currency={balanceData.currency}
+        />
+      )}
+
+      {/* Payout Schedule Settings */}
+      <PayoutScheduleSettings
+        currentSettings={payoutSettings}
+        onSuccess={handleRefresh}
       />
 
       <Tabs defaultValue="activity" className="space-y-4">

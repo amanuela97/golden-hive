@@ -393,6 +393,41 @@
       "when": 1767996108717,
       "tag": "0055_mean_redwing",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1768935219205,
+      "tag": "0056_black_wendigo",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1768940651136,
+      "tag": "0057_thin_cardiac",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1769199520047,
+      "tag": "0058_dark_spot",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1769203608517,
+      "tag": "0059_wooden_famine",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1769205659989,
+      "tag": "0060_secret_slyde",
+      "breakpoints": true
     }
   ]
 }

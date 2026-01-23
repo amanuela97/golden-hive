@@ -4,6 +4,7 @@ import { sellerPayoutSettings, sellerBalances, store } from "@/db/schema";
 import { eq, and, lte, isNotNull } from "drizzle-orm";
 import { processPayoutByStoreId } from "@/app/[locale]/actions/seller-payouts";
 import { calculateNextPayoutDate } from "@/app/[locale]/actions/finances";
+import { stripe } from "@/lib/stripe";
 
 export async function POST(req: NextRequest) {
   // Verify cron secret
@@ -43,12 +44,12 @@ export async function POST(req: NextRequest) {
 
     for (const { settings, balance, storeData } of eligibleSellers) {
       try {
-        const availableBalance = parseFloat(balance.availableBalance);
+        const ledgerAvailableBalance = parseFloat(balance.availableBalance);
         const minimumAmount = parseFloat(settings.minimumAmount);
-        const amountDue = Math.max(0, -availableBalance);
+        const amountDue = Math.max(0, -ledgerAvailableBalance);
 
-        // Check eligibility
-        if (availableBalance < minimumAmount) {
+        // Check eligibility based on ledger
+        if (ledgerAvailableBalance < minimumAmount) {
           results.skipped++;
           continue;
         }
@@ -64,7 +65,41 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        // Process payout
+        // Check actual Stripe balance to ensure funds are available
+        let stripeAvailableBalance = 0;
+        try {
+          const stripeBalance = await stripe.balance.retrieve();
+          const currencyBalance = stripeBalance.available.find(
+            (b) => b.currency.toLowerCase() === balance.currency.toLowerCase()
+          );
+          // Convert from cents to dollars/euros
+          stripeAvailableBalance = currencyBalance
+            ? currencyBalance.amount / 100
+            : 0;
+        } catch (stripeError) {
+          console.error(
+            `Error retrieving Stripe balance for store ${settings.storeId}:`,
+            stripeError
+          );
+          // If we can't check Stripe balance, skip this payout to be safe
+          results.skipped++;
+          continue;
+        }
+
+        // Use the minimum of ledger and Stripe balance
+        // This ensures we only payout funds that actually exist in Stripe
+        const availableBalance = Math.min(
+          Math.max(0, ledgerAvailableBalance),
+          Math.max(0, stripeAvailableBalance)
+        );
+
+        // Re-check minimum amount with actual available balance
+        if (availableBalance < minimumAmount) {
+          results.skipped++;
+          continue;
+        }
+
+        // Process payout with the actual available amount
         const payoutResult = await processPayoutByStoreId({
           storeId: settings.storeId,
           amount: availableBalance,

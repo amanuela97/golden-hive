@@ -476,20 +476,39 @@ export async function deleteFilesByPublicIds(
 export function extractPublicId(url: string): string | null {
   try {
     // Example URL: https://res.cloudinary.com/demo/image/upload/v1728402325/folder/subfolder/sample.jpg
+    // Or: https://res.cloudinary.com/metropolia-fi/image/upload/v1769203738/golden-hive/chat/room/user/file.jpg
     const uploadIndex = url.indexOf("/upload/");
-    if (uploadIndex === -1) return null;
+    if (uploadIndex === -1) {
+      console.warn(`[extractPublicId] No "/upload/" found in URL: ${url}`);
+      return null;
+    }
 
-    // Extract everything after "/upload/" and remove version part (e.g. v123456789)
+    // Extract everything after "/upload/"
     const path = url.substring(uploadIndex + 8); // 8 = "/upload/".length
     const parts = path.split("/");
-    const versionPart = parts[0].match(/^v\d+$/) ? 1 : 0;
-    const pathAfterVersion = parts.slice(versionPart).join("/");
+    
+    // Check if first part is a version (v1234567890)
+    const hasVersion = parts[0] && /^v\d+$/.test(parts[0]);
+    const startIndex = hasVersion ? 1 : 0;
+    const pathAfterVersion = parts.slice(startIndex).join("/");
 
-    // Remove file extension (.jpg, .png, etc.)
+    if (!pathAfterVersion) {
+      console.warn(`[extractPublicId] No path after version in URL: ${url}`);
+      return null;
+    }
+
+    // Remove file extension (.jpg, .png, etc.) but keep the folder structure
     const publicId = pathAfterVersion.replace(/\.[^/.]+$/, "");
 
+    if (!publicId) {
+      console.warn(`[extractPublicId] Empty public_id extracted from URL: ${url}`);
+      return null;
+    }
+
+    console.log(`[extractPublicId] Extracted public_id: ${publicId} from URL: ${url}`);
     return publicId;
-  } catch {
+  } catch (error) {
+    console.error(`[extractPublicId] Error extracting public_id from URL: ${url}`, error);
     return null;
   }
 }

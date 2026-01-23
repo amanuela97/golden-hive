@@ -14,6 +14,11 @@ type BalanceTransactionType = InferSelectModel<
   typeof sellerBalanceTransactions
 >["type"];
 
+// Type for payout settings that may or may not have optional columns
+type PayoutSettingsRow = InferSelectModel<typeof sellerPayoutSettings> & {
+  holdPeriodDays?: number | null;
+};
+
 interface UpdateSellerBalanceParams {
   storeId: string;
   type: BalanceTransactionType;
@@ -122,13 +127,22 @@ export async function updateSellerBalance(
     }
 
     // Get hold period from settings (default 7 days)
-    const [settings] = await db
-      .select()
-      .from(sellerPayoutSettings)
-      .where(eq(sellerPayoutSettings.storeId, storeId))
-      .limit(1);
+    let holdPeriodDays = 7;
+    try {
+      const [settings] = await db
+        .select()
+        .from(sellerPayoutSettings)
+        .where(eq(sellerPayoutSettings.storeId, storeId))
+        .limit(1);
 
-    const holdPeriodDays = settings?.holdPeriodDays || 7;
+      holdPeriodDays = (settings as PayoutSettingsRow)?.holdPeriodDays || 7;
+    } catch (error) {
+      console.warn(
+        "Could not fetch hold period from settings, using default:",
+        error
+      );
+      holdPeriodDays = 7;
+    }
 
     // Calculate availableAt date (only for credits that need hold period)
     let availableAt: Date | null = null;

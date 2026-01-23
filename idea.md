@@ -757,3 +757,23 @@ You must:
 - Treat seller balance as **liability**, not revenue
 
 ---
+
+Review and approve schema changes
+Create database migration
+Implement updateSellerBalance() helper
+Update checkout to remove transfers
+Update webhook to create ledger entries
+Add shipping label deduction
+Build payout request system
+Create seller payout dashboard
+Test thoroughly
+
+Admin-side controls (Etsy has these internally)
+
+You should build admin-only tools:
+
+- Override payout delay
+- Manually hold seller funds
+- Force early payout
+- View seller ledger
+- Freeze payouts during disputes

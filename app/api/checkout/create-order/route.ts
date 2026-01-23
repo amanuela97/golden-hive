@@ -210,6 +210,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Get session once before transaction (for chat room creation)
+    const session = await auth.api.getSession({
+      headers: await headers(),
+    });
+    const loggedInUserId = session?.user?.id;
+    console.log("[CHECKOUT] Session check:", {
+      hasSession: !!session,
+      userId: loggedInUserId,
+      userEmail: session?.user?.email,
+    });
+
     // Create orders for each store in transaction
     return await db.transaction(async (tx) => {
       const createdOrders: Array<{
@@ -227,10 +238,6 @@ export async function POST(req: NextRequest) {
 
         if (body.customerEmail) {
           // Check if there's a logged-in user
-          const session = await auth.api.getSession({
-            headers: await headers(),
-          });
-          const loggedInUserId = session?.user?.id;
           const loggedInUserEmail = session?.user?.email;
           const isLoggedInUser =
             loggedInUserEmail &&
@@ -609,11 +616,76 @@ export async function POST(req: NextRequest) {
       }
 
       // Return all created orders
-      return NextResponse.json({
+      const response = NextResponse.json({
         success: true,
         orders: createdOrders, // Array of orders, one per store
         primaryOrderId: createdOrders[0]?.orderId, // First order ID for backward compatibility
       });
+
+      // Create chat rooms AFTER transaction commits (so foreign key constraint is satisfied)
+      // Do this asynchronously so it doesn't block the response
+      Promise.all(
+        createdOrders.map(async ({ orderId, storeId }) => {
+          try {
+            console.log(
+              "[CHECKOUT] Starting chat room creation for order (after commit):",
+              {
+                orderId,
+                storeId,
+                loggedInUserId,
+              }
+            );
+
+            // Get buyer ID - use logged-in user from session
+            const buyerId = loggedInUserId;
+
+            if (!buyerId) {
+              console.log(
+                "[CHECKOUT] ⚠️ Skipping chat room creation - no buyerId (guest checkout)",
+                {
+                  orderId,
+                  storeId,
+                }
+              );
+              return;
+            }
+
+            console.log("[CHECKOUT] Calling ensureChatRoomExists with:", {
+              orderId,
+              storeId,
+              buyerId,
+            });
+            const { ensureChatRoomExists } = await import(
+              "@/app/[locale]/actions/chat"
+            );
+            const result = await ensureChatRoomExists(
+              orderId,
+              storeId,
+              buyerId
+            );
+            console.log("[CHECKOUT] ✅ Chat room creation result:", result);
+          } catch (chatError) {
+            // Log error but don't fail order creation
+            console.error("[CHECKOUT] ❌ Error creating chat room:", {
+              error: chatError,
+              message:
+                chatError instanceof Error
+                  ? chatError.message
+                  : "Unknown error",
+              stack: chatError instanceof Error ? chatError.stack : undefined,
+              orderId,
+              storeId,
+            });
+          }
+        })
+      ).catch((error) => {
+        console.error(
+          "[CHECKOUT] ❌ Error in chat room creation batch:",
+          error
+        );
+      });
+
+      return response;
     });
   } catch (error) {
     console.error("Error creating guest order:", error);

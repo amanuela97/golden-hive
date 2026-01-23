@@ -1405,7 +1405,9 @@ export const orderPayments = pgTable("order_payments", {
   refundedAmount: numeric("refunded_amount", { precision: 10, scale: 2 })
     .default("0")
     .notNull(), // Amount refunded from this payment
-  transferStatus: transferStatusEnum("transfer_status").default("held").notNull(), // held | transferred | pending_payout
+  transferStatus: transferStatusEnum("transfer_status")
+    .default("held")
+    .notNull(), // held | transferred | pending_payout
   stripeTransferId: text("stripe_transfer_id"), // Stripe Transfer ID (only set when transferred)
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
@@ -2133,9 +2135,12 @@ export const sellerBalanceTransactions = pgTable(
     orderId: uuid("order_id").references(() => orders.id, {
       onDelete: "set null",
     }),
-    orderPaymentId: uuid("order_payment_id").references(() => orderPayments.id, {
-      onDelete: "set null",
-    }),
+    orderPaymentId: uuid("order_payment_id").references(
+      () => orderPayments.id,
+      {
+        onDelete: "set null",
+      }
+    ),
     orderShipmentId: uuid("order_shipment_id").references(
       () => orderShipments.id,
       { onDelete: "set null" }
@@ -2145,8 +2150,14 @@ export const sellerBalanceTransactions = pgTable(
     }),
 
     // Balance snapshots (for audit trail)
-    balanceBefore: numeric("balance_before", { precision: 10, scale: 2 }).notNull(),
-    balanceAfter: numeric("balance_after", { precision: 10, scale: 2 }).notNull(),
+    balanceBefore: numeric("balance_before", {
+      precision: 10,
+      scale: 2,
+    }).notNull(),
+    balanceAfter: numeric("balance_after", {
+      precision: 10,
+      scale: 2,
+    }).notNull(),
 
     // Status and availability tracking
     status: transactionStatusEnum("status").default("pending").notNull(),
@@ -2260,11 +2271,148 @@ export const shippingPackages = pgTable("shipping_packages", {
     .notNull(),
 });
 
+// ===================================
+// CHAT SYSTEM
+// ===================================
+// Chat Room Status Enum
+export const chatRoomStatusEnum = pgEnum("chat_room_status", [
+  "active",
+  "blocked",
+  "archived",
+]);
+
+// Chat Rooms - One room per order + store combination
+export const chatRooms = pgTable(
+  "chat_rooms",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orderId: uuid("order_id")
+      .references(() => orders.id, { onDelete: "set null" }), // Nullable - stores first orderId, but room persists across orders
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => store.id, { onDelete: "cascade" }),
+    buyerId: text("buyer_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Seller is derived from storeId via storeMembers, but we store for quick access
+    sellerId: text("seller_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+
+    status: chatRoomStatusEnum("status").default("active").notNull(),
+    // Per-user blocking: each user can block independently
+    buyerBlocked: boolean("buyer_blocked").default(false).notNull(),
+    sellerBlocked: boolean("seller_blocked").default(false).notNull(),
+    // Per-user deletion: each user can delete the chat from their view
+    buyerDeleted: boolean("buyer_deleted").default(false).notNull(),
+    sellerDeleted: boolean("seller_deleted").default(false).notNull(),
+    // Legacy fields (kept for backwards compatibility, but not used)
+    blockedBy: text("blocked_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    blockedAt: timestamp("blocked_at"),
+
+    // Metadata
+    lastMessageAt: timestamp("last_message_at"),
+    lastMessagePreview: text("last_message_preview"), // First 100 chars of last message
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    // Ensure one room per buyer+store combination (not per order)
+    unique("chat_rooms_buyer_store_unique").on(t.buyerId, t.storeId),
+    index("chat_rooms_order_idx").on(t.orderId),
+    index("chat_rooms_store_idx").on(t.storeId),
+    index("chat_rooms_buyer_idx").on(t.buyerId),
+    index("chat_rooms_seller_idx").on(t.sellerId),
+    index("chat_rooms_status_idx").on(t.status),
+  ]
+);
+
+// Chat Messages
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => chatRooms.id, { onDelete: "cascade" }),
+
+    senderId: text("sender_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    senderRole: text("sender_role").notNull(), // "customer" | "seller" | "admin"
+
+    // Message content
+    text: text("text"), // Nullable if media-only message
+    mediaUrl: text("media_url"), // Cloudinary URL
+    mediaType: text("media_type"), // "image" | "video" | "file"
+    mediaFileName: text("media_file_name"), // Original filename
+    mediaPublicId: text("media_public_id"), // Cloudinary public_id for deletion
+
+    // Message status
+    isDeleted: boolean("is_deleted").default(false).notNull(),
+    deletedAt: timestamp("deleted_at"),
+
+    // Read receipts (optional - for future enhancement)
+    readAt: timestamp("read_at"),
+    readBy: text("read_by").array(), // Array of user IDs who read the message
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    index("chat_messages_room_idx").on(t.roomId),
+    index("chat_messages_sender_idx").on(t.senderId),
+    index("chat_messages_created_idx").on(t.createdAt),
+  ]
+);
+
+// Chat Room Participants (for admin tracking and future features)
+export const chatRoomParticipants = pgTable(
+  "chat_room_participants",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => chatRooms.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role").notNull(), // "buyer" | "seller" | "admin"
+
+    // Admin-specific fields
+    joinedAt: timestamp("joined_at").defaultNow().notNull(),
+    leftAt: timestamp("left_at"),
+    isVisible: boolean("is_visible").default(true).notNull(), // For admin invisibility
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    // Ensure one participant record per user per room
+    unique("chat_room_participants_unique").on(t.roomId, t.userId),
+    index("chat_room_participants_room_idx").on(t.roomId),
+    index("chat_room_participants_user_idx").on(t.userId),
+  ]
+);
+
 // Type exports
 export type SellerBalance = InferSelectModel<typeof sellerBalances>;
 export type SellerBalanceTransaction = InferSelectModel<
   typeof sellerBalanceTransactions
 >;
 export type SellerPayout = InferSelectModel<typeof sellerPayouts>;
-export type SellerPayoutSettings = InferSelectModel<typeof sellerPayoutSettings>;
+export type SellerPayoutSettings = InferSelectModel<
+  typeof sellerPayoutSettings
+>;
 export type ShippingPackage = InferSelectModel<typeof shippingPackages>;
+export type ChatRoom = InferSelectModel<typeof chatRooms>;
+export type ChatMessage = InferSelectModel<typeof chatMessages>;
+export type ChatRoomParticipant = InferSelectModel<typeof chatRoomParticipants>;

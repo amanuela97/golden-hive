@@ -437,45 +437,53 @@ export async function POST(req: NextRequest) {
                 })
                 .returning();
 
-              // Create ledger entries
-              // 1. Order payment (CREDIT)
-              await updateSellerBalance({
-                storeId: order.storeId!,
-                type: "order_payment",
-                amount: orderAmount, // Already includes discount
-                currency: order.currency,
-                orderId: orderId,
-                orderPaymentId: paymentRecord.id,
-                description: `Order payment received (discount already applied)`,
-              });
-
-              // 2. Platform fee (DEBIT)
-              await updateSellerBalance({
-                storeId: order.storeId!,
-                type: "platform_fee",
-                amount: orderPlatformFee,
-                currency: order.currency,
-                orderId: orderId,
-                orderPaymentId: paymentRecord.id,
-                description: `Platform fee (5%) for order`,
-              });
-
-              // 3. Stripe fee (DEBIT)
-              await updateSellerBalance({
-                storeId: order.storeId!,
-                type: "stripe_fee",
-                amount: orderStripeFee,
-                currency: order.currency,
-                orderId: orderId,
-                orderPaymentId: paymentRecord.id,
-                description: `Stripe processing fee for order`,
-              });
-
               // Check payment intent status - with manual capture, payment might not be captured yet
-              // Only set paymentStatus to "paid" if payment is actually captured (succeeded)
+              // Only update balance and set paymentStatus to "paid" if payment is actually captured (succeeded)
               // If status is "requires_capture", keep it as "pending" until seller captures
               const paymentIntentStatus = paymentIntent.status;
               const isPaymentCaptured = paymentIntentStatus === "succeeded";
+
+              // Only update seller balance if payment is actually captured
+              // Balance will be updated when seller captures payment if not captured yet
+              if (isPaymentCaptured) {
+                // Create ledger entries
+                // 1. Order payment (CREDIT)
+                await updateSellerBalance({
+                  storeId: order.storeId!,
+                  type: "order_payment",
+                  amount: orderAmount, // Already includes discount
+                  currency: order.currency,
+                  orderId: orderId,
+                  orderPaymentId: paymentRecord.id,
+                  description: `Order payment received (discount already applied)`,
+                });
+
+                // 2. Platform fee (DEBIT)
+                await updateSellerBalance({
+                  storeId: order.storeId!,
+                  type: "platform_fee",
+                  amount: orderPlatformFee,
+                  currency: order.currency,
+                  orderId: orderId,
+                  orderPaymentId: paymentRecord.id,
+                  description: `Platform fee (5%) for order`,
+                });
+
+                // 3. Stripe fee (DEBIT)
+                await updateSellerBalance({
+                  storeId: order.storeId!,
+                  type: "stripe_fee",
+                  amount: orderStripeFee,
+                  currency: order.currency,
+                  orderId: orderId,
+                  orderPaymentId: paymentRecord.id,
+                  description: `Stripe processing fee for order`,
+                });
+              } else {
+                console.log(
+                  `[Webhook] Payment not captured yet (status: ${paymentIntentStatus}). Balance will be updated when payment is captured.`
+                );
+              }
               
               console.log(
                 `[Webhook] Payment Intent status: ${paymentIntentStatus}, isPaymentCaptured: ${isPaymentCaptured}`
@@ -826,44 +834,57 @@ export async function POST(req: NextRequest) {
         .returning();
       console.log("✅ Payment record created");
 
-      // Import balance management function
-      const { updateSellerBalance } = await import(
-        "@/app/[locale]/actions/seller-balance"
-      );
+      // Check payment intent status - with manual capture, payment might not be captured yet
+      // Only update balance if payment is actually captured (succeeded)
+      const paymentIntentStatus = paymentIntent.status;
+      const isPaymentCaptured = paymentIntentStatus === "succeeded";
 
-      // Create ledger entries
-      // 1. Order payment (CREDIT) - amount already includes discount
-      await updateSellerBalance({
-        storeId: orderStoreId,
-        type: "order_payment",
-        amount: totalAmount,
-        currency: currency,
-        orderId: finalOrderId,
-        orderPaymentId: paymentRecord.id,
-        description: `Order payment received (discount already applied)`,
-      });
+      // Only update seller balance if payment is actually captured
+      // Balance will be updated when seller captures payment if not captured yet
+      if (isPaymentCaptured) {
+        // Import balance management function
+        const { updateSellerBalance } = await import(
+          "@/app/[locale]/actions/seller-balance"
+        );
 
-      // 2. Platform fee (DEBIT)
-      await updateSellerBalance({
-        storeId: orderStoreId,
-        type: "platform_fee",
-        amount: platformFee,
-        currency: currency,
-        orderId: finalOrderId,
-        orderPaymentId: paymentRecord.id,
-        description: `Platform fee (5%) for order`,
-      });
+        // Create ledger entries
+        // 1. Order payment (CREDIT) - amount already includes discount
+        await updateSellerBalance({
+          storeId: orderStoreId,
+          type: "order_payment",
+          amount: totalAmount,
+          currency: currency,
+          orderId: finalOrderId,
+          orderPaymentId: paymentRecord.id,
+          description: `Order payment received (discount already applied)`,
+        });
 
-      // 3. Stripe fee (DEBIT)
-      await updateSellerBalance({
-        storeId: orderStoreId,
-        type: "stripe_fee",
-        amount: stripeFee,
-        currency: currency,
-        orderId: finalOrderId,
-        orderPaymentId: paymentRecord.id,
-        description: `Stripe processing fee for order`,
-      });
+        // 2. Platform fee (DEBIT)
+        await updateSellerBalance({
+          storeId: orderStoreId,
+          type: "platform_fee",
+          amount: platformFee,
+          currency: currency,
+          orderId: finalOrderId,
+          orderPaymentId: paymentRecord.id,
+          description: `Platform fee (5%) for order`,
+        });
+
+        // 3. Stripe fee (DEBIT)
+        await updateSellerBalance({
+          storeId: orderStoreId,
+          type: "stripe_fee",
+          amount: stripeFee,
+          currency: currency,
+          orderId: finalOrderId,
+          orderPaymentId: paymentRecord.id,
+          description: `Stripe processing fee for order`,
+        });
+      } else {
+        console.log(
+          `[Webhook] Payment not captured yet (status: ${paymentIntentStatus}). Balance will be updated when payment is captured.`
+        );
+      }
 
       // Create order event (createdBy is null for webhook events)
       console.log("📝 Creating order event...");

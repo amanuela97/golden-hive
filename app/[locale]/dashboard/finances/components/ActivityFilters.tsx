@@ -23,7 +23,7 @@ interface ActivityFiltersProps {
 }
 
 const transactionTypes = [
-  { value: "", label: "All Types" },
+  { value: "all", label: "All Types" },
   { value: "order_payment", label: "Sale" },
   { value: "platform_fee", label: "Platform Fee" },
   { value: "stripe_fee", label: "Stripe Fee" },
@@ -35,14 +35,14 @@ const transactionTypes = [
 ];
 
 export function ActivityFilters({ onFilterChange }: ActivityFiltersProps) {
-  const [type, setType] = useState<string>("");
+  const [type, setType] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
   const handleApply = () => {
     onFilterChange({
-      type: type || undefined,
+      type: type === "all" ? undefined : type,
       search: search || undefined,
       dateFrom: dateFrom ? new Date(dateFrom) : undefined,
       dateTo: dateTo ? new Date(dateTo) : undefined,
@@ -50,7 +50,7 @@ export function ActivityFilters({ onFilterChange }: ActivityFiltersProps) {
   };
 
   const handleClear = () => {
-    setType("");
+    setType("all");
     setSearch("");
     setDateFrom("");
     setDateTo("");
