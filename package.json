@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "clean": "rimraf .next",
+    "postinstall": "npm rebuild @tailwindcss/oxide || true",
     "build": "npm run clean && cross-env NODE_OPTIONS=--max-old-space-size=4096 next build --webpack",
     "start": "next start",
     "lint": "eslint"
