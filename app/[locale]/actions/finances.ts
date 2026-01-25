@@ -372,6 +372,45 @@ export async function getPayoutSettings() {
           nextPayoutAt = optionalRow.next_payout_at
             ? new Date(optionalRow.next_payout_at)
             : null;
+
+          // If nextPayoutAt is in the past and automatic is enabled, recalculate it
+          if (
+            nextPayoutAt &&
+            row.method === "automatic" &&
+            row.schedule &&
+            nextPayoutAt < new Date()
+          ) {
+            console.warn(
+              `nextPayoutAt (${nextPayoutAt.toISOString()}) is in the past for store ${storeId}. Recalculating...`
+            );
+            // Get last payout date from balance
+            const [balance] = await db
+              .select()
+              .from(sellerBalances)
+              .where(eq(sellerBalances.storeId, storeId))
+              .limit(1);
+
+            nextPayoutAt = await calculateNextPayoutDate(
+              row.schedule as "daily" | "weekly" | "biweekly" | "monthly" | null,
+              row.payout_day_of_week,
+              row.payout_day_of_month,
+              balance?.lastPayoutAt || null
+            );
+
+            // Update the database with the corrected date
+            try {
+              await db.execute(
+                sql`UPDATE seller_payout_settings 
+                    SET next_payout_at = ${nextPayoutAt.toISOString()} 
+                    WHERE store_id = ${storeId}`
+              );
+            } catch (updateError) {
+              console.error(
+                "Failed to update nextPayoutAt in database:",
+                updateError
+              );
+            }
+          }
         }
       } catch {
         // Optional columns don't exist (migration 0055 hasn't run)
@@ -464,7 +503,26 @@ export async function calculateNextPayoutDate(
     }
   } else if (schedule === "weekly" && payoutDayOfWeek !== null) {
     const daysUntilNext = (payoutDayOfWeek - now.getDay() + 7) % 7;
-    nextDate.setDate(nextDate.getDate() + (daysUntilNext || 7));
+    // If daysUntilNext is 0, it means today is the payout day
+    // Schedule for next week (7 days) if we already processed today, otherwise today
+    if (daysUntilNext === 0 && lastPayoutAt) {
+      const lastPayoutDate = new Date(lastPayoutAt);
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const lastPayoutDay = new Date(
+        lastPayoutDate.getFullYear(),
+        lastPayoutDate.getMonth(),
+        lastPayoutDate.getDate()
+      );
+      // If we already paid today, schedule for next week
+      if (lastPayoutDay.getTime() === today.getTime()) {
+        nextDate.setDate(nextDate.getDate() + 7);
+      } else {
+        // Can pay today
+        return nextDate;
+      }
+    } else {
+      nextDate.setDate(nextDate.getDate() + daysUntilNext);
+    }
   } else if (schedule === "biweekly") {
     const lastPayout = lastPayoutAt || now;
     const daysSince = Math.floor(
@@ -537,12 +595,27 @@ export async function updatePayoutSettings(params: {
         .where(eq(sellerBalances.storeId, storeId))
         .limit(1);
 
+      const lastPayoutAt = balance?.lastPayoutAt || null;
       nextPayoutAt = await calculateNextPayoutDate(
         params.schedule,
         params.payoutDayOfWeek || null,
         params.payoutDayOfMonth || null,
-        balance?.lastPayoutAt || null
+        lastPayoutAt
       );
+
+      // If nextPayoutAt is in the past, recalculate from today
+      const now = new Date();
+      if (nextPayoutAt < now) {
+        console.warn(
+          `Calculated nextPayoutAt (${nextPayoutAt.toISOString()}) is in the past. Recalculating from today.`
+        );
+        nextPayoutAt = await calculateNextPayoutDate(
+          params.schedule,
+          params.payoutDayOfWeek || null,
+          params.payoutDayOfMonth || null,
+          null // Start fresh from today
+        );
+      }
     }
 
     if (existing) {

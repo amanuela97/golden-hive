@@ -1,6 +1,6 @@
-import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
+import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
 import { drizzle as drizzlePostgres } from "drizzle-orm/node-postgres";
-import { neon } from "@neondatabase/serverless";
+import { Pool as NeonPool } from "@neondatabase/serverless";
 import { Pool } from "pg";
 
 import * as schema from "./schema";
@@ -8,12 +8,27 @@ import * as schema from "./schema";
 // Create a singleton pool for non-Vercel environments
 let pool: Pool | null = null;
 
+// Create a singleton pool for Neon WebSocket connections (for transactions on Vercel)
+let neonPool: NeonPool | null = null;
+
 function getPool(): Pool {
   if (!pool) {
-    const connectionString = process.env.DATABASE_URL;
+    let connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is not set");
     }
+
+    // Normalize SSL mode to avoid deprecation warnings
+    // Replace deprecated SSL modes (prefer, require, verify-ca) with verify-full
+    // This ensures current secure behavior and eliminates the warning
+    connectionString = connectionString.replace(
+      /sslmode=(prefer|require|verify-ca)(&|$)/gi,
+      "sslmode=verify-full$2"
+    );
+
+    // Determine SSL configuration (after normalization)
+    const needsSSL = connectionString.includes("sslmode=verify-full") ||
+                     connectionString.includes("ssl=true");
 
     pool = new Pool({
       connectionString,
@@ -26,11 +41,8 @@ function getPool(): Pool {
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000,
       // SSL configuration for secure connections
-      ssl:
-        connectionString.includes("sslmode=require") ||
-        connectionString.includes("ssl=true")
-          ? { rejectUnauthorized: false }
-          : undefined,
+      // Use rejectUnauthorized: false for Neon and other cloud providers that use self-signed certificates
+      ssl: needsSSL ? { rejectUnauthorized: false } : undefined,
     });
 
     // Handle pool errors
@@ -62,9 +74,23 @@ function getPool(): Pool {
   return pool;
 }
 
+function getNeonPool(): NeonPool {
+  if (!neonPool) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error("DATABASE_URL environment variable is not set");
+    }
+
+    neonPool = new NeonPool({
+      connectionString,
+    });
+  }
+
+  return neonPool;
+}
+
 export const db = process.env.VERCEL
-  ? drizzleNeon({
-      client: neon(process.env.DATABASE_URL!),
+  ? drizzleNeon(getNeonPool(), {
       schema,
       casing: "snake_case",
     })

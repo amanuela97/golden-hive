@@ -66,9 +66,12 @@ export async function POST(req: NextRequest) {
         }
 
         // Check actual Stripe balance to ensure funds are available
+        // For connected accounts, retrieve balance from the connected account
         let stripeAvailableBalance = 0;
         try {
-          const stripeBalance = await stripe.balance.retrieve();
+          const stripeBalance = await stripe.balance.retrieve({
+            stripeAccount: storeData.stripeAccountId,
+          });
           const currencyBalance = stripeBalance.available.find(
             (b) => b.currency.toLowerCase() === balance.currency.toLowerCase()
           );
@@ -78,7 +81,7 @@ export async function POST(req: NextRequest) {
             : 0;
         } catch (stripeError) {
           console.error(
-            `Error retrieving Stripe balance for store ${settings.storeId}:`,
+            `Error retrieving Stripe balance for store ${settings.storeId} (account ${storeData.stripeAccountId}):`,
             stripeError
           );
           // If we can't check Stripe balance, skip this payout to be safe
@@ -107,12 +110,19 @@ export async function POST(req: NextRequest) {
         });
 
         if (payoutResult.success) {
-          // Calculate next payout date
+          // Get the actual payout date from the balance record
+          const [updatedBalance] = await db
+            .select({ lastPayoutAt: sellerBalances.lastPayoutAt })
+            .from(sellerBalances)
+            .where(eq(sellerBalances.storeId, settings.storeId))
+            .limit(1);
+
+          // Calculate next payout date using the actual payout date
           const nextPayoutAt = await calculateNextPayoutDate(
             settings.schedule as "weekly" | "biweekly" | "monthly" | null,
             settings.payoutDayOfWeek,
             settings.payoutDayOfMonth,
-            new Date() // Use current date as last payout
+            updatedBalance?.lastPayoutAt || new Date() // Use actual payout date
           );
 
           // Update nextPayoutAt
@@ -121,6 +131,9 @@ export async function POST(req: NextRequest) {
             .set({ nextPayoutAt })
             .where(eq(sellerPayoutSettings.id, settings.id));
 
+          console.log(
+            `Successfully processed payout for store ${settings.storeId}. Next payout scheduled for ${nextPayoutAt.toISOString()}`
+          );
           results.processed++;
         } else {
           results.errors.push(

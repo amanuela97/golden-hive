@@ -937,7 +937,7 @@ export default function MessagesPageClient() {
                     }`}
                   >
                     {/* Avatar */}
-                    <div className="flex-shrink-0 relative">
+                    <div className="shrink-0 relative">
                       {otherUserImage ? (
                         <Image
                           src={otherUserImage}
@@ -1013,7 +1013,7 @@ export default function MessagesPageClient() {
                   return (
                     <>
                       {/* Avatar */}
-                      <div className="flex-shrink-0 relative">
+                      <div className="shrink-0 relative">
                         {otherUserImage ? (
                           <Image
                             src={otherUserImage}
@@ -1077,7 +1077,7 @@ export default function MessagesPageClient() {
             </div>
 
             <div
-              className="flex-1 overflow-y-auto overflow-x-hidden p-4 bg-gradient-to-b from-gray-300 to-gray-200"
+              className="flex-1 overflow-y-auto overflow-x-hidden p-4 bg-linear-to-b from-gray-300 to-gray-200"
      
             >
               {isLoadingMessages ? (
@@ -1126,7 +1126,7 @@ export default function MessagesPageClient() {
                           }`}
                         >
                           <div
-                            className={`relative max-w-xs lg:max-w-md px-4 py-2 rounded-lg break-words ${
+                            className={`relative max-w-xs lg:max-w-md px-4 py-2 rounded-lg wrap-break-word ${
                               msg.senderRole === "customer"
                                 ? "bg-green-500 text-white"
                                 : "bg-gray-200 text-gray-900"
@@ -1172,7 +1172,7 @@ export default function MessagesPageClient() {
                                   {msg.sender.name}
                                 </p>
                                 {msg.text && (
-                                  <p className="whitespace-pre-wrap break-words">
+                                  <p className="whitespace-pre-wrap wrap-break-words">
                                     {msg.text}
                                   </p>
                                 )}
@@ -1371,7 +1371,7 @@ export default function MessagesPageClient() {
                   placeholder="Type a message..."
                   disabled={selectedRoom.status === "blocked" || !isConnected}
                   rows={3}
-                  className="flex-1 px-4 py-3 border rounded-lg disabled:opacity-50 resize-none overflow-y-auto break-words"
+                  className="flex-1 px-4 py-3 border rounded-lg disabled:opacity-50 resize-none overflow-y-auto wrap-break-words"
                   style={{ minHeight: "60px", maxHeight: "120px" }}
                 />
                 <button
@@ -1396,7 +1396,9 @@ export default function MessagesPageClient() {
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-gray-500">
-            Select a conversation to start messaging
+            {rooms.length === 0 && !isLoadingRooms
+              ? "No conversations yet. Start a conversation by placing an order."
+              : "Select a conversation to start messaging"}
           </div>
         )}
       </div>
