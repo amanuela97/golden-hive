@@ -5,6 +5,7 @@ import {
   sellerBalances,
   sellerBalanceTransactions,
   sellerPayoutSettings,
+  store,
 } from "@/db/schema";
 import { eq, desc, and, or, gte, lte, ilike, sql } from "drizzle-orm";
 import { getStoreIdForUser } from "./orders";
@@ -64,6 +65,8 @@ export async function getBalanceSummary() {
         lastPayoutAt: null,
         lastPayoutAmount: null,
         stripeAvailableBalance: 0,
+        stripeConnectedAvailable: null,
+        stripeConnectedPending: null,
       },
     };
   }
@@ -71,40 +74,115 @@ export async function getBalanceSummary() {
   const ledgerAvailableBalance = parseFloat(balance.availableBalance);
   const pendingBalance = parseFloat(balance.pendingBalance);
 
+  console.log("[Balance Summary] Starting balance calculation:", {
+    storeId,
+    ledgerAvailableBalance,
+    pendingBalance,
+    currency: balance.currency,
+    rawAvailableBalance: balance.availableBalance,
+    rawPendingBalance: balance.pendingBalance,
+  });
+
   // Check actual Stripe balance to ensure we only show funds that are available
   let stripeAvailableBalance: number | null = null;
   try {
     const { stripe } = await import("@/lib/stripe");
     const stripeBalance = await stripe.balance.retrieve();
 
+    console.log("[Balance Summary] Stripe balance retrieved:", {
+      available: stripeBalance.available,
+      pending: stripeBalance.pending,
+    });
+
     // Find available balance for the currency
     const currencyBalance = stripeBalance.available.find(
       (b) => b.currency.toLowerCase() === balance.currency.toLowerCase()
     );
 
+    console.log("[Balance Summary] Currency balance search:", {
+      lookingFor: balance.currency.toLowerCase(),
+      found: currencyBalance,
+      allCurrencies: stripeBalance.available.map((b) => b.currency),
+    });
+
     // Convert from cents to dollars/euros
-    stripeAvailableBalance = currencyBalance ? currencyBalance.amount / 100 : 0;
+    // Only set if currency balance is found AND has a positive amount
+    // If amount is 0 or not found, use null to fall back to ledger balance
+    // This is important for connected accounts where funds are in the connected account, not platform
+    stripeAvailableBalance =
+      currencyBalance && currencyBalance.amount > 0
+        ? currencyBalance.amount / 100
+        : null;
+
+    console.log("[Balance Summary] Stripe available balance:", {
+      stripeAvailableBalance,
+      currencyBalanceAmount: currencyBalance?.amount,
+    });
   } catch (error) {
-    console.error("Error retrieving Stripe balance:", error);
+    console.error("[Balance Summary] Error retrieving Stripe balance:", error);
     // If we can't get Stripe balance, set to null to indicate check failed
-    // We'll be conservative and use 0 for available balance
     stripeAvailableBalance = null;
+  }
+
+  // Connected account balance: for payouts we need the seller's Stripe Connect account balance
+  // (funds transferred from platform land here; they may be "pending" for 2–7 days before "available")
+  let stripeConnectedAvailable: number | null = null;
+  let stripeConnectedPending: number | null = null;
+  try {
+    const [storeRow] = await db
+      .select({ stripeAccountId: store.stripeAccountId })
+      .from(store)
+      .where(eq(store.id, storeId))
+      .limit(1);
+    if (storeRow?.stripeAccountId) {
+      const { stripe } = await import("@/lib/stripe");
+      const connectedBalance = await stripe.balance.retrieve({
+        stripeAccount: storeRow.stripeAccountId,
+      });
+      const avail = connectedBalance.available.find(
+        (b) => b.currency.toLowerCase() === balance.currency.toLowerCase()
+      );
+      const pend = connectedBalance.pending.find(
+        (b) => b.currency.toLowerCase() === balance.currency.toLowerCase()
+      );
+      stripeConnectedAvailable = avail ? avail.amount / 100 : 0;
+      stripeConnectedPending = pend ? pend.amount / 100 : 0;
+    }
+  } catch (error) {
+    console.error(
+      "[Balance Summary] Error retrieving connected account balance:",
+      error
+    );
   }
 
   // Available balance is the minimum of ledger balance and Stripe balance
   // This ensures we only show funds that are actually available for payout
-  // If Stripe check failed, use 0 to be safe (don't show funds that might not exist)
+  // If Stripe check failed, fall back to ledger balance (trust our ledger)
   const availableBalance =
     stripeAvailableBalance !== null
       ? Math.min(
           Math.max(0, ledgerAvailableBalance),
           Math.max(0, stripeAvailableBalance)
         )
-      : 0; // If Stripe check failed, show 0 to prevent incorrect payouts
+      : Math.max(0, ledgerAvailableBalance); // If Stripe check failed, use ledger balance
 
-  // Calculate amount due (negative balances from fees, shipping, etc.)
-  // Amount due is when availableBalance is negative
-  const amountDue = Math.max(0, -ledgerAvailableBalance);
+  console.log("[Balance Summary] Final calculation:", {
+    ledgerAvailableBalance,
+    stripeAvailableBalance,
+    calculatedAvailableBalance: availableBalance,
+    pendingBalance,
+    currentBalance: ledgerAvailableBalance + pendingBalance,
+  });
+
+  // Amount due: only show when available is negative AND pending doesn't cover it (real debt)
+  // When pending is positive and covers the negative (fees reserved from pending), show 0 and expose reserved amount for label
+  const negativeAvailable = -ledgerAvailableBalance;
+  const pendingCoversFees =
+    ledgerAvailableBalance < 0 &&
+    pendingBalance > 0 &&
+    pendingBalance >= negativeAvailable;
+  const amountDue = pendingCoversFees ? 0 : Math.max(0, negativeAvailable);
+  const reservedFeesFromPending = pendingCoversFees ? negativeAvailable : 0;
 
   return {
     success: true,
@@ -112,6 +190,7 @@ export async function getBalanceSummary() {
       availableBalance, // Only show what's actually available in Stripe
       pendingBalance,
       amountDue,
+      reservedFeesFromPending, // When > 0, show as "Reserved (fees)" with "covered by pending" (not a debt)
       currentBalance: ledgerAvailableBalance + pendingBalance, // Current balance includes pending
       currency: balance.currency,
       lastPayoutAt: balance.lastPayoutAt,
@@ -119,6 +198,9 @@ export async function getBalanceSummary() {
         ? parseFloat(balance.lastPayoutAmount)
         : null,
       stripeAvailableBalance: stripeAvailableBalance ?? 0, // Include for debugging/transparency
+      // Connected account balance: used to disable "Request payout" when funds are settling (available in 2–7 days)
+      stripeConnectedAvailable: stripeConnectedAvailable ?? null,
+      stripeConnectedPending: stripeConnectedPending ?? null,
     },
   };
 }
@@ -349,15 +431,15 @@ export async function getPayoutSettings() {
         updated_at: Date | string;
       };
 
-      // Try to get optional columns if they exist (migration 0055)
-      let holdPeriodDays = 7;
-      let nextPayoutAt: Date | null = null;
+      // Hold period is platform-enforced from env (no per-store setting)
+      const { getHoldPeriodDays } = await import("@/lib/utils");
+      const holdPeriodDays = getHoldPeriodDays();
 
+      // Try to get optional column next_payout_at if it exists (migration 0055)
+      let nextPayoutAt: Date | null = null;
       try {
         const optionalResult = await db.execute(
-          sql`SELECT 
-                hold_period_days,
-                next_payout_at
+          sql`SELECT next_payout_at
               FROM seller_payout_settings 
               WHERE store_id = ${storeId} 
               LIMIT 1`
@@ -365,10 +447,8 @@ export async function getPayoutSettings() {
 
         if (optionalResult.rows && optionalResult.rows.length > 0) {
           const optionalRow = optionalResult.rows[0] as {
-            hold_period_days?: number | null;
             next_payout_at?: Date | string | null;
           };
-          holdPeriodDays = optionalRow.hold_period_days ?? 7;
           nextPayoutAt = optionalRow.next_payout_at
             ? new Date(optionalRow.next_payout_at)
             : null;
@@ -398,12 +478,16 @@ export async function getPayoutSettings() {
             );
 
             // Update the database with the corrected date
+            // Note: We don't revalidate here because this function is called during render
+            // The page will show the updated date on next refresh
             try {
               await db.execute(
                 sql`UPDATE seller_payout_settings 
                     SET next_payout_at = ${nextPayoutAt.toISOString()} 
                     WHERE store_id = ${storeId}`
               );
+              // Return the corrected date so it's shown immediately
+              // The database is updated, and the page will reflect it on next request
             } catch (updateError) {
               console.error(
                 "Failed to update nextPayoutAt in database:",
@@ -436,7 +520,8 @@ export async function getPayoutSettings() {
       };
     }
 
-    // No settings found, return defaults
+    // No settings found, return defaults (hold period from env)
+    const { getHoldPeriodDays } = await import("@/lib/utils");
     return {
       success: true,
       data: {
@@ -445,13 +530,13 @@ export async function getPayoutSettings() {
         minimumAmount: 20.0,
         payoutDayOfWeek: null,
         payoutDayOfMonth: null,
-        holdPeriodDays: 7,
+        holdPeriodDays: getHoldPeriodDays(),
         nextPayoutAt: null,
       },
     };
   } catch (error) {
     console.error("Error fetching payout settings:", error);
-    // Return defaults if query fails
+    const { getHoldPeriodDays } = await import("@/lib/utils");
     return {
       success: true,
       data: {
@@ -460,7 +545,7 @@ export async function getPayoutSettings() {
         minimumAmount: 20.0,
         payoutDayOfWeek: null,
         payoutDayOfMonth: null,
-        holdPeriodDays: 7,
+        holdPeriodDays: getHoldPeriodDays(),
         nextPayoutAt: null,
       },
     };
@@ -627,7 +712,6 @@ export async function updatePayoutSettings(params: {
         payoutDayOfWeek: number | null;
         payoutDayOfMonth: number | null;
         updatedAt: Date;
-        holdPeriodDays?: number;
         nextPayoutAt?: Date | null;
       };
 
@@ -642,28 +726,13 @@ export async function updatePayoutSettings(params: {
         updatedAt: new Date(),
       };
 
-      // Only add holdPeriodDays and nextPayoutAt if they exist in the table
-      // We'll try to update them, and if it fails, we'll retry without them
-      const existingHoldPeriod =
-        "holdPeriodDays" in existing
-          ? existing.holdPeriodDays
-          : "hold_period_days" in existing
-            ? existing.hold_period_days
-            : undefined;
+      // Only add nextPayoutAt if it exists in the table (hold period is platform-enforced from env, not stored per store)
       const existingNextPayout =
         "nextPayoutAt" in existing
           ? existing.nextPayoutAt
           : "next_payout_at" in existing
             ? existing.next_payout_at
             : undefined;
-
-      if (
-        existingHoldPeriod !== undefined ||
-        params.holdPeriodDays !== undefined
-      ) {
-        updateData.holdPeriodDays =
-          params.holdPeriodDays ?? existingHoldPeriod ?? 7;
-      }
       if (nextPayoutAt !== null || existingNextPayout !== undefined) {
         updateData.nextPayoutAt = nextPayoutAt;
       }
@@ -709,37 +778,26 @@ export async function updatePayoutSettings(params: {
             VALUES (${storeId}, ${params.method}, ${params.schedule || null}, ${params.minimumAmount ? params.minimumAmount.toFixed(2) : "20.00"}, ${params.payoutDayOfWeek || null}, ${params.payoutDayOfMonth || null}, NOW(), NOW())`
       );
 
-      // Try to update optional columns if they exist (migration 0055)
-      // This is a separate operation so it won't fail the insert if columns don't exist
-      try {
-        const holdPeriodDaysValue = params.holdPeriodDays ?? 7;
-        if (nextPayoutAt !== null) {
+      // Try to update next_payout_at if column exists (hold period is platform-enforced from env)
+      if (nextPayoutAt !== null) {
+        try {
           await db.execute(
             sql`UPDATE seller_payout_settings 
-                SET hold_period_days = ${holdPeriodDaysValue}, 
-                    next_payout_at = ${nextPayoutAt}, 
+                SET next_payout_at = ${nextPayoutAt}, 
                     updated_at = NOW()
                 WHERE store_id = ${storeId}`
           );
-        } else {
-          await db.execute(
-            sql`UPDATE seller_payout_settings 
-                SET hold_period_days = ${holdPeriodDaysValue}, 
-                    updated_at = NOW()
-                WHERE store_id = ${storeId}`
+        } catch (optionalUpdateError) {
+          console.warn(
+            "Optional column next_payout_at doesn't exist, skipping update:",
+            optionalUpdateError
           );
         }
-      } catch (optionalUpdateError) {
-        // Optional columns don't exist (migration 0055 hasn't run)
-        // This is expected and not an error - just log it
-        console.warn(
-          "Optional columns (holdPeriodDays, nextPayoutAt) don't exist, skipping update:",
-          optionalUpdateError
-        );
       }
     }
 
     revalidatePath("/dashboard/finances");
+    revalidatePath("/dashboard/finances/payouts");
     return { success: true };
   } catch (error) {
     console.error("Error updating payout settings:", error);

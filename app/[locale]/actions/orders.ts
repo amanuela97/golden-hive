@@ -545,15 +545,7 @@ export async function getStoreIdForUser(): Promise<{
   const isAdmin =
     userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
 
-  if (isAdmin) {
-    return {
-      storeId: null,
-      isAdmin: true,
-      isCustomer: false,
-      customerId: null,
-      allCustomerIds: [],
-    };
-  }
+  // Don't return early for admin: they may also be a store member and have a storeId
 
   // Check if user is a customer (has customer record)
   const customerRecords = await db
@@ -587,7 +579,7 @@ export async function getStoreIdForUser(): Promise<{
   if (storeResult.length === 0) {
     return {
       storeId: null,
-      isAdmin: false,
+      isAdmin,
       isCustomer: false,
       customerId: null,
       allCustomerIds: [],
@@ -597,7 +589,7 @@ export async function getStoreIdForUser(): Promise<{
 
   return {
     storeId: storeResult[0].id,
-    isAdmin: false,
+    isAdmin,
     isCustomer: false,
     customerId: null,
     allCustomerIds: [],

@@ -31,6 +31,7 @@ interface RequestPayoutParams {
 export async function requestPayout(params: RequestPayoutParams): Promise<{
   success: boolean;
   error?: string;
+  message?: string;
   payoutId?: string;
   transferId?: string;
 }> {
@@ -147,7 +148,17 @@ export async function requestPayout(params: RequestPayoutParams): Promise<{
       }
     }
 
-    // All checks passed - create payout and process immediately
+    // Determine payout provider from store
+    const [storeRow] = await db
+      .select({ payoutProvider: store.payoutProvider })
+      .from(store)
+      .where(eq(store.id, storeId))
+      .limit(1);
+
+    const payoutProvider =
+      (storeRow?.payoutProvider as string) || "stripe";
+
+    // All checks passed - create payout
     const [payout] = await db
       .insert(sellerPayouts)
       .values({
@@ -155,15 +166,27 @@ export async function requestPayout(params: RequestPayoutParams): Promise<{
         amount: amount.toFixed(2),
         currency,
         status: "pending",
+        provider: payoutProvider,
         requestedBy: session.user.id,
       })
       .returning();
 
-    // Automatically process the payout
+    if (payoutProvider === "esewa") {
+      revalidatePath("/dashboard/finances");
+      revalidatePath("/dashboard/finances/payouts");
+      revalidatePath("/dashboard/finances/transactions");
+      return {
+        success: true,
+        payoutId: payout.id,
+        message:
+          "Payout requested. You will receive the amount to your eSewa account within the next business days.",
+      };
+    }
+
+    // Automatically process the payout (Stripe only)
     const processResult = await processPayout(payout.id);
 
     if (processResult.success) {
-      // Revalidate all finance-related paths
       revalidatePath("/dashboard/finances");
       revalidatePath("/dashboard/finances/payouts");
       revalidatePath("/dashboard/finances/transactions");
@@ -174,7 +197,6 @@ export async function requestPayout(params: RequestPayoutParams): Promise<{
         transferId: processResult.transferId,
       };
     } else {
-      // If processing failed, return error
       return {
         success: false,
         error: processResult.error || "Failed to process payout",
@@ -211,6 +233,13 @@ export async function processPayout(
       return { success: false, error: "Payout not found or already processed" };
     }
 
+    if (payout.provider === "esewa") {
+      return {
+        success: false,
+        error: "eSewa payouts are fulfilled manually by admin.",
+      };
+    }
+
     // Get store's Stripe account ID
     const [storeData] = await db
       .select()
@@ -223,10 +252,19 @@ export async function processPayout(
     let stripeBalance: Stripe.Balance | null = null;
 
     try {
-      stripeBalance = await stripe.balance.retrieve();
+      // For connected accounts, check the connected account balance, not platform balance
+      if (storeData?.stripeAccountId) {
+        stripeBalance = await stripe.balance.retrieve({
+          stripeAccount: storeData.stripeAccountId,
+        });
+      } else {
+        // Fallback to platform balance if no connected account
+        stripeBalance = await stripe.balance.retrieve();
+      }
     } catch (balanceError) {
       console.error("Error retrieving Stripe balance:", balanceError);
       // Continue anyway - Stripe will fail the transfer if insufficient funds
+      // For connected accounts, we trust our ledger balance
     }
 
     if (stripeBalance) {
@@ -237,7 +275,9 @@ export async function processPayout(
 
       const availableBalanceCents = currencyBalance?.amount || 0;
 
-      if (availableBalanceCents < payoutAmountCents) {
+      // Only fail if Stripe balance is explicitly insufficient AND greater than 0
+      // If Stripe balance is 0, it might be a connected account - trust the ledger
+      if (availableBalanceCents > 0 && availableBalanceCents < payoutAmountCents) {
         const availableBalance = (availableBalanceCents / 100).toFixed(2);
         const errorMessage = `Insufficient funds in payment account. Available: ${availableBalance} ${payout.currency}, Required: ${payout.amount} ${payout.currency}. Please ensure payments are captured before requesting payouts.`;
 
@@ -255,6 +295,8 @@ export async function processPayout(
           error: errorMessage,
         };
       }
+      // If availableBalanceCents is 0, skip the check (connected account scenario)
+      // Trust the ledger balance and let Stripe handle the transfer
     }
 
     // Update payout status to processing
@@ -266,18 +308,65 @@ export async function processPayout(
       })
       .where(eq(sellerPayouts.id, payoutId));
 
-    // Create Stripe transfer
+    // Create Stripe payout (from connected account to seller's bank account)
     let transferId: string;
+    let stripePayoutId: string | undefined;
     if (storeData?.stripeAccountId) {
       try {
-        const transfer = await stripe.transfers.create({
-          amount: payoutAmountCents,
-          currency: payout.currency.toLowerCase(),
-          destination: storeData.stripeAccountId,
+        // First, check the connected account balance
+        const connectedAccountBalance = await stripe.balance.retrieve({
+          stripeAccount: storeData.stripeAccountId,
         });
-        transferId = transfer.id;
+        
+        const currencyBalance = connectedAccountBalance.available.find(
+          (b) => b.currency.toLowerCase() === payout.currency.toLowerCase()
+        );
+        
+        const availableBalanceCents = currencyBalance?.amount || 0;
+        
+        console.log("[Payout] Connected account balance check:", {
+          storeId: payout.storeId,
+          stripeAccountId: storeData.stripeAccountId,
+          requestedAmountCents: payoutAmountCents,
+          availableBalanceCents,
+          currency: payout.currency,
+        });
+
+        // Check if connected account has sufficient balance
+        if (availableBalanceCents < payoutAmountCents) {
+          const availableBalance = (availableBalanceCents / 100).toFixed(2);
+          const errorMessage = `Insufficient funds in connected account. Available: ${availableBalance} ${payout.currency}, Required: ${payout.amount} ${payout.currency}. Funds may still be pending or not yet transferred to your account.`;
+
+          // Mark payout as failed
+          await db
+            .update(sellerPayouts)
+            .set({
+              status: "failed",
+              failureReason: errorMessage,
+            })
+            .where(eq(sellerPayouts.id, payoutId));
+
+          return {
+            success: false,
+            error: errorMessage,
+          };
+        }
+
+        // Create payout from connected account to seller's bank account
+        const stripePayout = await stripe.payouts.create(
+          {
+            amount: payoutAmountCents,
+            currency: payout.currency.toLowerCase(),
+          },
+          {
+            stripeAccount: storeData.stripeAccountId,
+          }
+        );
+        
+        transferId = stripePayout.id; // For backward compatibility, store payout ID as transferId
+        stripePayoutId = stripePayout.id;
       } catch (error) {
-        console.error("Error creating Stripe transfer:", error);
+        console.error("Error creating Stripe payout:", error);
 
         // Provide user-friendly error messages for common Stripe errors
         let errorMessage = "Failed to process payout";
@@ -311,11 +400,12 @@ export async function processPayout(
       transferId = `tr_sim_${Date.now()}`;
     }
 
-    // Update payout with transfer ID
+    // Update payout with transfer/payout ID
     await db
       .update(sellerPayouts)
       .set({
         stripeTransferId: transferId,
+        stripePayoutId: stripePayoutId,
         status: "completed",
         completedAt: new Date(),
       })
@@ -404,6 +494,71 @@ export async function processPayoutByStoreId(params: {
     return { success: false, error: result.error };
   } catch (error) {
     console.error("Error processing payout by store ID:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+/**
+ * Mark an eSewa payout as completed (admin/cron only).
+ * Updates payout status, debits seller balance, updates lastPayoutAt.
+ */
+export async function markEsewaPayoutCompleted(
+  payoutId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const [payout] = await db
+      .select()
+      .from(sellerPayouts)
+      .where(eq(sellerPayouts.id, payoutId))
+      .limit(1);
+
+    if (!payout) {
+      return { success: false, error: "Payout not found" };
+    }
+    if (payout.provider !== "esewa") {
+      return { success: false, error: "Payout is not an eSewa payout" };
+    }
+    if (payout.status !== "pending") {
+      return { success: false, error: "Payout is not pending" };
+    }
+
+    await db
+      .update(sellerPayouts)
+      .set({
+        status: "completed",
+        completedAt: new Date(),
+      })
+      .where(eq(sellerPayouts.id, payoutId));
+
+    const { updateSellerBalance } = await import("./seller-balance");
+    await updateSellerBalance({
+      storeId: payout.storeId,
+      type: "payout",
+      amount: parseFloat(payout.amount),
+      currency: payout.currency,
+      payoutId: payout.id,
+      description: "eSewa payout completed",
+    });
+
+    await db
+      .update(sellerBalances)
+      .set({
+        lastPayoutAt: new Date(),
+        lastPayoutAmount: payout.amount,
+        updatedAt: new Date(),
+      })
+      .where(eq(sellerBalances.storeId, payout.storeId));
+
+    revalidatePath("/dashboard/finances");
+    revalidatePath("/dashboard/finances/payouts");
+    revalidatePath("/dashboard/finances/transactions");
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error marking eSewa payout completed:", error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",

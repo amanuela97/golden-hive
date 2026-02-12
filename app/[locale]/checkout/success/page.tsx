@@ -35,6 +35,7 @@ export default function CheckoutSuccessPage() {
   const searchParams = useSearchParams();
   const { clearCart } = useCart();
   const sessionId = searchParams.get("session_id");
+  const orderIdsParam = searchParams.get("orderIds");
   const [orderData, setOrderData] = useState<OrderData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,22 +44,41 @@ export default function CheckoutSuccessPage() {
     // Clear cart on success - this ensures cart is emptied after successful checkout
     clearCart();
 
-    // Fetch order details if session_id is provided
     if (sessionId) {
-      fetchOrderDetails(sessionId);
+      fetchOrderBySession(sessionId);
+    } else if (orderIdsParam) {
+      fetchOrderByIds(orderIdsParam);
     } else {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [sessionId, orderIdsParam]);
 
-  async function fetchOrderDetails(sessionId: string) {
+  async function fetchOrderBySession(sessionId: string) {
     try {
       const response = await fetch(
         `/api/checkout/get-order-by-session?session_id=${sessionId}`
       );
       const data = await response.json();
+      if (data.success && data.order) {
+        setOrderData(data.order);
+      } else {
+        setError(data.error || "Failed to fetch order details");
+      }
+    } catch (err) {
+      console.error("Error fetching order details:", err);
+      setError("Failed to load order details");
+    } finally {
+      setLoading(false);
+    }
+  }
 
+  async function fetchOrderByIds(orderIds: string) {
+    try {
+      const response = await fetch(
+        `/api/checkout/get-order-by-ids?orderIds=${encodeURIComponent(orderIds)}`
+      );
+      const data = await response.json();
       if (data.success && data.order) {
         setOrderData(data.order);
       } else {

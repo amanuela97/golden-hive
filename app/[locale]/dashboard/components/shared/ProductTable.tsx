@@ -83,17 +83,20 @@ export default function ProductTable({
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("createdAt-asc");
-  const [canCreateProduct, setCanCreateProduct] = useState(true);
+  // null = not yet determined (avoid showing button then hiding after async check)
+  const [canCreateProduct, setCanCreateProduct] = useState<boolean | null>(null);
   // Categories are now handled via taxonomy - removed old category system
 
-  // Check Stripe setup status for all users (sellers and admins)
+  // Check Stripe/store setup so we only show Add Product when allowed (avoids flicker)
   useEffect(() => {
+    let cancelled = false;
     const checkSetupStatus = async () => {
       try {
         const [setupStatus, paymentReadiness] = await Promise.all([
           getStoreSetupStatus(),
           checkStripePaymentReadiness(),
         ]);
+        if (cancelled) return;
 
         // Allow product creation only if store is set up AND Stripe is ready
         // This applies to both sellers and admins
@@ -104,6 +107,7 @@ export default function ProductTable({
 
         setCanCreateProduct(canCreate);
       } catch (error) {
+        if (cancelled) return;
         console.error("Error checking setup status:", error);
         // On error, allow creation (fail open) - server action will still block
         setCanCreateProduct(true);
@@ -111,6 +115,9 @@ export default function ProductTable({
     };
 
     checkSetupStatus();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const columns = useMemo<ColumnDef<Listing>[]>(
@@ -627,7 +634,7 @@ export default function ProductTable({
               </Select>
             </div>
           </div>
-          {canCreateProduct && (
+          {canCreateProduct === true && (
             <Link href={`${basePath}/products/new`}>
               <Button>
                 <Plus className="w-4 h-4 mr-2" />

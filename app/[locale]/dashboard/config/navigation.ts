@@ -115,6 +115,7 @@ export const allNavItems: NavItem[] = [
         label: "Transaction History",
         href: "/dashboard/finances/transactions",
       },
+      { label: "eSewa Payouts (Admin)", href: "/dashboard/finances/esewa-payouts" },
     ],
     roles: ["admin", "seller"],
   },

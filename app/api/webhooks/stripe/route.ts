@@ -415,6 +415,12 @@ export async function POST(req: NextRequest) {
               const orderPlatformFee = orderAmount * 0.05;
               const orderStripeFee = (stripeFee * orderAmount) / totalAmount;
 
+              // Store charge ID for transfer when hold ends (separate charges + transfers)
+              const chargeId =
+                typeof paymentIntent.latest_charge === "string"
+                  ? paymentIntent.latest_charge
+                  : paymentIntent.latest_charge?.id ?? null;
+
               // Create payment record with "held" status
               const [paymentRecord] = await db
                 .insert(orderPayments)
@@ -432,6 +438,7 @@ export async function POST(req: NextRequest) {
                   ).toFixed(2),
                   stripePaymentIntentId: paymentIntentId,
                   stripeCheckoutSessionId: session.id,
+                  stripeChargeId: chargeId,
                   status: "completed",
                   transferStatus: "held", // Funds held in platform account
                 })
@@ -814,6 +821,12 @@ export async function POST(req: NextRequest) {
 
       const orderStoreId = orderStoreData[0].storeId;
 
+      // Store charge ID for transfer when hold ends (separate charges + transfers)
+      const chargeId =
+        typeof paymentIntent.latest_charge === "string"
+          ? paymentIntent.latest_charge
+          : paymentIntent.latest_charge?.id ?? null;
+
       // Create payment record (single store) with "held" status
       console.log("💾 Creating payment record...");
       const [paymentRecord] = await db
@@ -828,6 +841,7 @@ export async function POST(req: NextRequest) {
           netAmountToStore: netAmountToStore.toFixed(2),
           stripePaymentIntentId: paymentIntentId,
           stripeCheckoutSessionId: session.id,
+          stripeChargeId: chargeId,
           status: "completed",
           transferStatus: "held", // Funds held in platform account
         })
@@ -1132,11 +1146,16 @@ export async function POST(req: NextRequest) {
           })
           .where(eq(orders.id, order.id));
 
-        // Update payment record status
+        // Update payment record status and ensure charge ID is set (for transfer when hold ends)
+        const chargeId =
+          typeof paymentIntent.latest_charge === "string"
+            ? paymentIntent.latest_charge
+            : paymentIntent.latest_charge?.id ?? null;
         await db
           .update(orderPayments)
           .set({
             status: "completed",
+            ...(chargeId ? { stripeChargeId: chargeId } : {}),
             updatedAt: new Date(),
           })
           .where(eq(orderPayments.id, paymentRecord.id));

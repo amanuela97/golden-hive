@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
+import { Link, useRouter } from "@/i18n/navigation";
 import { getSocket } from "@/lib/socket-client";
 import { format, isToday, isYesterday, differenceInDays } from "date-fns";
 import Image from "next/image";
@@ -31,6 +32,7 @@ import {
   Paperclip,
   X,
   Download,
+  ArrowLeft,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -73,10 +75,13 @@ interface ChatRoom {
 
 export default function MessagesPageClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const orderId = searchParams.get("orderId");
+  const roomIdFromUrl = searchParams.get("roomId");
 
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
   const [isConnected, setIsConnected] = useState(false);
@@ -113,6 +118,42 @@ export default function MessagesPageClient() {
     lastId: null,
   });
   const socket = getSocket();
+
+  // Sync selectedRoomId when URL query (roomId) changes
+  useEffect(() => {
+    setSelectedRoomId(roomIdFromUrl ?? null);
+  }, [roomIdFromUrl]);
+
+  // Mobile breakpoint (match dashboard md)
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 768px)");
+    setIsMobile(!mql.matches);
+    const handler = () => setIsMobile(!window.matchMedia("(min-width: 768px)").matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+
+  // When roomId in URL and room not in list, fetch room so we can show header etc.
+  useEffect(() => {
+    if (!roomIdFromUrl || rooms.some((r) => r.id === roomIdFromUrl)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/chat/rooms?roomId=${roomIdFromUrl}`);
+        const data = await res.json();
+        if (cancelled || !data.room) return;
+        setRooms((prev) => {
+          if (prev.some((r) => r.id === data.room.id)) return prev;
+          return [data.room, ...prev];
+        });
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [roomIdFromUrl, rooms]);
 
   // Note: Socket.io doesn't work in Next.js API routes, so we use REST API + polling
   // Set connected to true since REST API is always available
@@ -185,16 +226,14 @@ export default function MessagesPageClient() {
           setRooms(data.rooms);
           setHasMoreRooms(data.pagination?.hasMore || false);
 
-          // If orderId is provided, select that room
+          // If orderId is provided, navigate to that room so URL shows roomId
           if (orderId) {
             const room = data.rooms.find((r: ChatRoom) => r.orderId === orderId);
-            if (room && room.id !== selectedRoomId) {
-              setSelectedRoomId(room.id);
+            if (room && !roomIdFromUrl) {
+              router.replace(`/dashboard/messages?roomId=${room.id}`);
             }
-          } else if (data.rooms.length > 0 && !selectedRoomId) {
-            // Select first room by default only if no room is selected
-            setSelectedRoomId(data.rooms[0].id);
           }
+          // No auto-select first room: on desktop URL stays /messages until user clicks; on mobile we show list only
         }
       } catch (error) {
         console.error("[Messages] Error loading rooms:", error);
@@ -878,10 +917,17 @@ export default function MessagesPageClient() {
 
   const groupedMessages = groupMessagesByDate(messages);
 
+  const showList = !isMobile || !roomIdFromUrl;
+  const showChat = !isMobile || !!roomIdFromUrl;
+
   return (
     <div className="flex h-[calc(100vh-8rem)] -m-6">
-      {/* Sidebar - Room List */}
-      <div className="w-80 border-r bg-gray-50 flex flex-col">
+      {/* Sidebar - Room List: on mobile hidden when a room is open */}
+      <div
+        className={`${
+          showList ? "flex" : "hidden"
+        } w-full md:w-80 border-r bg-gray-50 flex-col flex`}
+      >
         <div className="p-4 border-b">
           <h2 className="text-lg font-semibold mb-3">Messages</h2>
           {/* Search Input */}
@@ -927,9 +973,9 @@ export default function MessagesPageClient() {
                 const otherUserInitials = getInitials(otherUserName);
 
                 return (
-                  <button
+                  <Link
                     key={room.id}
-                    onClick={() => setSelectedRoomId(room.id)}
+                    href={`/dashboard/messages?roomId=${room.id}`}
                     className={`w-full text-left p-4 border-b cursor-pointer flex items-center gap-3 transition-colors ${
                       selectedRoomId === room.id
                         ? "bg-blue-100 border-blue-300 border-l-4 border-l-blue-500 shadow-sm"
@@ -966,7 +1012,7 @@ export default function MessagesPageClient() {
                         <div className="text-xs text-red-500 mt-1">Blocked</div>
                       )}
                     </div>
-                  </button>
+                  </Link>
                 );
               })}
               {rooms.length === 0 && !isLoadingRooms && (
@@ -994,12 +1040,26 @@ export default function MessagesPageClient() {
         </div>
       </div>
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
+      {/* Main Chat Area: on mobile hidden until a room is selected (navigated to [id]) */}
+      <div
+        className={`${
+          showChat ? "flex" : "hidden"
+        } flex-1 flex-col flex min-w-0`}
+      >
         {selectedRoom ? (
           <>
-            <div className="border-b p-4 flex items-center justify-between">
-              <div className="flex-1 flex items-center gap-3">
+            <div className="border-b p-4 flex items-center justify-between shrink-0">
+              <div className="flex-1 flex items-center gap-3 min-w-0">
+                {/* Mobile: back to room list */}
+                {isMobile && roomIdFromUrl && (
+                  <Link
+                    href="/dashboard/messages"
+                    className="shrink-0 p-2 -ml-2 rounded-lg hover:bg-gray-100 text-gray-600"
+                    aria-label="Back to conversations"
+                  >
+                    <ArrowLeft className="h-5 w-5" />
+                  </Link>
+                )}
                 {(() => {
                   const isBuyer = currentUserId === selectedRoom.buyerId;
                   const otherUserImage = isBuyer

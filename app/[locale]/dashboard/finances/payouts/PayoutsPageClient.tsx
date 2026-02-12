@@ -22,16 +22,19 @@ import {
   getRecentActivity,
   getBalanceSummary,
 } from "@/app/[locale]/actions/finances";
-import { TooltipProvider } from "@/components/ui/tooltip";
 
 interface BalanceData {
   availableBalance: number;
   pendingBalance: number;
   amountDue: number;
+  reservedFeesFromPending?: number;
   currentBalance: number;
   currency: string;
   lastPayoutAt: Date | null;
   lastPayoutAmount: number | null;
+  /** Connected account Stripe available balance (null if no connected account or error) */
+  stripeConnectedAvailable?: number | null;
+  stripeConnectedPending?: number | null;
 }
 
 interface ActivityItem {
@@ -162,31 +165,54 @@ export default function PayoutsPageClient({
 
   const minimumAmount = payoutSettings?.minimumAmount || 20.0;
 
+  // When ledger shows available but Stripe connected account has 0 available (funds settling), disable payout and show message
+  const stripeConnectedAvailable = balanceData.stripeConnectedAvailable ?? null;
+  const fundsSettling =
+    balanceData.availableBalance > 0 &&
+    stripeConnectedAvailable !== null &&
+    stripeConnectedAvailable === 0;
+  const effectivePayoutAvailable =
+    stripeConnectedAvailable !== null
+      ? Math.min(balanceData.availableBalance, stripeConnectedAvailable)
+      : balanceData.availableBalance;
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Balance & Payouts</h1>
           <p className="text-muted-foreground mt-2">
             Manage your earnings and request payouts
           </p>
         </div>
-        <RequestPayoutButton
-          availableBalance={balanceData.availableBalance}
-          currency={balanceData.currency}
-          minimumAmount={minimumAmount}
-          onSuccess={handleRefresh}
-        />
+        <div className="flex flex-col items-end w-[50%] gap-2">
+    
+          <RequestPayoutButton
+            availableBalance={effectivePayoutAvailable}
+            currency={balanceData.currency}
+            minimumAmount={minimumAmount}
+            onSuccess={handleRefresh}
+          />    
+          {fundsSettling && (
+            <p className="text-sm text-amber-600 dark:text-amber-500 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
+              Your funds have been transferred and are settling with our payment
+              provider. They usually become available for payout within 2–7
+              business days. You can request a payout once they&apos;re
+              available.
+            </p>
+          )}
+        </div>
+    
       </div>
-      <TooltipProvider delayDuration={100}>
-        <BalanceSummary
-          availableBalance={balanceData.availableBalance}
-          pendingBalance={balanceData.pendingBalance}
-          amountDue={balanceData.amountDue}
-          currentBalance={balanceData.currentBalance}
-          currency={balanceData.currency}
-        />
-      </TooltipProvider>
+      <BalanceSummary
+        availableBalance={balanceData.availableBalance}
+        pendingBalance={balanceData.pendingBalance}
+        amountDue={balanceData.amountDue}
+        reservedFeesFromPending={balanceData.reservedFeesFromPending}
+        currentBalance={balanceData.currentBalance}
+        currency={balanceData.currency}
+        holdPeriodDays={payoutSettings?.holdPeriodDays}
+      />
 
       {/* Payout Schedule Info */}
       {payoutSettings && (

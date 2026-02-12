@@ -11,6 +11,20 @@ import {
   type UserRole,
 } from "@/app/[locale]/dashboard/config/navigation";
 
+const MOBILE_BREAKPOINT = 860;
+
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(true);
+  useEffect(() => {
+    const mql = window.matchMedia(`(min-width: ${MOBILE_BREAKPOINT}px)`);
+    setIsDesktop(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+  return isDesktop;
+}
+
 type SettingsSection =
   | "users"
   | "roles"
@@ -41,6 +55,7 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const isDesktop = useIsDesktop();
   const [activeSection, setActiveSection] = useState<SettingsSection>("store");
 
   const validSections: SettingsSection[] = [
@@ -93,6 +108,8 @@ export function SettingsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
+  // On mobile, never show the modal; user uses dedicated /dashboard/settings page
+  if (!isDesktop) return null;
   if (!isOpen) return null;
 
   // Filter sections based on user role
@@ -117,7 +134,7 @@ export function SettingsModal({
         <div className="flex h-full">
           {/* Left Sidebar */}
           <div className="w-64 border-r border-border bg-muted/30 flex flex-col">
-            <div className="p-4 flex-shrink-0">
+            <div className="p-4 shrink-0">
               <h2 className="text-lg font-semibold">Settings</h2>
             </div>
             <nav className="px-2 flex-1 overflow-y-auto">

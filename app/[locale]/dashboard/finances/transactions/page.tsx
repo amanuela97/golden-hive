@@ -16,13 +16,16 @@ export default async function TransactionsPage() {
   }
 
   const { role: roleName } = result;
-  const { storeId } = await getStoreIdForUser();
+  const { storeId, isAdmin } = await getStoreIdForUser();
 
-  if (!storeId) {
+  // Sellers need a store; admins have no storeId so we show the page with empty data
+  if (!storeId && !isAdmin) {
     return <DashboardNotFound />;
   }
 
-  const activityResult = await getRecentActivity(100, 0);
+  const activityResult = storeId
+    ? await getRecentActivity(100, 0)
+    : { success: false as const, data: [] as const };
 
   return (
     <DashboardWrapper userRole={roleName}>

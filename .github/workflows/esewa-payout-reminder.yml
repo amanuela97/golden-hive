@@ -1,0 +1,19 @@
+name: eSewa Payout Reminder
+
+on:
+  schedule:
+    - cron: "0 9 * * 1-5" # 9:00 UTC weekdays
+  workflow_dispatch:
+
+jobs:
+  reminder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call eSewa Payout Reminder API
+        run: |
+          curl -s -X POST ${{ secrets.APP_URL }}/api/cron/esewa-payout-reminder \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

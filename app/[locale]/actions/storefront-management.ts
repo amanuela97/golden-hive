@@ -478,3 +478,40 @@ export async function updateStorePolicies(
     };
   }
 }
+
+/**
+ * Update store payout provider (Stripe vs eSewa) and eSewa ID
+ */
+export async function updateStorePayoutProvider(
+  storeId: string,
+  data: {
+    payoutProvider: "stripe" | "esewa";
+    esewaId?: string | null;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  const access = await verifyStoreAccess(storeId);
+  if (!access.authorized) {
+    return { success: false, error: access.error };
+  }
+
+  try {
+    await db
+      .update(store)
+      .set({
+        payoutProvider: data.payoutProvider,
+        esewaId: data.payoutProvider === "esewa" ? (data.esewaId || null) : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(store.id, storeId));
+
+    revalidatePath("/dashboard/settings");
+    revalidatePath("/dashboard/finances");
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to update payout provider",
+    };
+  }
+}

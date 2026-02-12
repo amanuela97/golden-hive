@@ -21,20 +21,28 @@ export default async function PayoutsPage() {
   }
 
   const { role: roleName } = result;
-  const { storeId } = await getStoreIdForUser();
+  const { storeId, isAdmin } = await getStoreIdForUser();
 
-  if (!storeId) {
+  // Sellers need a store; admins have no storeId so we show the page with empty data
+  if (!storeId && !isAdmin) {
     return <DashboardNotFound />;
   }
 
-  // Fetch all data in parallel
+  // Fetch all data in parallel (only when user has a store; admins get empty data)
   const [balanceResult, activityResult, payoutsResult, settingsResult] =
-    await Promise.all([
-      getBalanceSummary(),
-      getRecentActivity(50, 0),
-      getPayouts(storeId),
-      getPayoutSettings(),
-    ]);
+    storeId
+      ? await Promise.all([
+          getBalanceSummary(),
+          getRecentActivity(50, 0),
+          getPayouts(storeId),
+          getPayoutSettings(),
+        ])
+      : [
+          { success: false as const, data: null },
+          { success: false as const, data: [] as const },
+          { success: false as const, data: [] as const },
+          { success: false as const, data: null },
+        ];
 
   return (
     <DashboardWrapper userRole={roleName}>

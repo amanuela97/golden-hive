@@ -22,12 +22,23 @@ import {
 import toast from "react-hot-toast";
 import Image from "next/image";
 
+function dedupeStoresById(list: StoreWithOwner[]): StoreWithOwner[] {
+  const seen = new Set<string>();
+  return list.filter((store) => {
+    if (seen.has(store.id)) return false;
+    seen.add(store.id);
+    return true;
+  });
+}
+
 export default function StoresPageClient({
   initialStores,
 }: {
   initialStores: StoreWithOwner[];
 }) {
-  const [stores, setStores] = useState<StoreWithOwner[]>(initialStores);
+  const [stores, setStores] = useState<StoreWithOwner[]>(() =>
+    dedupeStoresById(initialStores)
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [filterApproved, setFilterApproved] = useState<boolean | undefined>(
     undefined
@@ -43,7 +54,7 @@ export default function StoresPageClient({
           search: searchQuery || undefined,
           isApproved: filterApproved,
         });
-        setStores(result);
+        setStores(dedupeStoresById(result));
       } catch (error: unknown) {
         toast.error(
           error instanceof Error ? error.message : "Failed to fetch stores"
@@ -194,13 +205,30 @@ export default function StoresPageClient({
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div>
-                      <div className="font-medium">
-                        {store.ownerName || "N/A"}
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {store.ownerEmail || ""}
-                      </div>
+                    <div className="space-y-2">
+                      {store.owners && store.owners.length > 0 ? (
+                        store.owners.map((owner, i) => (
+                          <div key={owner.email ? owner.email : `owner-${i}`}>
+                            <div className="font-medium">
+                              {owner.name || "N/A"}
+                            </div>
+                            {owner.email && (
+                              <div className="text-sm text-muted-foreground">
+                                {owner.email}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <>
+                          <div className="font-medium">
+                            {store.ownerName || "N/A"}
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            {store.ownerEmail || ""}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>{store.productCount}</TableCell>

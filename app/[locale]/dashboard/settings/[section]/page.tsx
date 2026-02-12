@@ -1,7 +1,7 @@
 import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
 import { redirect } from "@/i18n/navigation";
 import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
-import SettingsContent from "../../components/shared/SettingsContent";
+import { SettingsPageWithBack } from "../../components/shared/SettingsPageWithBack";
 import DashboardNotFound from "../../not-found";
 
 type SettingsSection =
@@ -74,7 +74,7 @@ export default async function SettingsSectionPage({
 
   return (
     <DashboardWrapper userRole={roleName}>
-      <SettingsContent
+      <SettingsPageWithBack
         section={section as SettingsSection}
         userRole={roleName}
       />

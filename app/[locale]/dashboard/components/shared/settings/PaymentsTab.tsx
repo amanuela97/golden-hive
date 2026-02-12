@@ -4,6 +4,8 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   CreditCard,
   CheckCircle2,
@@ -18,6 +20,10 @@ import {
   createStripeDashboardLink,
 } from "@/app/[locale]/actions/stripe-connect";
 import { getStoreSetupStatus } from "@/app/[locale]/actions/store-setup";
+import {
+  getStore,
+  updateStorePayoutProvider,
+} from "@/app/[locale]/actions/storefront-management";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import toast from "react-hot-toast";
 import { Link } from "@/i18n/navigation";
@@ -40,6 +46,13 @@ export default function PaymentsTab() {
     detailsSubmitted: boolean;
   } | null>(null);
   const [loadingDashboardLink, setLoadingDashboardLink] = useState(false);
+
+  const [storeId, setStoreId] = useState<string | null>(null);
+  const [payoutProvider, setPayoutProvider] = useState<"stripe" | "esewa">(
+    "stripe"
+  );
+  const [esewaId, setEsewaId] = useState("");
+  const [savingPayoutMethod, setSavingPayoutMethod] = useState(false);
 
   useEffect(() => {
     loadStatus();
@@ -120,6 +133,26 @@ export default function PaymentsTab() {
     }
   };
 
+  const handleSavePayoutMethod = async () => {
+    if (!storeId) return;
+    setSavingPayoutMethod(true);
+    try {
+      const result = await updateStorePayoutProvider(storeId, {
+        payoutProvider: payoutProvider,
+        esewaId: payoutProvider === "esewa" ? esewaId || null : null,
+      });
+      if (result.success) {
+        toast.success("Payout method updated");
+      } else {
+        toast.error(result.error || "Failed to update");
+      }
+    } catch {
+      toast.error("Failed to update payout method");
+    } finally {
+      setSavingPayoutMethod(false);
+    }
+  };
+
   const handleViewEarnings = async () => {
     setLoadingDashboardLink(true);
     try {
@@ -171,6 +204,70 @@ export default function PaymentsTab() {
 
   return (
     <div className="space-y-6">
+      {storeId && (
+        <Card className="p-8">
+          <div className="space-y-4">
+            <h4 className="text-lg font-medium text-gray-900">
+              Payout method
+            </h4>
+            <p className="text-gray-600 text-sm">
+              Choose how you receive payouts. Stripe: to your connected Stripe
+              account. eSewa: manual transfer to your eSewa ID (Nepal).
+            </p>
+            <div className="flex flex-wrap gap-4 items-end">
+              <div className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  id="provider-stripe"
+                  name="payoutProvider"
+                  checked={payoutProvider === "stripe"}
+                  onChange={() => setPayoutProvider("stripe")}
+                  className="rounded-full"
+                />
+                <Label htmlFor="provider-stripe" className="cursor-pointer">
+                  Stripe
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  id="provider-esewa"
+                  name="payoutProvider"
+                  checked={payoutProvider === "esewa"}
+                  onChange={() => setPayoutProvider("esewa")}
+                  className="rounded-full"
+                />
+                <Label htmlFor="provider-esewa" className="cursor-pointer">
+                  eSewa (Nepal)
+                </Label>
+              </div>
+              {payoutProvider === "esewa" && (
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="esewaId">eSewa ID</Label>
+                  <Input
+                    id="esewaId"
+                    value={esewaId}
+                    onChange={(e) => setEsewaId(e.target.value)}
+                    placeholder="Your eSewa wallet ID"
+                    className="max-w-xs"
+                  />
+                </div>
+              )}
+              <Button
+                onClick={handleSavePayoutMethod}
+                disabled={savingPayoutMethod}
+                size="sm"
+              >
+                {savingPayoutMethod ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Save"
+                )}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
       {!setupStatus.hasStripeAccount ? (
         <Card className="p-8">
           <div className="space-y-4">

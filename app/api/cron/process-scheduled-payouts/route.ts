@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
 
         // Check actual Stripe balance to ensure funds are available
         // For connected accounts, retrieve balance from the connected account
-        let stripeAvailableBalance = 0;
+        let stripeAvailableBalance: number | null = null;
         try {
           const stripeBalance = await stripe.balance.retrieve({
             stripeAccount: storeData.stripeAccountId,
@@ -76,25 +76,30 @@ export async function POST(req: NextRequest) {
             (b) => b.currency.toLowerCase() === balance.currency.toLowerCase()
           );
           // Convert from cents to dollars/euros
-          stripeAvailableBalance = currencyBalance
-            ? currencyBalance.amount / 100
-            : 0;
+          // Only set if currency balance is found AND has a positive amount
+          // If amount is 0 or not found, use null to fall back to ledger balance
+          stripeAvailableBalance =
+            currencyBalance && currencyBalance.amount > 0
+              ? currencyBalance.amount / 100
+              : null;
         } catch (stripeError) {
           console.error(
             `Error retrieving Stripe balance for store ${settings.storeId} (account ${storeData.stripeAccountId}):`,
             stripeError
           );
-          // If we can't check Stripe balance, skip this payout to be safe
-          results.skipped++;
-          continue;
+          // If we can't check Stripe balance, trust the ledger and continue
+          stripeAvailableBalance = null;
         }
 
-        // Use the minimum of ledger and Stripe balance
-        // This ensures we only payout funds that actually exist in Stripe
-        const availableBalance = Math.min(
-          Math.max(0, ledgerAvailableBalance),
-          Math.max(0, stripeAvailableBalance)
-        );
+        // Use the minimum of ledger and Stripe balance if Stripe balance is available
+        // If Stripe balance is null (0 or unavailable), trust the ledger balance
+        const availableBalance =
+          stripeAvailableBalance !== null
+            ? Math.min(
+                Math.max(0, ledgerAvailableBalance),
+                Math.max(0, stripeAvailableBalance)
+              )
+            : Math.max(0, ledgerAvailableBalance);
 
         // Re-check minimum amount with actual available balance
         if (availableBalance < minimumAmount) {

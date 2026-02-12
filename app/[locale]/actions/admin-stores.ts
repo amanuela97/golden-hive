@@ -6,6 +6,11 @@ import { eq, and, or, like, desc } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { getCurrentAdmin } from "./admin";
 
+export interface StoreOwner {
+  name: string | null;
+  email: string | null;
+}
+
 export interface StoreWithOwner {
   id: string;
   storeName: string;
@@ -14,8 +19,11 @@ export interface StoreWithOwner {
   isApproved: boolean;
   approvedAt: Date | null;
   createdAt: Date;
+  /** First owner (for backward compatibility) */
   ownerName: string | null;
   ownerEmail: string | null;
+  /** All admin members / owners for this store */
+  owners: StoreOwner[];
   productCount: number;
 }
 
@@ -74,10 +82,55 @@ export async function getAllStores(options?: {
     productCounts.map((pc) => [pc.storeId, Number(pc.count)])
   );
 
-  return stores.map((s) => ({
-    ...s,
-    productCount: countMap.get(s.id) || 0,
-  }));
+  // Group by store: one row per store, aggregate all owners (admins) into owners[]
+  const byStore = new Map<
+    string,
+    {
+      id: string;
+      storeName: string;
+      slug: string;
+      logoUrl: string | null;
+      isApproved: boolean;
+      approvedAt: Date | null;
+      createdAt: Date;
+      owners: StoreOwner[];
+    }
+  >();
+  for (const row of stores) {
+    const existing = byStore.get(row.id);
+    const owner: StoreOwner = {
+      name: row.ownerName,
+      email: row.ownerEmail,
+    };
+    if (!existing) {
+      byStore.set(row.id, {
+        id: row.id,
+        storeName: row.storeName,
+        slug: row.slug,
+        logoUrl: row.logoUrl,
+        isApproved: row.isApproved,
+        approvedAt: row.approvedAt,
+        createdAt: row.createdAt,
+        owners: [owner],
+      });
+    } else {
+      // Dedupe by email (same user can't appear twice, but avoid duplicate rows)
+      const hasSame = existing.owners.some(
+        (o) => (o.email && o.email === owner.email) || (o.email === null && owner.email === null && o.name === owner.name)
+      );
+      if (!hasSame) existing.owners.push(owner);
+    }
+  }
+
+  return Array.from(byStore.values()).map((s) => {
+    const first = s.owners[0];
+    return {
+      ...s,
+      ownerName: first?.name ?? null,
+      ownerEmail: first?.email ?? null,
+      productCount: countMap.get(s.id) || 0,
+    };
+  });
 }
 
 export async function toggleStoreApproval(

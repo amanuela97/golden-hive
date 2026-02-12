@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "@/app/globals.css";
 import { Toaster } from "react-hot-toast";
@@ -10,6 +11,11 @@ import { getMessages, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 import { ReactNode } from "react";
 import { routing } from "@/i18n/routing";
+
+/** Cache messages per request to avoid repeated filesystem/server work on every navigation (dev). */
+const getCachedMessages = cache(async (locale: string) => {
+  return getMessages({ locale });
+});
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -73,10 +79,10 @@ export default async function LocaleLayout({
     notFound();
   }
 
-  // Load messages for the locale
+  // Load messages for the locale (cached per request to avoid slow re-execution in dev)
   let messages;
   try {
-    messages = await getMessages({ locale });
+    messages = await getCachedMessages(locale);
   } catch (error) {
     console.error("Error loading messages:", error);
     notFound();

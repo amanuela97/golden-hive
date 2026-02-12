@@ -57,11 +57,11 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
 
   return (
     <div className="min-h-screen">
-      <DashboardNavbar />
+      <DashboardNavbar userRole={userRole} />
+      {/* Sidebar: desktop only; mobile uses drawer in navbar */}
       <Sidebar
         userRole={userRole}
         onSettingsClick={() => {
-          // Redirect to appropriate settings section based on role
           if (userRole === "customer") {
             router.push("/dashboard/settings/profile");
           } else {
@@ -69,8 +69,8 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
           }
         }}
       />
-      <main className="pl-56 pt-14">
-        <div className="p-6">{children}</div>
+      <main className="pt-14 pl-0 md:pl-56 min-w-0 flex-1">
+        <div className="p-4 md:p-6 min-w-0 overflow-x-auto">{children}</div>
       </main>
       <SettingsModal
         isOpen={isSettingsOpen}

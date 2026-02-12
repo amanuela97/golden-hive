@@ -4,7 +4,6 @@ import { db } from "@/db";
 import {
   sellerBalances,
   sellerBalanceTransactions,
-  sellerPayoutSettings,
 } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -13,11 +12,6 @@ import type { InferSelectModel } from "drizzle-orm";
 type BalanceTransactionType = InferSelectModel<
   typeof sellerBalanceTransactions
 >["type"];
-
-// Type for payout settings that may or may not have optional columns
-type PayoutSettingsRow = InferSelectModel<typeof sellerPayoutSettings> & {
-  holdPeriodDays?: number | null;
-};
 
 interface UpdateSellerBalanceParams {
   storeId: string;
@@ -126,23 +120,9 @@ export async function updateSellerBalance(
       });
     }
 
-    // Get hold period from settings (default 7 days)
-    let holdPeriodDays = 7;
-    try {
-      const [settings] = await db
-        .select()
-        .from(sellerPayoutSettings)
-        .where(eq(sellerPayoutSettings.storeId, storeId))
-        .limit(1);
-
-      holdPeriodDays = (settings as PayoutSettingsRow)?.holdPeriodDays || 7;
-    } catch (error) {
-      console.warn(
-        "Could not fetch hold period from settings, using default:",
-        error
-      );
-      holdPeriodDays = 7;
-    }
+    // Hold period is platform-enforced from env (no per-store setting)
+    const { getHoldPeriodDays } = await import("@/lib/utils");
+    const holdPeriodDays = getHoldPeriodDays();
 
     // Calculate availableAt date (only for credits that need hold period)
     let availableAt: Date | null = null;

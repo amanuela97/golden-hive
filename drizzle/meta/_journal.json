@@ -428,6 +428,20 @@
       "when": 1769205659989,
       "tag": "0060_secret_slyde",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1770737559539,
+      "tag": "0061_lumpy_rumiko_fujikawa",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1770758687023,
+      "tag": "0062_happy_bloodstorm",
+      "breakpoints": true
     }
   ]
 }

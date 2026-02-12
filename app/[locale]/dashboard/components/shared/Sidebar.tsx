@@ -57,7 +57,7 @@ export function Sidebar({ onSettingsClick, userRole }: SidebarProps) {
     });
 
   return (
-    <aside className="fixed left-0 top-14 z-40 h-[calc(100vh-3.5rem)] w-56 border-r border-border bg-background">
+    <aside className="fixed left-0 top-14 z-40 hidden h-[calc(100vh-3.5rem)] w-56 border-r border-border bg-background md:block">
       <nav className="flex h-full flex-col">
         <div className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="space-y-1">

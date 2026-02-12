@@ -108,6 +108,11 @@ export default function CheckoutPage() {
   } | null>(null);
   const [shippingCost, setShippingCost] = useState(0);
 
+  // Payment method (eSewa only when billing country is Nepal)
+  const [paymentMethod, setPaymentMethod] = useState<"stripe" | "esewa">(
+    "stripe"
+  );
+
   // Track items that cannot be shipped to selected country
   const [unshippableItems, setUnshippableItems] = useState<
     Array<{ itemId: string; listingId: string; name: string; reason: string }>
@@ -227,6 +232,13 @@ export default function CheckoutPage() {
     }
     loadSavedInfo();
   }, [session]);
+
+  // Reset payment method to Stripe when billing country is not Nepal
+  useEffect(() => {
+    if (billingData.country && billingData.country !== "NP" && paymentMethod === "esewa") {
+      setPaymentMethod("stripe");
+    }
+  }, [billingData.country, paymentMethod]);
 
   // Calculate shipping rates when shipping address is complete
   useEffect(() => {
@@ -368,7 +380,7 @@ export default function CheckoutPage() {
           }
 
           // Find the service with the lowest total cost
-          for (const [serviceName, serviceRates] of ratesByService.entries()) {
+          for (const [, serviceRates] of ratesByService.entries()) {
             const totalPrice = serviceRates.reduce(
               (sum, r) => sum + r.priceCents,
               0
@@ -743,6 +755,9 @@ export default function CheckoutPage() {
             zip: billingData.zip,
           };
 
+      const isEsewa = paymentMethod === "esewa";
+      const orderCurrency = isEsewa ? "NPR" : "EUR";
+
       // 1. Create order
       const orderResponse = await fetch("/api/checkout/create-order", {
         method: "POST",
@@ -769,7 +784,7 @@ export default function CheckoutPage() {
               discountId: allocation ? allocation.discountId : null,
             };
           }),
-          currency: "EUR", // Default to EUR, can be detected from items
+          currency: orderCurrency,
           subtotalAmount: subtotal.toFixed(2),
           shippingAmount: shipping.toFixed(2),
           taxAmount: tax.toFixed(2),
@@ -847,18 +862,45 @@ export default function CheckoutPage() {
         throw new Error("No orders created");
       }
 
-      // For now, if multiple stores, we'll create a combined checkout
-      // In the future, this could be enhanced to create separate checkout sessions
-      // and redirect through them sequentially
+      const orderIdsList = orders.map((o: { orderId: string }) => o.orderId);
+
+      if (isEsewa) {
+        const esewaResponse = await fetch("/api/esewa/init", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderIds: orderIdsList,
+            totalAmount: finalTotal.toFixed(2),
+            currency: "NPR",
+            productName: `Order ${orderIdsList[0]}`,
+          }),
+        });
+        const esewaResult = await esewaResponse.json();
+        if (!esewaResult.success || !esewaResult.formPayload || !esewaResult.formActionUrl) {
+          throw new Error(esewaResult.error || "Failed to init eSewa payment");
+        }
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = esewaResult.formActionUrl;
+        Object.entries(esewaResult.formPayload).forEach(([key, value]) => {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = key;
+          input.value = String(value);
+          form.appendChild(input);
+        });
+        document.body.appendChild(form);
+        form.submit();
+        return;
+      }
 
       // Create Stripe Checkout Session for all orders
-      // We'll pass all order IDs and let the API handle the payment split
       const checkoutResponse = await fetch("/api/stripe/checkout/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          orderIds: orders.map((o: { orderId: string }) => o.orderId), // Pass all order IDs
-          currency: "EUR",
+          orderIds: orderIdsList,
+          currency: orderCurrency,
           items: items.map((item) => ({
             listingId: item.listingId,
             variantId: item.variantId || null,
@@ -876,7 +918,6 @@ export default function CheckoutPage() {
         );
       }
 
-      // Redirect to Stripe Checkout
       window.location.href = checkoutResult.url;
     } catch (error) {
       console.error("Checkout error:", error);
@@ -1830,15 +1871,16 @@ export default function CheckoutPage() {
                     <div className="flex items-start space-x-2">
                       <input
                         type="radio"
-                        id="cod"
+                        id="payment-stripe"
                         name="payment"
-                        value="cod"
-                        defaultChecked
+                        value="stripe"
+                        checked={paymentMethod === "stripe"}
+                        onChange={() => setPaymentMethod("stripe")}
                         className="mt-1"
                       />
                       <div>
                         <Label
-                          htmlFor="cod"
+                          htmlFor="payment-stripe"
                           className="cursor-pointer font-medium"
                         >
                           Credit Card / Debit Card
@@ -1848,6 +1890,30 @@ export default function CheckoutPage() {
                         </p>
                       </div>
                     </div>
+                    {billingData.country === "NP" && (
+                      <div className="flex items-start space-x-2">
+                        <input
+                          type="radio"
+                          id="payment-esewa"
+                          name="payment"
+                          value="esewa"
+                          checked={paymentMethod === "esewa"}
+                          onChange={() => setPaymentMethod("esewa")}
+                          className="mt-1"
+                        />
+                        <div>
+                          <Label
+                            htmlFor="payment-esewa"
+                            className="cursor-pointer font-medium"
+                          >
+                            eSewa (Nepal)
+                          </Label>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Pay with your eSewa wallet
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

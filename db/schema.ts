@@ -501,6 +501,9 @@ export const store = pgTable(
     ), // Track if onboarding is complete
     stripeChargesEnabled: boolean("stripe_charges_enabled").default(false), // Track if charges are enabled
     stripePayoutsEnabled: boolean("stripe_payouts_enabled").default(false), // Track if payouts are enabled
+    // eSewa (Nepal) payout
+    payoutProvider: text("payout_provider").default("stripe"), // "stripe" | "esewa"
+    esewaId: text("esewa_id"), // Seller's eSewa ID for receiving payouts (when payoutProvider is esewa)
     // Admin moderation
     isApproved: boolean("is_approved").default(false).notNull(),
     approvedAt: timestamp("approved_at"),
@@ -1409,6 +1412,7 @@ export const orderPayments = pgTable("order_payments", {
     .default("held")
     .notNull(), // held | transferred | pending_payout
   stripeTransferId: text("stripe_transfer_id"), // Stripe Transfer ID (only set when transferred)
+  stripeChargeId: text("stripe_charge_id"), // Charge ID for source_transaction when transferring to connected account
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -2189,6 +2193,9 @@ export const sellerPayouts = pgTable("seller_payouts", {
   currency: text("currency").notNull(),
 
   status: payoutStatusEnum("status").default("pending").notNull(),
+
+  // Payout provider (stripe = Stripe Connect; esewa = manual eSewa transfer)
+  provider: text("provider").default("stripe"), // "stripe" | "esewa"
 
   // Stripe transfer details
   stripeTransferId: text("stripe_transfer_id"), // Stripe Transfer ID

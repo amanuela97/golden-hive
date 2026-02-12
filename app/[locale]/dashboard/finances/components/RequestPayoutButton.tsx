@@ -70,7 +70,10 @@ export function RequestPayoutButton({
       });
 
       if (result.success) {
-        toast.success("Payout request submitted successfully");
+        toast.success(
+          (result as { message?: string }).message ||
+            "Payout request submitted successfully"
+        );
         setOpen(false);
         setAmount("");
         onSuccess?.();
