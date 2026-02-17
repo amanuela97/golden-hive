@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { getShippingAddresses } from "@/app/[locale]/actions/shipping-labels";
+import { getShippingPackages } from "@/app/[locale]/actions/shipping-packages";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +57,15 @@ interface OrderData {
   holdReason?: string | null;
   storeId?: string | null;
   items: OrderItem[];
+  // Shipping address (for Buy Label dialog prefill)
+  shippingName?: string | null;
+  shippingAddressLine1?: string | null;
+  shippingAddressLine2?: string | null;
+  shippingCity?: string | null;
+  shippingRegion?: string | null;
+  shippingPostalCode?: string | null;
+  shippingCountry?: string | null;
+  shippingPhone?: string | null;
   // Fulfillment info
   trackingNumber?: string | null;
   carrier?: string | null;
@@ -88,6 +99,37 @@ export function FulfillmentCard({
   const [showBuyLabelDialog, setShowBuyLabelDialog] = useState(false);
   const [showManualShippingDialog, setShowManualShippingDialog] =
     useState(false);
+  const [buyLabelLoading, setBuyLabelLoading] = useState(false);
+  const [prefetchedAddresses, setPrefetchedAddresses] = useState<{
+    fromAddress: {
+      street1: string;
+      street2?: string;
+      city: string;
+      state?: string;
+      zip: string;
+      country: string;
+      phone?: string;
+    };
+    toAddress: {
+      street1: string;
+      street2?: string;
+      city: string;
+      state?: string;
+      zip: string;
+      country: string;
+      phone?: string;
+    };
+  } | null>(null);
+  const [prefetchedPackages, setPrefetchedPackages] = useState<
+    Array<{
+      id: string;
+      name: string;
+      lengthIn: number;
+      widthIn: number;
+      heightIn: number;
+      weightOz: number;
+    }>
+  >([]);
 
   // On hold dialog state
   const [onHoldItems, setOnHoldItems] = useState<Record<string, number>>({});
@@ -283,6 +325,8 @@ export function FulfillmentCard({
                       >
                         <Link
                           href={`/review?order=${orderData.id}&product=${item.listingId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
                         >
                           <Star className="h-3 w-3" />
                           Review
@@ -336,10 +380,69 @@ export function FulfillmentCard({
               <div className="space-y-2">
                 <div className="flex gap-2">
                   <Button
-                    onClick={() => setShowBuyLabelDialog(true)}
+                    onClick={async () => {
+                      if (!orderData.storeId) return;
+                      // Reuse cached data when reopening so we don't show loading again
+                      if (prefetchedAddresses != null) {
+                        setShowBuyLabelDialog(true);
+                        return;
+                      }
+                      setBuyLabelLoading(true);
+                      try {
+                        const [addrRes, pkgRes] = await Promise.all([
+                          getShippingAddresses({
+                            orderId: orderData.id,
+                            storeId: orderData.storeId,
+                          }),
+                          getShippingPackages(),
+                        ]);
+                        if (addrRes.success && addrRes.fromAddress && addrRes.toAddress) {
+                          setPrefetchedAddresses({
+                            fromAddress: {
+                              street1: addrRes.fromAddress.street1 ?? "",
+                              street2: addrRes.fromAddress.street2,
+                              city: addrRes.fromAddress.city ?? "",
+                              state: addrRes.fromAddress.state,
+                              zip: addrRes.fromAddress.zip ?? "",
+                              country: addrRes.fromAddress.country ?? "",
+                              phone: addrRes.fromAddress.phone,
+                            },
+                            toAddress: {
+                              street1: addrRes.toAddress.street1 ?? "",
+                              street2: addrRes.toAddress.street2,
+                              city: addrRes.toAddress.city ?? "",
+                              state: addrRes.toAddress.state,
+                              zip: addrRes.toAddress.zip ?? "",
+                              country: addrRes.toAddress.country ?? "",
+                              phone: addrRes.toAddress.phone,
+                            },
+                          });
+                        } else {
+                          setPrefetchedAddresses(null);
+                        }
+                        if (pkgRes.success && pkgRes.data) {
+                          setPrefetchedPackages(
+                            pkgRes.data.map((p) => ({
+                              id: p.id,
+                              name: p.name,
+                              lengthIn: p.lengthIn,
+                              widthIn: p.widthIn,
+                              heightIn: p.heightIn,
+                              weightOz: p.weightOz,
+                            }))
+                          );
+                        } else {
+                          setPrefetchedPackages([]);
+                        }
+                        setShowBuyLabelDialog(true);
+                      } finally {
+                        setBuyLabelLoading(false);
+                      }
+                    }}
+                    disabled={buyLabelLoading}
                     className="flex-1"
                   >
-                    Buy Shipping Label
+                    {buyLabelLoading ? "Loading…" : "Buy Shipping Label"}
                   </Button>
                   <Button
                     variant="outline"
@@ -525,6 +628,8 @@ export function FulfillmentCard({
             onOpenChange={setShowBuyLabelDialog}
             orderId={orderData.id}
             storeId={orderData.storeId}
+            initialAddresses={prefetchedAddresses}
+            initialPackages={prefetchedPackages.length > 0 ? prefetchedPackages : undefined}
             onSuccess={() => {
               window.location.reload();
             }}

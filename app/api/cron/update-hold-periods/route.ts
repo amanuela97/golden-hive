@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
       .select({
         id: sellerBalanceTransactions.id,
         storeId: sellerBalanceTransactions.storeId,
+        currency: sellerBalanceTransactions.currency,
         amount: sellerBalanceTransactions.amount,
         type: sellerBalanceTransactions.type,
         orderPaymentId: sellerBalanceTransactions.orderPaymentId,
@@ -51,12 +52,18 @@ export async function POST(req: NextRequest) {
             .where(eq(sellerBalanceTransactions.id, transaction.id));
 
           const amount = parseFloat(transaction.amount);
+          const currency = transaction.currency;
 
-          // Move from pending to available balance
+          // Move from pending to available for this (store, currency) wallet
           const [currentBalance] = await tx
             .select()
             .from(sellerBalances)
-            .where(eq(sellerBalances.storeId, transaction.storeId))
+            .where(
+              and(
+                eq(sellerBalances.storeId, transaction.storeId),
+                eq(sellerBalances.currency, currency)
+              )
+            )
             .limit(1);
 
           if (currentBalance) {
@@ -68,7 +75,7 @@ export async function POST(req: NextRequest) {
             const newAvailable = currentAvailable + amount;
 
             console.log(
-              `[Hold Period] Updating balance for store ${transaction.storeId}:`,
+              `[Hold Period] Updating balance for store ${transaction.storeId} ${currency}:`,
               {
                 transactionId: transaction.id,
                 amount,
@@ -86,12 +93,17 @@ export async function POST(req: NextRequest) {
                 availableBalance: newAvailable.toFixed(2),
                 updatedAt: new Date(),
               })
-              .where(eq(sellerBalances.storeId, transaction.storeId));
+              .where(
+                and(
+                  eq(sellerBalances.storeId, transaction.storeId),
+                  eq(sellerBalances.currency, currency)
+                )
+              );
 
             updatedStoreIds.add(transaction.storeId);
           } else {
             console.warn(
-              `[Hold Period] No balance record found for store ${transaction.storeId}`
+              `[Hold Period] No balance record found for store ${transaction.storeId} currency ${currency}`
             );
           }
 

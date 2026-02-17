@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildEsewaPaymentPayload, getEsewaFormSubmitUrl } from "@/lib/esewa";
 import { db } from "@/db";
 import { orders } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import {  inArray } from "drizzle-orm";
 import crypto from "crypto";
 
 /**
@@ -68,6 +68,13 @@ export async function POST(req: NextRequest) {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const successUrl = `${baseUrl}/api/esewa/callback?status=success&ref=${encodeURIComponent(ref)}`;
     const failureUrl = `${baseUrl}/api/esewa/callback?status=failure&ref=${encodeURIComponent(ref)}`;
+
+    console.log("[eSewa init] Payment URLs for eSewa redirect:", {
+      successUrl,
+      failureUrl,
+      orderIds,
+      totalAmount,
+    });
 
     const formPayload = buildEsewaPaymentPayload({
       totalAmount: amount.toFixed(2),

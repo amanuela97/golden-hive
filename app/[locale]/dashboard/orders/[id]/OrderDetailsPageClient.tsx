@@ -37,11 +37,8 @@ import { SendInvoiceDialog } from "./components/SendInvoiceDialog";
 import { SendInvoicePdfDialog } from "./components/SendInvoicePdfDialog";
 import { CancelOrderModal } from "../components/CancelOrderModal";
 import { RefundRequestForm } from "../components/RefundRequestForm";
-import {
-  archiveOrders,
-  unarchiveOrders,
-  getStoreOwnerEmail,
-} from "@/app/[locale]/actions/orders";
+import { archiveOrders, unarchiveOrders } from "@/app/[locale]/actions/orders-archive";
+import { getStoreOwnerEmail } from "@/app/[locale]/actions/orders";
 import toast from "react-hot-toast";
 import { useEffect } from "react";
 

@@ -3,7 +3,7 @@
 import { db } from "@/db";
 import { fulfillments, orders } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { trackShipment, generateTrackingUrl } from "@/lib/easypost";
+import { generateTrackingUrl } from "@/lib/easyship";
 import { nanoid } from "nanoid";
 
 /**
@@ -30,52 +30,35 @@ export async function getTrackingInfo(fulfillmentId: string) {
       };
     }
 
-    // Fetch live tracking from EasyPost
-    const trackingInfo = await trackShipment(
-      record.trackingNumber,
-      record.carrierCode || undefined
-    );
-
-    if (!trackingInfo) {
-      return {
-        success: false,
-        error: "Unable to fetch tracking information",
-      };
-    }
-
-    // Update fulfillment with latest tracking data
-    await db
-      .update(fulfillments)
-      .set({
-        trackingStatus: trackingInfo.status,
-        trackingData: trackingInfo as unknown as Record<string, unknown>,
-        lastTrackedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(fulfillments.id, fulfillmentId));
+    // Use stored tracking data (EasyShip: tracking updates via webhook or carrier link)
+    const trackingData = record.trackingData as
+      | { tracking_details?: Array<{ datetime?: string; message?: string; status?: string; city?: string; state?: string; zip?: string; country?: string }>; est_delivery_date?: string }
+      | null
+      | undefined;
+    const events = (trackingData?.tracking_details ?? []).map((d) => ({
+      occurred_at: d.datetime ?? "",
+      description: d.message ?? "",
+      city_locality: d.city,
+      state_province: d.state,
+      postal_code: d.zip,
+      country_code: d.country,
+    }));
+    const trackingUrl =
+      record.trackingUrl ||
+      generateTrackingUrl(record.carrier || "", record.trackingNumber);
 
     return {
       success: true,
       data: {
-        trackingNumber: trackingInfo.tracking_code,
+        trackingNumber: record.trackingNumber,
         carrier: record.carrier,
-        status: trackingInfo.status,
-        estimatedDelivery: trackingInfo.est_delivery_date,
-        actualDelivery: trackingInfo.tracking_details?.find((d) =>
-          d.status?.toLowerCase().includes("delivered")
-        )?.datetime,
-        events: trackingInfo.tracking_details.map((detail) => ({
-          occurred_at: detail.datetime,
-          description: detail.message,
-          city_locality: detail.city,
-          state_province: detail.state,
-          postal_code: detail.zip,
-          country_code: detail.country,
-        })),
-        trackingUrl:
-          trackingInfo.public_url ||
-          record.trackingUrl ||
-          generateTrackingUrl(record.carrier || "", record.trackingNumber),
+        status: record.trackingStatus ?? "in_transit",
+        estimatedDelivery: trackingData?.est_delivery_date ?? undefined,
+        actualDelivery: events.find((e) =>
+          (e.description || "").toLowerCase().includes("delivered")
+        )?.occurred_at,
+        events,
+        trackingUrl,
       },
     };
   } catch (error) {
@@ -119,8 +102,8 @@ export async function getPublicTrackingInfo(trackingToken: string) {
       .from(fulfillments)
       .where(eq(fulfillments.orderId, order.id));
 
-    // Fetch live tracking for each fulfillment
-    const trackingPromises = orderFulfillments.map(async (fulfillment) => {
+    // Use stored tracking data per fulfillment (EasyShip: link to carrier tracking)
+    const trackingData = orderFulfillments.map((fulfillment) => {
       if (!fulfillment.trackingNumber) {
         return {
           id: fulfillment.id,
@@ -129,61 +112,43 @@ export async function getPublicTrackingInfo(trackingToken: string) {
           trackingUrl: null,
           status: "No tracking available",
           events: [],
+          fulfilledAt: fulfillment.fulfilledAt,
         };
       }
 
-      const trackingInfo = await trackShipment(
-        fulfillment.trackingNumber,
-        fulfillment.carrierCode || undefined
-      );
-
-      // Update tracking data
-      if (trackingInfo) {
-        await db
-          .update(fulfillments)
-          .set({
-            trackingStatus: trackingInfo.status,
-            trackingData: trackingInfo as unknown as Record<string, unknown>,
-            lastTrackedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(eq(fulfillments.id, fulfillment.id));
-      }
+      const stored = fulfillment.trackingData as
+        | { tracking_details?: Array<{ datetime?: string; message?: string; status?: string }>; est_delivery_date?: string }
+        | null
+        | undefined;
+      const events = (stored?.tracking_details ?? []).map((d) => ({
+        occurred_at: d.datetime ?? "",
+        description: d.message ?? "",
+        city_locality: undefined,
+        state_province: undefined,
+        postal_code: undefined,
+        country_code: undefined,
+      }));
 
       return {
         id: fulfillment.id,
         carrier: fulfillment.carrier,
         carrierCode: fulfillment.carrierCode,
-        trackingNumber: fulfillment.trackingNumber || null,
+        trackingNumber: fulfillment.trackingNumber,
         trackingUrl:
-          trackingInfo?.public_url ||
           fulfillment.trackingUrl ||
-          (fulfillment.trackingNumber
-            ? generateTrackingUrl(
-                fulfillment.carrier || "",
-                fulfillment.trackingNumber
-              )
-            : null),
-        status: trackingInfo?.status || "Unknown",
-        estimatedDelivery: trackingInfo?.est_delivery_date || null,
-        actualDelivery:
-          trackingInfo?.tracking_details?.find((d) =>
-            d.status?.toLowerCase().includes("delivered")
-          )?.datetime || null,
-        events:
-          trackingInfo?.tracking_details?.map((detail) => ({
-            occurred_at: detail.datetime,
-            description: detail.message,
-            city_locality: detail.city,
-            state_province: detail.state,
-            postal_code: detail.zip,
-            country_code: detail.country,
-          })) || [],
+          generateTrackingUrl(
+            fulfillment.carrier || "",
+            fulfillment.trackingNumber
+          ),
+        status: fulfillment.trackingStatus ?? "in_transit",
+        estimatedDelivery: stored?.est_delivery_date ?? null,
+        actualDelivery: events.find((e) =>
+          (e.description || "").toLowerCase().includes("delivered")
+        )?.occurred_at ?? null,
+        events,
         fulfilledAt: fulfillment.fulfilledAt,
       };
     });
-
-    const trackingData = await Promise.all(trackingPromises);
 
     return {
       success: true,

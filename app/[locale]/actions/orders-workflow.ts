@@ -38,7 +38,7 @@ export async function updateWorkflowStatus(input: {
     const userId = session.user.id;
 
     // Get user role and store ID for permission checks
-    const { getStoreIdForUser } = await import("./orders");
+    const { getStoreIdForUser } = await import("./store-id");
     const storeIdResult = await getStoreIdForUser();
     const { storeId, isAdmin, error: storeError } = storeIdResult;
 

@@ -8,7 +8,7 @@ import {
   store,
 } from "@/db/schema";
 import { eq, desc, and, or, gte, lte, ilike, sql } from "drizzle-orm";
-import { getStoreIdForUser } from "./orders";
+import { getStoreIdForUser } from "./store-id";
 import { revalidatePath } from "next/cache";
 import type { InferSelectModel } from "drizzle-orm";
 
@@ -37,97 +37,72 @@ type PayoutSettingsRawRow = {
   updated_at: Date | string;
 };
 
+/** Per-currency wallet summary (EUR = Stripe, NPR = eSewa) */
+export type WalletSummary = {
+  availableBalance: number;
+  pendingBalance: number;
+  amountDue: number;
+  reservedFeesFromPending: number;
+  currentBalance: number;
+  currency: string;
+  lastPayoutAt: Date | null;
+  lastPayoutAmount: number | null;
+  stripeConnectedAvailable: number | null;
+  stripeConnectedPending: number | null;
+};
+
 /**
- * Get comprehensive balance summary with available, pending, and amount due
- * Also checks Stripe balance to ensure we only show funds that are actually available
+ * Get comprehensive balance summary: two wallets per seller (EUR, NPR).
+ * Returns data.wallets.EUR and data.wallets.NPR.
  */
-export async function getBalanceSummary() {
+export async function getBalanceSummary(): Promise<
+  | { success: false; error: string }
+  | {
+      success: true;
+      data: { wallets: { EUR: WalletSummary; NPR: WalletSummary } };
+    }
+> {
   const { storeId } = await getStoreIdForUser();
   if (!storeId) {
     return { success: false, error: "Store not found" };
   }
 
-  const [balance] = await db
+  const balanceRows = await db
     .select()
     .from(sellerBalances)
-    .where(eq(sellerBalances.storeId, storeId))
-    .limit(1);
+    .where(eq(sellerBalances.storeId, storeId));
 
-  if (!balance) {
-    return {
-      success: true,
-      data: {
-        availableBalance: 0,
-        pendingBalance: 0,
-        amountDue: 0,
-        currentBalance: 0,
-        currency: "EUR",
-        lastPayoutAt: null,
-        lastPayoutAmount: null,
-        stripeAvailableBalance: 0,
-        stripeConnectedAvailable: null,
-        stripeConnectedPending: null,
-      },
-    };
-  }
+  const wallets: { EUR: WalletSummary; NPR: WalletSummary } = {
+    EUR: {
+      availableBalance: 0,
+      pendingBalance: 0,
+      amountDue: 0,
+      reservedFeesFromPending: 0,
+      currentBalance: 0,
+      currency: "EUR",
+      lastPayoutAt: null,
+      lastPayoutAmount: null,
+      stripeConnectedAvailable: null,
+      stripeConnectedPending: null,
+    },
+    NPR: {
+      availableBalance: 0,
+      pendingBalance: 0,
+      amountDue: 0,
+      reservedFeesFromPending: 0,
+      currentBalance: 0,
+      currency: "NPR",
+      lastPayoutAt: null,
+      lastPayoutAmount: null,
+      stripeConnectedAvailable: null,
+      stripeConnectedPending: null,
+    },
+  };
 
-  const ledgerAvailableBalance = parseFloat(balance.availableBalance);
-  const pendingBalance = parseFloat(balance.pendingBalance);
-
-  console.log("[Balance Summary] Starting balance calculation:", {
-    storeId,
-    ledgerAvailableBalance,
-    pendingBalance,
-    currency: balance.currency,
-    rawAvailableBalance: balance.availableBalance,
-    rawPendingBalance: balance.pendingBalance,
-  });
-
-  // Check actual Stripe balance to ensure we only show funds that are available
-  let stripeAvailableBalance: number | null = null;
-  try {
-    const { stripe } = await import("@/lib/stripe");
-    const stripeBalance = await stripe.balance.retrieve();
-
-    console.log("[Balance Summary] Stripe balance retrieved:", {
-      available: stripeBalance.available,
-      pending: stripeBalance.pending,
-    });
-
-    // Find available balance for the currency
-    const currencyBalance = stripeBalance.available.find(
-      (b) => b.currency.toLowerCase() === balance.currency.toLowerCase()
-    );
-
-    console.log("[Balance Summary] Currency balance search:", {
-      lookingFor: balance.currency.toLowerCase(),
-      found: currencyBalance,
-      allCurrencies: stripeBalance.available.map((b) => b.currency),
-    });
-
-    // Convert from cents to dollars/euros
-    // Only set if currency balance is found AND has a positive amount
-    // If amount is 0 or not found, use null to fall back to ledger balance
-    // This is important for connected accounts where funds are in the connected account, not platform
-    stripeAvailableBalance =
-      currencyBalance && currencyBalance.amount > 0
-        ? currencyBalance.amount / 100
-        : null;
-
-    console.log("[Balance Summary] Stripe available balance:", {
-      stripeAvailableBalance,
-      currencyBalanceAmount: currencyBalance?.amount,
-    });
-  } catch (error) {
-    console.error("[Balance Summary] Error retrieving Stripe balance:", error);
-    // If we can't get Stripe balance, set to null to indicate check failed
-    stripeAvailableBalance = null;
-  }
-
-  // Connected account balance: for payouts we need the seller's Stripe Connect account balance
-  // (funds transferred from platform land here; they may be "pending" for 2–7 days before "available")
-  let stripeConnectedAvailable: number | null = null;
-  let stripeConnectedPending: number | null = null;
+  const stripeConnectedByCurrency: Record<
+    string,
+    { available: number; pending: number }
+  > = {};
   try {
     const [storeRow] = await db
       .select({ stripeAccountId: store.stripeAccountId })
@@ -139,14 +114,18 @@ export async function getBalanceSummary() {
       const connectedBalance = await stripe.balance.retrieve({
         stripeAccount: storeRow.stripeAccountId,
       });
-      const avail = connectedBalance.available.find(
-        (b) => b.currency.toLowerCase() === balance.currency.toLowerCase()
-      );
-      const pend = connectedBalance.pending.find(
-        (b) => b.currency.toLowerCase() === balance.currency.toLowerCase()
-      );
-      stripeConnectedAvailable = avail ? avail.amount / 100 : 0;
-      stripeConnectedPending = pend ? pend.amount / 100 : 0;
+      for (const b of connectedBalance.available) {
+        const c = b.currency.toUpperCase();
+        if (!stripeConnectedByCurrency[c])
+          stripeConnectedByCurrency[c] = { available: 0, pending: 0 };
+        stripeConnectedByCurrency[c].available = b.amount / 100;
+      }
+      for (const b of connectedBalance.pending) {
+        const c = b.currency.toUpperCase();
+        if (!stripeConnectedByCurrency[c])
+          stripeConnectedByCurrency[c] = { available: 0, pending: 0 };
+        stripeConnectedByCurrency[c].pending = b.amount / 100;
+      }
     }
   } catch (error) {
     console.error(
@@ -155,54 +134,50 @@ export async function getBalanceSummary() {
     );
   }
 
-  // Available balance is the minimum of ledger balance and Stripe balance
-  // This ensures we only show funds that are actually available for payout
-  // If Stripe check failed, fall back to ledger balance (trust our ledger)
-  const availableBalance =
-    stripeAvailableBalance !== null
-      ? Math.min(
-          Math.max(0, ledgerAvailableBalance),
-          Math.max(0, stripeAvailableBalance)
-        )
-      : Math.max(0, ledgerAvailableBalance); // If Stripe check failed, use ledger balance
+  for (const balance of balanceRows) {
+    const currency = balance.currency.toUpperCase();
+    if (currency !== "EUR" && currency !== "NPR") continue;
 
-  console.log("[Balance Summary] Final calculation:", {
-    ledgerAvailableBalance,
-    stripeAvailableBalance,
-    calculatedAvailableBalance: availableBalance,
-    pendingBalance,
-    currentBalance: ledgerAvailableBalance + pendingBalance,
-  });
+    const ledgerAvailable = parseFloat(balance.availableBalance);
+    const pendingBalance = parseFloat(balance.pendingBalance);
+    const connected = stripeConnectedByCurrency[currency];
+    const stripeConnectedAvailable = connected ? connected.available : null;
+    const stripeConnectedPending = connected ? connected.pending : null;
 
-  // Amount due: only show when available is negative AND pending doesn't cover it (real debt)
-  // When pending is positive and covers the negative (fees reserved from pending), show 0 and expose reserved amount for label
-  const negativeAvailable = -ledgerAvailableBalance;
-  const pendingCoversFees =
-    ledgerAvailableBalance < 0 &&
-    pendingBalance > 0 &&
-    pendingBalance >= negativeAvailable;
-  const amountDue = pendingCoversFees ? 0 : Math.max(0, negativeAvailable);
-  const reservedFeesFromPending = pendingCoversFees ? negativeAvailable : 0;
+    const availableBalance =
+      stripeConnectedAvailable !== null &&
+      stripeConnectedAvailable !== undefined
+        ? Math.min(
+            Math.max(0, ledgerAvailable),
+            Math.max(0, stripeConnectedAvailable)
+          )
+        : Math.max(0, ledgerAvailable);
 
-  return {
-    success: true,
-    data: {
-      availableBalance, // Only show what's actually available in Stripe
+    const negativeAvailable = -ledgerAvailable;
+    const pendingCoversFees =
+      ledgerAvailable < 0 &&
+      pendingBalance > 0 &&
+      pendingBalance >= negativeAvailable;
+    const amountDue = pendingCoversFees ? 0 : Math.max(0, negativeAvailable);
+    const reservedFeesFromPending = pendingCoversFees ? negativeAvailable : 0;
+
+    wallets[currency as "EUR" | "NPR"] = {
+      availableBalance,
       pendingBalance,
       amountDue,
-      reservedFeesFromPending, // When > 0, show as "Reserved (fees)" with "covered by pending" (not a debt)
-      currentBalance: ledgerAvailableBalance + pendingBalance, // Current balance includes pending
+      reservedFeesFromPending,
+      currentBalance: ledgerAvailable + pendingBalance,
       currency: balance.currency,
       lastPayoutAt: balance.lastPayoutAt,
       lastPayoutAmount: balance.lastPayoutAmount
         ? parseFloat(balance.lastPayoutAmount)
         : null,
-      stripeAvailableBalance: stripeAvailableBalance ?? 0, // Include for debugging/transparency
-      // Connected account balance: used to disable "Request payout" when funds are settling (available in 2–7 days)
       stripeConnectedAvailable: stripeConnectedAvailable ?? null,
       stripeConnectedPending: stripeConnectedPending ?? null,
-    },
-  };
+    };
+  }
+
+  return { success: true, data: { wallets } };
 }
 
 /**
@@ -380,6 +355,7 @@ function getTransactionDescription(type: string): string {
   const descriptions: Record<string, string> = {
     order_payment: "Sale",
     platform_fee: "Platform commission",
+    esewa_fee: "eSewa fee",
     stripe_fee: "Stripe processing fee",
     shipping_label: "Shipping label cost",
     refund: "Refund",
@@ -463,18 +439,19 @@ export async function getPayoutSettings() {
             console.warn(
               `nextPayoutAt (${nextPayoutAt.toISOString()}) is in the past for store ${storeId}. Recalculating...`
             );
-            // Get last payout date from balance
-            const [balance] = await db
-              .select()
+            // Get last payout date from balance (use EUR wallet for schedule; or any)
+            const balanceRows = await db
+              .select({ lastPayoutAt: sellerBalances.lastPayoutAt })
               .from(sellerBalances)
-              .where(eq(sellerBalances.storeId, storeId))
-              .limit(1);
+              .where(eq(sellerBalances.storeId, storeId));
+            const lastPayoutAt =
+              balanceRows.find((b) => b.lastPayoutAt)?.lastPayoutAt ?? null;
 
             nextPayoutAt = await calculateNextPayoutDate(
               row.schedule as "daily" | "weekly" | "biweekly" | "monthly" | null,
               row.payout_day_of_week,
               row.payout_day_of_month,
-              balance?.lastPayoutAt || null
+              lastPayoutAt
             );
 
             // Update the database with the corrected date
@@ -673,14 +650,16 @@ export async function updatePayoutSettings(params: {
     // Calculate nextPayoutAt if automatic
     let nextPayoutAt: Date | null = null;
     if (params.method === "automatic" && params.schedule) {
-      // Get last payout date from balance
-      const [balance] = await db
-        .select()
+      // Get last payout date from any wallet
+      const balanceRows = await db
+        .select({ lastPayoutAt: sellerBalances.lastPayoutAt })
         .from(sellerBalances)
-        .where(eq(sellerBalances.storeId, storeId))
-        .limit(1);
-
-      const lastPayoutAt = balance?.lastPayoutAt || null;
+        .where(eq(sellerBalances.storeId, storeId));
+      const lastPayoutAt =
+        balanceRows.reduce<Date | null>((latest, b) => {
+          if (!b.lastPayoutAt) return latest;
+          return !latest || b.lastPayoutAt > latest ? b.lastPayoutAt : latest;
+        }, null) ?? null;
       nextPayoutAt = await calculateNextPayoutDate(
         params.schedule,
         params.payoutDayOfWeek || null,

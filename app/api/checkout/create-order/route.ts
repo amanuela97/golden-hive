@@ -689,12 +689,13 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error("Error creating guest order:", error);
+    const message =
+      error instanceof Error ? error.message : "Failed to create order";
+    const isInsufficientInventory =
+      typeof message === "string" && message.includes("Insufficient inventory");
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Failed to create order",
-      },
-      { status: 500 }
+      { error: message },
+      { status: isInsufficientInventory ? 400 : 500 }
     );
   }
 }

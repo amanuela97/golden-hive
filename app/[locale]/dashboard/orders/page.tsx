@@ -2,7 +2,7 @@ import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
 import { DashboardWrapper } from "../components/shared/DashboardWrapper";
 import OrdersPageClient from "../components/shared/OrdersPageClient";
 import CustomerOrdersPageClient from "./components/CustomerOrdersPageClient";
-import { listOrders } from "@/app/[locale]/actions/orders";
+import { listOrders } from "@/app/[locale]/actions/orders-list";
 
 export default async function OrdersPage() {
   const { role } = await protectDashboardRoute({

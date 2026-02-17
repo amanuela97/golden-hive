@@ -35,10 +35,8 @@ function isObject(item: unknown): item is Messages {
 }
 
 export default getRequestConfig(async ({ requestLocale }) => {
-  // This typically corresponds to the `[locale]` segment
   let locale = await requestLocale;
 
-  // Validate that the incoming `locale` parameter is valid
   if (
     !locale ||
     !routing.locales.includes(locale as (typeof routing.locales)[number])
@@ -46,59 +44,28 @@ export default getRequestConfig(async ({ requestLocale }) => {
     locale = routing.defaultLocale;
   }
 
-  // Try to load from database first
-  const { getTranslation } = await import(
-    "../app/[locale]/actions/translations"
-  );
-
-  let englishMessages: Messages | null = null;
-  let localeMessages: Messages | null = null;
-
+  // Load from static JSON only — no DB on every request (major render-time improvement).
+  // Admin-editable translations can be loaded in specific pages that need them.
+  let englishMessages: Messages = {};
   try {
-    // Try to get from DB
-    englishMessages = await getTranslation("en");
-    if (locale !== "en") {
-      localeMessages = await getTranslation(locale);
-    }
+    englishMessages =
+      (await import(`@/locales/en/common.json`)).default ?? {};
   } catch (error) {
-    console.error("Error loading translations from DB:", error);
+    console.error("Error loading English translations:", error);
   }
 
-  // Fallback to static JSON files if DB doesn't have translations
-  if (!englishMessages) {
-    try {
-      englishMessages = (await import(`@/locales/en/common.json`)).default;
-    } catch (error) {
-      console.error("Error loading fallback English translations:", error);
-      englishMessages = {};
-    }
-  }
-
-  // If locale is English, return directly
   if (locale === "en") {
-    return {
-      locale,
-      messages: englishMessages || {},
-    };
+    return { locale, messages: englishMessages };
   }
 
-  // Load locale-specific messages from static files if not in DB
-  if (!localeMessages) {
-    try {
-      localeMessages = (await import(`@/locales/${locale}/common.json`))
-        .default;
-    } catch (error) {
-      console.error(`Error loading fallback ${locale} translations:`, error);
-      localeMessages = {};
-    }
+  let localeMessages: Messages = {};
+  try {
+    localeMessages =
+      (await import(`@/locales/${locale}/common.json`)).default ?? {};
+  } catch (error) {
+    console.error(`Error loading ${locale} translations:`, error);
   }
 
-  // Merge English messages (fallback) with locale-specific messages
-  // Locale messages take precedence, but English fills in missing keys
-  const mergedMessages = deepMerge(englishMessages || {}, localeMessages || {});
-
-  return {
-    locale,
-    messages: mergedMessages,
-  };
+  const mergedMessages = deepMerge(englishMessages, localeMessages);
+  return { locale, messages: mergedMessages };
 });

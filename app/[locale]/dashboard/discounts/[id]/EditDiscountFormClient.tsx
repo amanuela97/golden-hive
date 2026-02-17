@@ -15,9 +15,9 @@ import {
   updateDiscount,
   getProductsForPicker,
   getCustomersForPicker,
-  type UpdateDiscountInput,
   type DiscountWithDetails,
 } from "../../../actions/discounts";
+import type { UpdateDiscountInput } from "@/validations/discount.schema";
 import { ProductPickerModal } from "../../discounts/new/amount-off-products/components/ProductPickerModal";
 import { CustomerPickerModal } from "../../discounts/new/amount-off-products/components/CustomerPickerModal";
 import { ArrowLeft, AlertCircle } from "lucide-react";

@@ -82,8 +82,8 @@ async function checkDiscountPermission(
   return { isAdmin, storeId };
 }
 
-// Re-export types for convenience
-export type { CreateAmountOffProductsDiscountInput, UpdateDiscountInput };
+// Types CreateAmountOffProductsDiscountInput and UpdateDiscountInput are in @/validations/discount.schema
+// (not re-exported here to avoid Next.js server-actions bundle treating them as runtime exports)
 
 export interface DiscountWithDetails {
   id: string;

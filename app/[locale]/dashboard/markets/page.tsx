@@ -23,7 +23,6 @@ export default async function MarketsPage() {
 
   return (
     <DashboardWrapper userRole={roleName}>
-      const marketsResult = await listMarkets();
       <MarketsPageClient
         initialData={marketsResult.data || []}
         userRole={roleName}

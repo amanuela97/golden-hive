@@ -23,6 +23,8 @@ interface RequestPayoutButtonProps {
   currency: string;
   minimumAmount: number;
   onSuccess?: () => void;
+  /** e.g. "Stripe" or "eSewa (Nepal)" – shown in the dialog so user knows how they receive the payout */
+  payoutMethodLabel?: string;
 }
 
 export function RequestPayoutButton({
@@ -30,6 +32,7 @@ export function RequestPayoutButton({
   currency,
   minimumAmount,
   onSuccess,
+  payoutMethodLabel,
 }: RequestPayoutButtonProps) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -99,8 +102,15 @@ export function RequestPayoutButton({
         <DialogHeader>
           <DialogTitle>Request Payout</DialogTitle>
           <DialogDescription>
-            Request a payout from your available balance. Minimum amount:{" "}
-            {formatCurrency(minimumAmount, currency)}
+            Request a payout from your available balance.
+            {payoutMethodLabel && (
+              <span className="mt-1 block font-medium text-foreground">
+                Payout method: {payoutMethodLabel}
+              </span>
+            )}
+            <span className="mt-1 block">
+              Minimum amount: {formatCurrency(minimumAmount, currency)}
+            </span>
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">

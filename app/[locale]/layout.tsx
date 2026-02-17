@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { cache } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import "@/app/globals.css";
 import { Toaster } from "react-hot-toast";
 import { Providers } from "./providers";
@@ -79,10 +80,17 @@ export default async function LocaleLayout({
     notFound();
   }
 
-  // Load messages for the locale (cached per request to avoid slow re-execution in dev)
+  // Dashboard/settings: use English only for faster layout (avoids merging multiple locale files).
+  // Public pages still get full locale messages.
+  const headersList = await headers();
+  const pathname = headersList.get("x-invoke-path") ?? "";
+  const isDashboardOrSettings =
+    pathname.includes("/dashboard") || pathname.includes("/settings");
+  const messagesLocale = isDashboardOrSettings ? "en" : locale;
+
   let messages;
   try {
-    messages = await getCachedMessages(locale);
+    messages = await getCachedMessages(messagesLocale);
   } catch (error) {
     console.error("Error loading messages:", error);
     notFound();
@@ -93,7 +101,7 @@ export default async function LocaleLayout({
   return (
     <html lang={locale}>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased flex flex-col min-h-screen`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased flex flex-col min-h-screen overflow-y-auto`}
       >
         <Providers>
           <NextIntlClientProvider locale={locale} messages={messages}>

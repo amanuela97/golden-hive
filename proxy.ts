@@ -64,16 +64,20 @@ export async function proxy(req: NextRequest) {
     ? pathname.slice(locale.length + 1)
     : pathname;
 
-  // Handle auth and dashboard routing after locale is determined
-  const headersObj = Object.fromEntries(req.headers.entries());
-  const session = await auth.api.getSession({ headers: headersObj });
-
   const isDashboardRoute = pathWithoutLocale.startsWith("/dashboard");
   const isAuthRoute =
     pathWithoutLocale.startsWith("/login") ||
     pathWithoutLocale.startsWith("/register") ||
     pathWithoutLocale.startsWith("/signup") ||
     pathWithoutLocale.startsWith("/forgot-password");
+
+  // Only call getSession for routes that need auth checks (saves ~100–200ms on every other request)
+  if (!isDashboardRoute && !isAuthRoute) {
+    return intlResponse;
+  }
+
+  const headersObj = Object.fromEntries(req.headers.entries());
+  const session = await auth.api.getSession({ headers: headersObj });
 
   // Redirect unauthenticated users from /dashboard to /login
   if (isDashboardRoute && !session) {

@@ -55,7 +55,17 @@ export async function POST(
     );
   }
 
-  const result = await markEsewaPayoutCompleted(payoutId);
+  let deliveryMethod: "esewa" | "bank" | undefined;
+  try {
+    const body = await req.json();
+    if (body?.deliveryMethod === "esewa" || body?.deliveryMethod === "bank") {
+      deliveryMethod = body.deliveryMethod;
+    }
+  } catch {
+    // No body or invalid JSON
+  }
+
+  const result = await markEsewaPayoutCompleted(payoutId, deliveryMethod);
   if (!result.success) {
     return NextResponse.json(
       { error: result.error },

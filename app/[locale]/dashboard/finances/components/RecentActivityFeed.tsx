@@ -34,6 +34,7 @@ const typeColors: Record<string, string> = {
   order_payment:
     "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
   platform_fee: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+  esewa_fee: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300",
   stripe_fee:
     "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
   shipping_label:
@@ -48,6 +49,7 @@ const typeColors: Record<string, string> = {
 const typeLabels: Record<string, string> = {
   order_payment: "Sale",
   platform_fee: "Platform Fee",
+  esewa_fee: "eSewa Fee",
   stripe_fee: "Stripe Fee",
   shipping_label: "Shipping",
   refund: "Refund",

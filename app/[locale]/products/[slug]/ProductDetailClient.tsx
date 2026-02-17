@@ -26,7 +26,10 @@ import { Badge } from "@/components/ui/badge";
 import { useCustomerLocation } from "../../hooks/useCustomerLocation";
 import { checkShippingAvailability } from "../../actions/shipping-availability";
 import { ProductCard } from "../../components/product-card";
-import { PublicProduct } from "../../actions/public-products";
+import {
+  PublicProduct,
+  validateInventoryForCartItem,
+} from "../../actions/public-products";
 import { useCart } from "@/lib/cart-context";
 import toast from "react-hot-toast";
 import { useTranslations } from "next-intl";
@@ -182,14 +185,33 @@ export function ProductDetailClient({
         setVariantError("This combination is not available");
       }
     } else {
-      setSelectedVariant(null);
-      if (optionKeys.length > 0) {
-        setVariantError("Please select all options");
-      } else {
+      // Single variant with no options: default to it so we have stock info
+      if (variants.length === 1 && optionKeys.length === 0) {
+        setSelectedVariant(variants[0]);
         setVariantError("");
+      } else {
+        setSelectedVariant(null);
+        if (optionKeys.length > 0) {
+          setVariantError("Please select an option");
+        } else {
+          setVariantError("");
+        }
       }
     }
   }, [selectedOptions, variants, optionKeys, allImages]);
+
+  // Available quantity for current selection (for stock checks and cap)
+  const availableForSelection =
+    selectedVariant?.available != null ? selectedVariant.available : null;
+  const isOutOfStock =
+    availableForSelection !== null && availableForSelection <= 0;
+
+  // Cap quantity to available when selection or available changes
+  useEffect(() => {
+    if (availableForSelection != null && quantity > availableForSelection) {
+      setQuantity(Math.max(1, availableForSelection));
+    }
+  }, [availableForSelection, quantity]);
 
   // Get current price and compare price
   const currentPrice = useMemo(() => {
@@ -286,7 +308,9 @@ export function ProductDetailClient({
   };
 
   const handleIncrement = () => {
-    setQuantity(quantity + 1);
+    const maxQty =
+      availableForSelection != null ? availableForSelection : undefined;
+    setQuantity((q) => (maxQty != null ? Math.min(q + 1, maxQty) : q + 1));
   };
 
   // Generate variant title from selected options
@@ -315,12 +339,51 @@ export function ProductDetailClient({
     return null;
   }, [selectedVariant]);
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     if (!product) return;
 
     // Check if variant selection is required
     if (variants.length > 0 && !selectedVariant) {
-      setVariantError("Please select all options");
+      setVariantError("Please select an option");
+      return;
+    }
+
+    // Enforce stock (client-side from cached data)
+    if (availableForSelection != null) {
+      if (availableForSelection <= 0) {
+        toast.error(t("outOfStock") || "This item is out of stock.");
+        return;
+      }
+      if (quantity > availableForSelection) {
+        toast.error(
+          t("insufficientStock") ||
+            `Only ${availableForSelection} available. Please reduce quantity.`
+        );
+        setQuantity(availableForSelection);
+        return;
+      }
+    }
+
+    // Server-side validation: avoid adding more than current stock (guards against stale cache)
+    const validation = await validateInventoryForCartItem(
+      product.id,
+      selectedVariant?.id ?? null,
+      quantity
+    );
+    if (!validation.success) {
+      toast.error(validation.error || "Could not verify stock.");
+      return;
+    }
+    if (!validation.allowed) {
+      const avail = validation.available ?? 0;
+      if (avail <= 0) {
+        toast.error(t("outOfStock") || "This item is out of stock.");
+      } else {
+        toast.error(
+          t("insufficientStock") || `Only ${avail} available. Please reduce quantity.`
+        );
+        setQuantity(avail);
+      }
       return;
     }
 
@@ -691,9 +754,22 @@ export function ProductDetailClient({
                   value={quantity}
                   onChange={(e) => {
                     const value = Number.parseInt(e.target.value) || 1;
-                    setQuantity(Math.max(1, value));
+                    const maxQty =
+                      availableForSelection != null
+                        ? availableForSelection
+                        : undefined;
+                    const clamped =
+                      maxQty != null
+                        ? Math.max(1, Math.min(value, maxQty))
+                        : Math.max(1, value);
+                    setQuantity(clamped);
                   }}
-                  min="1"
+                  min={1}
+                  max={
+                    availableForSelection != null && availableForSelection > 0
+                      ? availableForSelection
+                      : undefined
+                  }
                   className="w-16 text-center border-x border-border bg-transparent text-foreground"
                 />
                 <Button
@@ -701,6 +777,10 @@ export function ProductDetailClient({
                   size="icon"
                   className="h-12 w-12"
                   onClick={handleIncrement}
+                  disabled={
+                    availableForSelection != null &&
+                    quantity >= availableForSelection
+                  }
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
@@ -709,9 +789,13 @@ export function ProductDetailClient({
                 size="lg"
                 className="flex-1 h-12 text-base"
                 onClick={handleAddToCart}
-                disabled={variants.length > 0 && !selectedVariant}
+                disabled={
+                  (variants.length > 0 && !selectedVariant) || isOutOfStock
+                }
               >
-                {t("addToCart")}
+                {isOutOfStock
+                  ? t("outOfStock") || "Out of stock"
+                  : t("addToCart")}
               </Button>
             </div>
 

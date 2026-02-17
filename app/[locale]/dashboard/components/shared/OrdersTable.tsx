@@ -11,7 +11,7 @@ import {
   type SortingState,
   type RowSelectionState,
 } from "@tanstack/react-table";
-import type { OrderRow } from "@/app/[locale]/actions/orders";
+import type { OrderRow } from "@/app/[locale]/actions/orders-list";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -31,7 +31,7 @@ import {
 import { Link } from "@/i18n/navigation";
 import { formatDistanceToNow } from "date-fns";
 import toast from "react-hot-toast";
-import { archiveOrders, unarchiveOrders } from "@/app/[locale]/actions/orders";
+import { archiveOrders, unarchiveOrders } from "@/app/[locale]/actions/orders-archive";
 import { Checkbox } from "@/components/ui/checkbox";
 
 interface OrdersTableProps {

@@ -16,6 +16,13 @@ import { uploadFile } from "@/lib/cloudinary";
 import { revalidatePath } from "next/cache";
 import { getStoreIdForUser } from "./store-members";
 import { slugify } from "@/lib/slug-utils";
+import { encryptEsewaId, decryptEsewaId } from "@/lib/esewa-encrypt";
+import {
+  encryptBankDetails,
+  decryptBankDetails,
+  maskAccountNumber,
+  type BankDetailsPlain,
+} from "@/lib/bank-encrypt";
 
 /**
  * Verify user is store owner/admin
@@ -68,7 +75,16 @@ export async function getStore() {
       return { success: false, error: "Store not found" };
     }
 
-    return { success: true, result: storeData[0] };
+    const row = storeData[0];
+    const esewaIdDecrypted = decryptEsewaId(row.esewaId) ?? row.esewaId;
+    const bankDecrypted = decryptBankDetails(row.bankDetailsEncrypted);
+    const result = {
+      ...row,
+      esewaId: esewaIdDecrypted,
+      hasBankDetails: !!bankDecrypted,
+      bankAccountMasked: bankDecrypted ? maskAccountNumber(bankDecrypted.accountNumber) : null,
+    };
+    return { success: true, result };
   } catch (error) {
     return {
       success: false,
@@ -495,11 +511,17 @@ export async function updateStorePayoutProvider(
   }
 
   try {
+    const rawEsewaId =
+      data.payoutProvider === "esewa" && data.esewaId?.trim()
+        ? data.esewaId.trim()
+        : null;
+    const esewaIdToStore = rawEsewaId ? encryptEsewaId(rawEsewaId) : null;
+
     await db
       .update(store)
       .set({
         payoutProvider: data.payoutProvider,
-        esewaId: data.payoutProvider === "esewa" ? (data.esewaId || null) : null,
+        esewaId: data.payoutProvider === "esewa" ? esewaIdToStore : null,
         updatedAt: new Date(),
       })
       .where(eq(store.id, storeId));
@@ -512,6 +534,50 @@ export async function updateStorePayoutProvider(
       success: false,
       error:
         error instanceof Error ? error.message : "Failed to update payout provider",
+    };
+  }
+}
+
+/**
+ * Update store bank details (Nepal). Encrypts before saving. Never store plain account numbers.
+ */
+export async function updateStoreBankDetails(
+  storeId: string,
+  details: BankDetailsPlain | null
+): Promise<{ success: boolean; error?: string }> {
+  const access = await verifyStoreAccess(storeId);
+  if (!access.authorized) {
+    return { success: false, error: access.error };
+  }
+
+  try {
+    const encrypted =
+      details && details.accountNumber?.trim()
+        ? encryptBankDetails(details)
+        : null;
+    if (details && details.accountNumber?.trim() && !encrypted) {
+      return {
+        success: false,
+        error: "Bank encryption not configured (BANK_ENCRYPTION_KEY).",
+      };
+    }
+
+    await db
+      .update(store)
+      .set({
+        bankDetailsEncrypted: encrypted,
+        updatedAt: new Date(),
+      })
+      .where(eq(store.id, storeId));
+
+    revalidatePath("/dashboard/settings");
+    revalidatePath("/dashboard/finances");
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to update bank details",
     };
   }
 }

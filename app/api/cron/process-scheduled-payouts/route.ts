@@ -38,7 +38,8 @@ export async function POST(req: NextRequest) {
         and(
           eq(sellerPayoutSettings.method, "automatic"),
           isNotNull(sellerPayoutSettings.nextPayoutAt),
-          lte(sellerPayoutSettings.nextPayoutAt, now)
+          lte(sellerPayoutSettings.nextPayoutAt, now),
+          eq(sellerBalances.currency, "EUR") // Only auto-payout EUR (Stripe); NPR (eSewa) is manual
         )
       );
 
@@ -115,11 +116,16 @@ export async function POST(req: NextRequest) {
         });
 
         if (payoutResult.success) {
-          // Get the actual payout date from the balance record
+          // Get the actual payout date from the EUR balance record
           const [updatedBalance] = await db
             .select({ lastPayoutAt: sellerBalances.lastPayoutAt })
             .from(sellerBalances)
-            .where(eq(sellerBalances.storeId, settings.storeId))
+            .where(
+              and(
+                eq(sellerBalances.storeId, settings.storeId),
+                eq(sellerBalances.currency, "EUR")
+              )
+            )
             .limit(1);
 
           // Calculate next payout date using the actual payout date

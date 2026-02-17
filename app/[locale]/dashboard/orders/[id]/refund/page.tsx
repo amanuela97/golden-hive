@@ -1,4 +1,4 @@
-import { getOrderWithItems } from "@/app/[locale]/actions/orders";
+import { getOrderWithItems } from "@/app/[locale]/actions/orders-get";
 import { DashboardWrapper } from "@/app/[locale]/dashboard/components/shared/DashboardWrapper";
 import RefundPageClient from "./RefundPageClient";
 import { Button } from "@/components/ui/button";

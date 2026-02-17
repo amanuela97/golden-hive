@@ -19,7 +19,7 @@ import {
   listOrders,
   type OrderRow,
   type OrderFilters,
-} from "@/app/[locale]/actions/orders";
+} from "@/app/[locale]/actions/orders-list";
 import toast from "react-hot-toast";
 
 interface CustomerOrdersPageClientProps {

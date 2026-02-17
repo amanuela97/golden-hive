@@ -7,6 +7,20 @@ import { DashboardNavbar } from "./DashboardNavbar";
 import { Sidebar } from "./Sidebar";
 import { SettingsModal } from "./SettingsModal";
 
+const MOBILE_BREAKPOINT = 860;
+
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(true);
+  useEffect(() => {
+    const mql = window.matchMedia(`(min-width: ${MOBILE_BREAKPOINT}px)`);
+    setIsDesktop(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+  return isDesktop;
+}
+
 interface DashboardLayoutProps {
   children: React.ReactNode;
   userRole: "admin" | "seller" | "customer";
@@ -17,6 +31,7 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
   const [isMounted, setIsMounted] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
+  const isDesktop = useIsDesktop();
 
   // Check if we're on a settings page
   const isSettingsPage = pathname?.startsWith("/dashboard/settings");
@@ -37,26 +52,22 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
     setIsSettingsOpen(isSettingsPage);
   }, [pathname, isSettingsPage]);
 
-  // Prevent body scrolling when modal is open
-  // Only run after component is mounted to prevent hydration mismatches
+  // Prevent body scrolling only when settings MODAL is open (desktop overlay).
+  // On mobile, settings is a full page so we must NOT lock body scroll.
   useEffect(() => {
     if (!isMounted) return;
 
-    if (isSettingsOpen) {
-      // Save the current overflow style
+    if (isDesktop && isSettingsOpen) {
       const originalOverflow = document.body.style.overflow;
-      // Disable body scrolling
       document.body.style.overflow = "hidden";
-
-      // Cleanup: restore original overflow when modal closes
       return () => {
         document.body.style.overflow = originalOverflow;
       };
     }
-  }, [isSettingsOpen, isMounted]);
+  }, [isDesktop, isSettingsOpen, isMounted]);
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen flex flex-col">
       <DashboardNavbar userRole={userRole} />
       {/* Sidebar: desktop only; mobile uses drawer in navbar */}
       <Sidebar
@@ -69,8 +80,10 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
           }
         }}
       />
-      <main className="pt-14 pl-0 md:pl-56 min-w-0 flex-1">
-        <div className="p-4 md:p-6 min-w-0 overflow-x-auto">{children}</div>
+      <main className="pt-14 pl-0 md:pl-56 min-w-0 flex-1 flex flex-col min-h-0">
+        <div className="p-4 md:p-6 min-w-0 flex-1 overflow-x-auto overflow-y-visible">
+          {children}
+        </div>
       </main>
       <SettingsModal
         isOpen={isSettingsOpen}

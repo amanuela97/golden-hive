@@ -10,14 +10,15 @@ import {
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import {
-  getShippingRates,
+  getEasyshipRates,
+  createEasyshipShipment,
   generateTrackingUrl,
   type Address,
   type Parcel,
-} from "@/lib/easypost";
+} from "@/lib/easyship";
 import { updateSellerBalance } from "./seller-balance";
 import { updateOrderFulfillmentStatus } from "./orders-fulfillment-utils";
-import { getStoreIdForUser } from "./orders";
+import { getStoreIdForUser } from "./store-id";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { nanoid } from "nanoid";
@@ -278,18 +279,28 @@ export async function getShippingRatesForLabel(
           phone: order.shippingPhone || undefined,
         };
 
-    // 4. Normalize country codes for comparison (uppercase)
+    // 4. Phase 1: Finland → Finland, Nepal → Nepal only (inst.md)
     const fromCountry = fromAddress.country?.toUpperCase().trim() || "";
     const toCountry = toAddress.country?.toUpperCase().trim() || "";
-
-    // Check if shipping is international
-    const isInternational = fromCountry !== toCountry;
-
-    // Note: EasyPost supports both domestic and international shipping
-    // We allow both, but filter to international carriers only for international shipments
+    if (fromCountry !== toCountry) {
+      return {
+        success: false,
+        error:
+          "International shipping not yet supported. Phase 1: Finland → Finland and Nepal → Nepal only.",
+        supported: false,
+      };
+    }
+    if (!["FI", "NP"].includes(fromCountry)) {
+      return {
+        success: false,
+        error:
+          "Shipping rates are only available for Finland and Nepal in Phase 1.",
+        supported: false,
+      };
+    }
 
     // 5. Prepare parcel
-    const easypostParcel: Parcel = {
+    const parcelInput: Parcel = {
       weight: parcel.weightOz,
       length: parcel.lengthIn,
       width: parcel.widthIn,
@@ -297,9 +308,8 @@ export async function getShippingRatesForLabel(
     };
 
     // 6. Validate parcel dimensions
-    // EasyPost limits: weight max 70 lbs (1120 oz), dimensions reasonable
     const MAX_WEIGHT_OZ = 1120;
-    const MAX_DIMENSION_IN = 108; // 9 feet
+    const MAX_DIMENSION_IN = 108;
 
     if (parcel.weightOz > MAX_WEIGHT_OZ) {
       return {
@@ -319,59 +329,23 @@ export async function getShippingRatesForLabel(
       };
     }
 
-    // 7. Get rates from EasyPost
-    const rates = await getShippingRates(
-      toAddress,
-      fromAddress,
-      easypostParcel
-    );
+    // 7. Get rates from EasyShip
+    const result = await getEasyshipRates(fromAddress, toAddress, parcelInput);
 
-    if (!rates || rates.length === 0) {
+    if (!result.success || !result.rates || result.rates.length === 0) {
       return {
         success: false,
         error:
-          "No shipping rates available for this route. Please use manual shipping.",
+          result.success === false && result.error
+            ? result.error
+            : "No shipping rates available for this route. Please use manual shipping.",
         supported: false,
       };
     }
 
-    // 8. Filter carriers based on shipping type
-    // For international: only DHL, UPS, FedEx
-    // For domestic: allow all carriers (USPS, UPS, FedEx, etc.)
-    let filteredRates = rates;
-    if (isInternational) {
-      const internationalCarriers = ["dhl", "ups", "fedex"];
-      filteredRates = rates.filter((rate) =>
-        internationalCarriers.includes(rate.carrier.toLowerCase())
-      );
-
-      if (filteredRates.length === 0) {
-        return {
-          success: false,
-          error:
-            "No international shipping services available for this route. Please use manual shipping.",
-          supported: false,
-        };
-      }
-    } else {
-      // For domestic shipping, filter out DHL (typically international only)
-      filteredRates = rates.filter(
-        (rate) => rate.carrier.toLowerCase() !== "dhl"
-      );
-
-      if (filteredRates.length === 0) {
-        return {
-          success: false,
-          error:
-            "No shipping services available for this route. Please use manual shipping.",
-          supported: false,
-        };
-      }
-    }
-
     return {
       success: true,
-      rates: filteredRates,
+      rates: result.rates,
       supported: true,
     };
   } catch (error) {
@@ -529,121 +503,40 @@ export async function purchaseShippingLabel(params: {
           phone: order.shippingPhone || undefined,
         };
 
-    // Create shipment and purchase label
-    const easypostParcel: Parcel = {
+    // Create shipment and purchase label via EasyShip (selected rate = courier_service_id)
+    const easyshipParcel: Parcel = {
       weight: parcel.weightOz,
       length: parcel.lengthIn,
       width: parcel.widthIn,
       height: parcel.heightIn,
     };
 
-    // Create shipment in EasyPost (without purchasing yet)
-    const EasyPost = (await import("@easypost/api")).default;
-    const EASYPOST_API_KEY = process.env.EASYPOST_API_KEY_TEST;
-    const api = new EasyPost(EASYPOST_API_KEY || "");
-
-    // Prepare addresses for EasyPost format
-    interface PreparedAddress {
-      name: string;
-      street1: string;
-      street2?: string;
-      city: string;
-      zip: string;
-      country: string;
-      state?: string;
-      phone?: string;
-    }
-
-    const preparedFromAddress: PreparedAddress = {
-      name: "Store", // EasyPost requires a name field
-      street1: fromAddress.street1,
-      city: fromAddress.city,
-      zip: fromAddress.zip,
-      country: fromAddress.country,
-    };
-
-    if (fromAddress.street2 && fromAddress.street2.trim() !== "") {
-      preparedFromAddress.street2 = fromAddress.street2;
-    }
-
-    if (fromAddress.country === "US") {
-      preparedFromAddress.state = fromAddress.state.toUpperCase();
-    } else if (fromAddress.state && fromAddress.state.trim() !== "") {
-      preparedFromAddress.state = fromAddress.state;
-    }
-
-    // Add phone number if provided (required by some carriers like FedEx)
-    if (fromAddress.phone && fromAddress.phone.trim() !== "") {
-      preparedFromAddress.phone = fromAddress.phone.trim();
-    }
-
-    const preparedToAddress: PreparedAddress = {
-      name: toAddress.name || "Customer", // Use order name if available
-      street1: toAddress.street1,
-      city: toAddress.city,
-      zip: toAddress.zip,
-      country: toAddress.country,
-    };
-
-    if (toAddress.country === "US") {
-      preparedToAddress.state = toAddress.state.toUpperCase();
-    } else if (toAddress.state && toAddress.state.trim() !== "") {
-      preparedToAddress.state = toAddress.state;
-    }
-
-    // Add phone number if provided (required by some carriers like FedEx)
-    if (toAddress.phone && toAddress.phone.trim() !== "") {
-      preparedToAddress.phone = toAddress.phone.trim();
-    }
-
-    // Create shipment
-    const shipment = await api.Shipment.create({
-      to_address: preparedToAddress,
-      from_address: preparedFromAddress,
-      parcel: {
-        length: easypostParcel.length,
-        width: easypostParcel.width,
-        height: easypostParcel.height,
-        weight: easypostParcel.weight,
-      },
-    });
-
-    // Find the rate in the shipment by carrier and service (not by ID, since IDs change per shipment)
-    const rate = shipment.rates?.find(
-      (r) =>
-        r.carrier?.toLowerCase() === carrier.toLowerCase() &&
-        r.service?.toLowerCase() === service.toLowerCase()
+    // rateId from UI is EasyShip courier_service.id from getEasyshipRates
+    const result = await createEasyshipShipment(
+      fromAddress,
+      toAddress,
+      easyshipParcel,
+      params.rateId
     );
-    if (!rate) {
-      console.error("Rate not found:", {
-        carrier,
-        service,
-        availableRates: shipment.rates?.map((r) => ({
-          carrier: r.carrier,
-          service: r.service,
-          id: r.id,
-        })),
-      });
+
+    if (!result) {
       return {
         success: false,
-        error: `Selected rate (${carrier} ${service}) not found in shipment. Available rates: ${shipment.rates?.map((r) => `${r.carrier} ${r.service}`).join(", ") || "none"}`,
+        error: "Failed to create shipment and purchase label with EasyShip",
       };
     }
 
-    // Purchase label with selected rate
-    const boughtShipment = await api.Shipment.buy(shipment.id, rate);
-
+    const trackingUrlFallback = result.tracking_page_url
+      ?? generateTrackingUrl(result.courier_name, result.tracking_number);
     const purchasedLabel = {
-      id: boughtShipment.id,
-      tracking_code: boughtShipment.tracking_code || "",
-      carrier: boughtShipment.selected_rate?.carrier || "",
-      service: boughtShipment.selected_rate?.service || "",
-      rate: boughtShipment.selected_rate?.rate
-        ? parseFloat(boughtShipment.selected_rate.rate)
-        : 0,
-      label_url: boughtShipment.postage_label?.label_url || "",
-      tracking_url: boughtShipment.tracker?.public_url,
-      public_url: boughtShipment.tracker?.public_url,
+      id: result.shipment_id,
+      tracking_code: result.tracking_number,
+      carrier: result.courier_name,
+      service: result.courier_name,
+      rate: result.total_charge,
+      label_url: result.label_url || "",
+      tracking_url: trackingUrlFallback,
+      public_url: trackingUrlFallback,
     };
 
     const labelCost = purchasedLabel.rate || 0;
@@ -672,7 +565,7 @@ export async function purchaseShippingLabel(params: {
             carrier: purchasedLabel.carrier,
             carrierCode: purchasedLabel.carrier.toLowerCase(),
             trackingUrl: purchasedLabel.tracking_url,
-            easypostShipmentId: shipment.id,
+            easypostShipmentId: result.shipment_id,
             labelUrl: purchasedLabel.label_url,
             labelFileType:
               labelFormat === "PDF"
@@ -694,7 +587,7 @@ export async function purchaseShippingLabel(params: {
           carrier: purchasedLabel.carrier,
           carrierCode: purchasedLabel.carrier.toLowerCase(),
           trackingUrl: purchasedLabel.tracking_url,
-          easypostShipmentId: shipment.id,
+          easypostShipmentId: result.shipment_id,
           labelUrl: purchasedLabel.label_url,
           labelFileType:
             labelFormat === "PDF"
@@ -744,7 +637,7 @@ export async function purchaseShippingLabel(params: {
         storeId,
         type: "shipping_label",
         amount: labelCost,
-        currency: rate.currency || "USD",
+        currency: result.currency || "EUR",
         orderId,
         orderShipmentId: shipmentRecord?.id,
         description: `Shipping label purchased for order`,

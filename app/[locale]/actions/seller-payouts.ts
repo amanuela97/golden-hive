@@ -11,7 +11,7 @@ import { eq, and, desc, gte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { getStoreIdForUser } from "@/app/[locale]/actions/orders";
+import { getStoreIdForUser } from "@/app/[locale]/actions/store-id";
 import { formatCurrency } from "@/lib/utils";
 import Stripe from "stripe";
 
@@ -56,15 +56,20 @@ export async function requestPayout(params: RequestPayoutParams): Promise<{
       return { success: false, error: "Amount must be greater than 0" };
     }
 
-    // Get balance and settings
+    // Get balance for this currency wallet
     const [balance] = await db
       .select()
       .from(sellerBalances)
-      .where(eq(sellerBalances.storeId, storeId))
+      .where(
+        and(
+          eq(sellerBalances.storeId, storeId),
+          eq(sellerBalances.currency, currency)
+        )
+      )
       .limit(1);
 
     if (!balance) {
-      return { success: false, error: "Balance not found" };
+      return { success: false, error: "Balance not found for this currency" };
     }
 
     const availableBalance = parseFloat(balance.availableBalance);
@@ -94,13 +99,14 @@ export async function requestPayout(params: RequestPayoutParams): Promise<{
       };
     }
 
-    // Check 3: No payment holds (check for pending payouts)
+    // Check 3: No pending payout for this currency
     const pendingPayouts = await db
       .select()
       .from(sellerPayouts)
       .where(
         and(
           eq(sellerPayouts.storeId, storeId),
+          eq(sellerPayouts.currency, currency),
           eq(sellerPayouts.status, "pending")
         )
       );
@@ -109,11 +115,11 @@ export async function requestPayout(params: RequestPayoutParams): Promise<{
       return {
         success: false,
         error:
-          "You have a pending payout request. Please wait for it to be processed.",
+          "You have a pending payout request for this currency. Please wait for it to be processed.",
       };
     }
 
-    // Check 4: No duplication - check if already paid today
+    // Check 4: No duplication - check if already paid today for this currency
     if (balance.lastPayoutAt) {
       const lastPayoutDate = new Date(balance.lastPayoutAt);
       const today = new Date();
@@ -123,7 +129,6 @@ export async function requestPayout(params: RequestPayoutParams): Promise<{
         lastPayoutDate.getFullYear() === today.getFullYear();
 
       if (isSameDay) {
-        // Check if there's a completed payout today
         const todayStart = new Date(today);
         todayStart.setHours(0, 0, 0, 0);
 
@@ -133,6 +138,7 @@ export async function requestPayout(params: RequestPayoutParams): Promise<{
           .where(
             and(
               eq(sellerPayouts.storeId, storeId),
+              eq(sellerPayouts.currency, currency),
               eq(sellerPayouts.status, "completed"),
               gte(sellerPayouts.completedAt, todayStart)
             )
@@ -142,21 +148,37 @@ export async function requestPayout(params: RequestPayoutParams): Promise<{
           return {
             success: false,
             error:
-              "You have already received a payout today. Please try again tomorrow.",
+              "You have already received a payout for this currency today. Please try again tomorrow.",
           };
         }
       }
     }
 
-    // Determine payout provider from store
+    // For NPR: require eSewa ID or bank details. Stripe for EUR.
     const [storeRow] = await db
-      .select({ payoutProvider: store.payoutProvider })
+      .select({
+        payoutProvider: store.payoutProvider,
+        esewaId: store.esewaId,
+        bankDetailsEncrypted: store.bankDetailsEncrypted,
+      })
       .from(store)
       .where(eq(store.id, storeId))
       .limit(1);
 
     const payoutProvider =
       (storeRow?.payoutProvider as string) || "stripe";
+
+    if (currency === "NPR") {
+      const hasEsewa = !!storeRow?.esewaId?.trim();
+      const hasBank = !!storeRow?.bankDetailsEncrypted?.trim();
+      if (!hasEsewa && !hasBank) {
+        return {
+          success: false,
+          error:
+            "Please set your eSewa ID or bank account details in Settings → Payments before requesting an NPR payout.",
+        };
+      }
+    }
 
     // All checks passed - create payout
     const [payout] = await db
@@ -422,7 +444,7 @@ export async function processPayout(
       description: `Payout request processed`,
     });
 
-    // Update last payout info in balance
+    // Update last payout info for this currency wallet
     await db
       .update(sellerBalances)
       .set({
@@ -430,7 +452,12 @@ export async function processPayout(
         lastPayoutAmount: payout.amount,
         updatedAt: new Date(),
       })
-      .where(eq(sellerBalances.storeId, payout.storeId));
+      .where(
+        and(
+          eq(sellerBalances.storeId, payout.storeId),
+          eq(sellerBalances.currency, payout.currency)
+        )
+      );
 
     revalidatePath("/dashboard/payouts");
 
@@ -502,11 +529,12 @@ export async function processPayoutByStoreId(params: {
 }
 
 /**
- * Mark an eSewa payout as completed (admin/cron only).
- * Updates payout status, debits seller balance, updates lastPayoutAt.
+ * Mark an eSewa/NPR payout as completed (admin/cron only).
+ * When store has both eSewa and bank, deliveryMethod must be specified.
  */
 export async function markEsewaPayoutCompleted(
-  payoutId: string
+  payoutId: string,
+  deliveryMethod?: "esewa" | "bank"
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const [payout] = await db
@@ -525,11 +553,32 @@ export async function markEsewaPayoutCompleted(
       return { success: false, error: "Payout is not pending" };
     }
 
+    const [storeRow] = await db
+      .select({
+        esewaId: store.esewaId,
+        bankDetailsEncrypted: store.bankDetailsEncrypted,
+      })
+      .from(store)
+      .where(eq(store.id, payout.storeId))
+      .limit(1);
+
+    const hasEsewa = !!storeRow?.esewaId?.trim();
+    const hasBank = !!storeRow?.bankDetailsEncrypted?.trim();
+    if (hasEsewa && hasBank && !deliveryMethod) {
+      return {
+        success: false,
+        error:
+          "This seller has both eSewa ID and bank details. Please specify which method was used for the payout (deliveryMethod: 'esewa' or 'bank').",
+      };
+    }
+
     await db
       .update(sellerPayouts)
       .set({
         status: "completed",
         completedAt: new Date(),
+        payoutDeliveryMethodUsed: deliveryMethod ?? null,
+        updatedAt: new Date(),
       })
       .where(eq(sellerPayouts.id, payoutId));
 
@@ -550,7 +599,12 @@ export async function markEsewaPayoutCompleted(
         lastPayoutAmount: payout.amount,
         updatedAt: new Date(),
       })
-      .where(eq(sellerBalances.storeId, payout.storeId));
+      .where(
+        and(
+          eq(sellerBalances.storeId, payout.storeId),
+          eq(sellerBalances.currency, payout.currency)
+        )
+      );
 
     revalidatePath("/dashboard/finances");
     revalidatePath("/dashboard/finances/payouts");
@@ -571,8 +625,20 @@ export async function markEsewaPayoutCompleted(
  */
 export async function getPayouts(storeId: string) {
   try {
+    // Select only columns we return (avoids "column does not exist" if migration not run yet)
     const payouts = await db
-      .select()
+      .select({
+        id: sellerPayouts.id,
+        amount: sellerPayouts.amount,
+        currency: sellerPayouts.currency,
+        status: sellerPayouts.status,
+        stripeTransferId: sellerPayouts.stripeTransferId,
+        requestedAt: sellerPayouts.requestedAt,
+        processedAt: sellerPayouts.processedAt,
+        completedAt: sellerPayouts.completedAt,
+        failureReason: sellerPayouts.failureReason,
+        createdAt: sellerPayouts.createdAt,
+      })
       .from(sellerPayouts)
       .where(eq(sellerPayouts.storeId, storeId))
       .orderBy(desc(sellerPayouts.createdAt));

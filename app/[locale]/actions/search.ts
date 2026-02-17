@@ -62,6 +62,7 @@ export async function searchAll(
       .where(
         and(
           eq(listing.status, "active"),
+          eq(listing.isFeatured, true),
           or(
             ilike(listing.name, searchTerm),
             ilike(listingTranslations.name, searchTerm),
@@ -99,6 +100,7 @@ export async function searchAll(
       .where(
         and(
           eq(listing.status, "active"),
+          eq(listing.isFeatured, true),
           isNotNull(listing.taxonomyCategoryId),
           isNotNull(listing.taxonomyCategoryName),
           ilike(listing.taxonomyCategoryName, searchTerm)
@@ -195,9 +197,10 @@ export async function searchProducts(
     const limit = options?.limit || 24;
     const offset = (page - 1) * limit;
 
-    // Build where conditions
+    // Build where conditions (home/search: only show featured products)
     const whereConditions = [
       eq(listing.status, "active"),
+      eq(listing.isFeatured, true),
       or(
         ilike(listing.name, searchTerm),
         ilike(listingTranslations.name, searchTerm),

@@ -4,15 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
 import { Info } from "lucide-react";
 import { useState } from "react";
+import type { WalletSummary } from "@/app/[locale]/actions/finances";
 
 interface BalanceSummaryProps {
-  availableBalance: number;
-  pendingBalance: number;
-  amountDue: number;
-  /** When > 0, show as "Reserved (fees)" with tooltip that it's covered by pending (not a debt) */
-  reservedFeesFromPending?: number;
-  currentBalance: number;
-  currency: string;
+  /** Two wallets: EUR (Stripe) and NPR (eSewa) */
+  wallets: { EUR: WalletSummary; NPR: WalletSummary };
   holdPeriodDays?: number;
 }
 
@@ -49,19 +45,15 @@ function InfoTooltip({ content }: { content: string }) {
 }
 
 export function BalanceSummary({
-  availableBalance,
-  pendingBalance,
-  amountDue,
-  reservedFeesFromPending = 0,
-  currentBalance,
-  currency,
+  wallets,
   holdPeriodDays = 7,
 }: BalanceSummaryProps) {
-  const holdPeriodText = holdPeriodDays === 1 
-    ? "1 day" 
+  const { EUR, NPR } = wallets;
+  const holdPeriodText = holdPeriodDays === 1
+    ? "1 day"
     : `${holdPeriodDays} days`;
-
-  const showReservedFees = reservedFeesFromPending > 0;
+  const showReservedEur = EUR.reservedFeesFromPending > 0;
+  const showReservedNpr = NPR.reservedFeesFromPending > 0;
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -71,70 +63,42 @@ export function BalanceSummary({
           <InfoTooltip content="Your total net balance including all available funds, pending funds, and any amounts you owe. Calculated as: Available + Pending - Amount Due." />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">
-            {formatCurrency(currentBalance, currency)}
-          </div>
+          <div className="text-2xl font-bold">{formatCurrency(EUR.currentBalance, "EUR")}</div>
+          <div className="text-lg font-semibold text-muted-foreground mt-1">{formatCurrency(NPR.currentBalance, "NPR")}</div>
         </CardContent>
       </Card>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">
-            Available for Deposit
-          </CardTitle>
-          <InfoTooltip content="Funds that are ready to be withdrawn immediately. These funds have completed the hold period and can be transferred to your bank account via payout." />
+          <CardTitle className="text-sm font-medium">Available for Deposit</CardTitle>
+          <InfoTooltip content="Funds that are ready to be withdrawn. EUR via Stripe; NPR via eSewa." />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-green-600">
-            {formatCurrency(availableBalance, currency)}
-          </div>
+          <div className="text-2xl font-bold text-green-600">{formatCurrency(EUR.availableBalance, "EUR")}</div>
+          <div className="text-lg font-semibold text-green-600 mt-1">{formatCurrency(NPR.availableBalance, "NPR")}</div>
         </CardContent>
       </Card>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">
-            Pending (on hold)
-          </CardTitle>
-          <InfoTooltip content={`Funds from recent orders that are currently in a hold period of ${holdPeriodText}. These funds will automatically move to Available for Deposit after the hold period expires. This hold period helps protect against chargebacks and disputes.`} />
+          <CardTitle className="text-sm font-medium">Pending (on hold)</CardTitle>
+          <InfoTooltip content={`Funds in a hold period of ${holdPeriodText}. They will move to Available after the hold expires.`} />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-yellow-600">
-            {formatCurrency(pendingBalance, currency)}
-          </div>
+          <div className="text-2xl font-bold text-yellow-600">{formatCurrency(EUR.pendingBalance, "EUR")}</div>
+          <div className="text-lg font-semibold text-yellow-600 mt-1">{formatCurrency(NPR.pendingBalance, "NPR")}</div>
         </CardContent>
       </Card>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">
-            {showReservedFees ? "Reserved (fees)" : "Amount Due"}
-          </CardTitle>
-          <InfoTooltip
-            content={
-              showReservedFees
-                ? "Fees from recent orders held against your pending balance. This amount is covered by pending funds and will be settled automatically when the hold period ends. You do not owe this separately."
-                : "Outstanding costs that you owe to the platform, such as transaction fees, shipping costs, or other charges. This amount will be deducted from your future payouts or available balance."
-            }
-          />
+          <CardTitle className="text-sm font-medium">Amount Due / Reserved</CardTitle>
+          <InfoTooltip content="Outstanding costs or fees reserved from pending. Deducted from future payouts." />
         </CardHeader>
         <CardContent>
-          <div
-            className={`text-2xl font-bold ${
-              showReservedFees
-                ? "text-muted-foreground"
-                : amountDue > 0
-                  ? "text-red-600"
-                  : "text-muted-foreground"
-            }`}
-          >
-            {formatCurrency(
-              showReservedFees ? reservedFeesFromPending : amountDue,
-              currency
-            )}
+          <div className="text-2xl font-bold text-muted-foreground">
+            {showReservedEur ? formatCurrency(EUR.reservedFeesFromPending, "EUR") : formatCurrency(EUR.amountDue, "EUR")}
           </div>
-          {showReservedFees && (
-            <p className="text-xs text-muted-foreground mt-1">
-              Covered by pending
-            </p>
-          )}
+          <div className="text-lg font-semibold text-muted-foreground mt-1">
+            {showReservedNpr ? formatCurrency(NPR.reservedFeesFromPending, "NPR") : formatCurrency(NPR.amountDue, "NPR")}
+          </div>
         </CardContent>
       </Card>
     </div>

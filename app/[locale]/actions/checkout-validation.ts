@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { db } from "@/db";
 import { listing } from "@/db/schema";
 import { inArray } from "drizzle-orm";
-import { getStoreIdForUser } from "./orders";
+import { getStoreIdForUser } from "./store-id";
 
 /**
  * Validate if the current user is allowed to checkout with the given listings

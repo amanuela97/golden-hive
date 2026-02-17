@@ -3,7 +3,7 @@ import { DashboardWrapper } from "../../components/shared/DashboardWrapper";
 import DashboardNotFound from "../../not-found";
 import TransactionsPageClient from "./TransactionsPageClient";
 import { getRecentActivity } from "@/app/[locale]/actions/finances";
-import { getStoreIdForUser } from "@/app/[locale]/actions/orders";
+import { getStoreIdForUser } from "@/app/[locale]/actions/store-id";
 
 export default async function TransactionsPage() {
   const result = await protectDashboardRoute({

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { sellerPayouts, store } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
+import { decryptEsewaId } from "@/lib/esewa-encrypt";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
     storeName: p.storeName,
     amount: parseFloat(p.amount),
     currency: p.currency,
-    esewaId: p.esewaId,
+    esewaId: decryptEsewaId(p.esewaId),
     requestedAt: p.requestedAt,
   }));
 

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."balance_transaction_type" ADD VALUE 'esewa_fee' BEFORE 'shipping_label';

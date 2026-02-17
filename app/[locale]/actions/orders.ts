@@ -13,8 +13,7 @@ import {
   inventoryAdjustments,
   listingVariants,
   listing,
-  userRoles,
-  roles,
+
   user,
   shippingBillingInfo,
   orderEvents,
@@ -47,6 +46,10 @@ import {
   getInvoiceExpirationDate,
 } from "@/lib/invoice-token";
 import { generateOrderNumber } from "@/lib/order-number";
+import { getStoreIdForUser } from "./store-id";
+
+// List orders and archive/unarchive live in orders-list.ts and orders-archive.ts
+// so the dashboard orders list page does not pull in this large file at compile time.
 
 export type OrderRow = {
   id: string;
@@ -75,7 +78,6 @@ export type OrderRow = {
   refundRequestStatus?: string | null;
   refundRequestReason?: string | null;
   storeName?: string | null;
-  // Warning flags (derived)
   hasAddressWarning?: boolean;
   hasRiskWarning?: boolean;
 };
@@ -84,8 +86,8 @@ export type OrderFilters = {
   search?: string;
   paymentStatus?: string;
   fulfillmentStatus?: string;
-  status?: string; // "open" | "draft" | "archived" | "canceled"
-  archived?: boolean; // true for archived orders (archivedAt IS NOT NULL)
+  status?: string;
+  archived?: boolean;
   sortBy?: string;
   sortDirection?: "asc" | "desc";
   page?: number;
@@ -509,93 +511,6 @@ async function canChangeStatus(
   return { allowed: false, error: "Unknown status type" };
 }
 
-export async function getStoreIdForUser(): Promise<{
-  storeId: string | null;
-  isAdmin: boolean;
-  isCustomer: boolean;
-  customerId: string | null;
-  allCustomerIds: string[];
-  error?: string;
-}> {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
-  if (!session?.user?.id) {
-    return {
-      storeId: null,
-      isAdmin: false,
-      isCustomer: false,
-      customerId: null,
-      allCustomerIds: [],
-      error: "Unauthorized",
-    };
-  }
-
-  // Check if user is admin
-  const userRole = await db
-    .select({
-      roleName: roles.name,
-    })
-    .from(userRoles)
-    .innerJoin(roles, eq(userRoles.roleId, roles.id))
-    .where(eq(userRoles.userId, session.user.id))
-    .limit(1);
-
-  const isAdmin =
-    userRole.length > 0 && userRole[0].roleName.toLowerCase() === "admin";
-
-  // Don't return early for admin: they may also be a store member and have a storeId
-
-  // Check if user is a customer (has customer record)
-  const customerRecords = await db
-    .select({ id: customers.id })
-    .from(customers)
-    .where(eq(customers.userId, session.user.id));
-
-  const allCustomerIds = customerRecords.map((c) => c.id);
-  const customerId = allCustomerIds.length > 0 ? allCustomerIds[0] : null;
-  const isCustomer = allCustomerIds.length > 0;
-
-  // If customer, return early
-  if (isCustomer) {
-    return {
-      storeId: null,
-      isAdmin: false,
-      isCustomer: true,
-      customerId,
-      allCustomerIds,
-    };
-  }
-
-  // Get store for current user through storeMembers
-  const storeResult = await db
-    .select({ id: store.id })
-    .from(storeMembers)
-    .innerJoin(store, eq(storeMembers.storeId, store.id))
-    .where(eq(storeMembers.userId, session.user.id))
-    .limit(1);
-
-  if (storeResult.length === 0) {
-    return {
-      storeId: null,
-      isAdmin,
-      isCustomer: false,
-      customerId: null,
-      allCustomerIds: [],
-      error: "Store not found. Please set up your store information.",
-    };
-  }
-
-  return {
-    storeId: storeResult[0].id,
-    isAdmin,
-    isCustomer: false,
-    customerId: null,
-    allCustomerIds: [],
-  };
-}
-
 /**
  * Find default inventory location for a store
  */
@@ -836,6 +751,12 @@ export async function adjustInventoryForOrder(
         const quantity = item.quantity;
 
         if (direction === "reserve") {
+          const availableNow = level.available ?? 0;
+          if (availableNow < quantity) {
+            throw new Error(
+              `Insufficient inventory. Available: ${availableNow}, requested: ${quantity}. Please reduce quantity or remove the item.`
+            );
+          }
           // available -= qty, committed += qty
           // Insert ledger entry FIRST
           await tx.insert(inventoryAdjustments).values({
@@ -965,495 +886,6 @@ export async function adjustInventoryForOrder(
       success: false,
       error:
         error instanceof Error ? error.message : "Failed to adjust inventory",
-    };
-  }
-}
-
-/**
- * List orders with filters and pagination
- */
-export async function listOrders(filters: OrderFilters = {}): Promise<{
-  success: boolean;
-  data?: OrderRow[];
-  totalCount?: number;
-  error?: string;
-}> {
-  try {
-    const {
-      storeId,
-      isAdmin,
-      isCustomer,
-      allCustomerIds,
-      error: storeError,
-    } = await getStoreIdForUser();
-
-    if (storeError) {
-      return { success: false, error: storeError };
-    }
-
-    // Build where conditions
-    const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof sql>> =
-      [];
-
-    // Filter orders for customers
-    if (isCustomer && allCustomerIds.length > 0) {
-      conditions.push(inArray(orders.customerId, allCustomerIds));
-    } else if (isCustomer) {
-      // Fallback: filter by email if no customer IDs found
-      const session = await auth.api.getSession({
-        headers: await headers(),
-      });
-      if (session?.user?.email) {
-        conditions.push(eq(orders.customerEmail, session.user.email));
-      } else {
-        // No customer IDs and no email - return empty
-        return { success: true, data: [], totalCount: 0 };
-      }
-    }
-
-    if (!isAdmin && !isCustomer && storeId) {
-      // For stores, show orders that have at least one item from their listings
-      // This ensures stores see orders with their products, even if order.storeId is set to a different store
-      // (e.g., when an admin creates an order with items from multiple stores)
-      conditions.push(
-        sql`EXISTS (
-          SELECT 1 
-          FROM ${orderItems} oi
-          INNER JOIN ${listing} l ON oi.listing_id = l.id
-          WHERE oi.order_id = ${orders.id}
-          AND l.store_id = ${storeId}
-        )`
-      );
-    }
-
-    if (filters.paymentStatus && filters.paymentStatus !== "all") {
-      conditions.push(
-        eq(
-          orders.paymentStatus,
-          filters.paymentStatus as
-            | "pending"
-            | "paid"
-            | "partially_refunded"
-            | "refunded"
-            | "failed"
-            | "void"
-        )
-      );
-    }
-
-    if (filters.fulfillmentStatus && filters.fulfillmentStatus !== "all") {
-      conditions.push(
-        eq(
-          orders.fulfillmentStatus,
-          filters.fulfillmentStatus as
-            | "unfulfilled"
-            | "partial"
-            | "fulfilled"
-            | "canceled"
-        )
-      );
-    }
-
-    if (filters.status && filters.status !== "all") {
-      conditions.push(
-        eq(
-          orders.status,
-          filters.status as "open" | "draft" | "archived" | "canceled"
-        )
-      );
-    }
-
-    // Filter by archived status
-    if (filters.archived !== undefined) {
-      if (filters.archived) {
-        conditions.push(sql`${orders.archivedAt} IS NOT NULL`);
-      } else {
-        conditions.push(sql`${orders.archivedAt} IS NULL`);
-      }
-    }
-
-    // Build search condition
-    let searchCondition;
-    if (filters.search && filters.search.trim()) {
-      const searchTerm = `%${filters.search.trim()}%`;
-      searchCondition = or(
-        sql`CAST(${orders.orderNumber} AS TEXT) ILIKE ${searchTerm}`,
-        sql`${orders.customerEmail} ILIKE ${searchTerm}`,
-        sql`${orders.customerFirstName} ILIKE ${searchTerm}`,
-        sql`${orders.customerLastName} ILIKE ${searchTerm}`,
-        sql`CONCAT(${orders.customerFirstName}, ' ', ${orders.customerLastName}) ILIKE ${searchTerm}`
-      );
-    }
-
-    // For admins, we need to group orders by checkout session to show unified orders
-    // For stores, show individual orders (they only see their portion anyway)
-    let totalCount: number;
-
-    if (isAdmin) {
-      // Group orders by checkout session ID for admins
-      // Get distinct checkout session IDs (or order IDs if no session)
-      const sessionQuery = db
-        .selectDistinct({
-          sessionId: orderPayments.stripeCheckoutSessionId,
-          orderId: orders.id,
-        })
-        .from(orders)
-        .leftJoin(orderPayments, eq(orders.id, orderPayments.orderId))
-        .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
-        .leftJoin(listing, eq(orderItems.listingId, listing.id))
-        .where(
-          conditions.length > 0
-            ? searchCondition
-              ? and(...conditions, searchCondition)
-              : and(...conditions)
-            : searchCondition || undefined
-        );
-
-      const sessionResult = await sessionQuery;
-
-      // Group by session ID (or use order ID if no session)
-      const uniqueSessions = new Set<string>();
-      for (const row of sessionResult) {
-        const key = row.sessionId || row.orderId;
-        if (key) uniqueSessions.add(key);
-      }
-      totalCount = uniqueSessions.size;
-    } else {
-      // For stores and customers, count distinct orders
-      const countQuery = db
-        .selectDistinct({ id: orders.id })
-        .from(orders)
-        .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
-        .leftJoin(listing, eq(orderItems.listingId, listing.id))
-        .leftJoin(store, eq(orders.storeId, store.id))
-        .where(
-          conditions.length > 0
-            ? searchCondition
-              ? and(...conditions, searchCondition)
-              : and(...conditions)
-            : searchCondition || undefined
-        );
-
-      const countResult = await countQuery;
-      totalCount = countResult.length;
-    }
-
-    // Build sort - default to latest orders (by date, descending)
-    const sortBy = filters.sortBy || "date";
-    const sortDirection = filters.sortDirection || "desc";
-    const sortColumn =
-      sortBy === "orderNumber"
-        ? orders.orderNumber
-        : sortBy === "date"
-          ? sql`COALESCE(${orders.placedAt}, ${orders.createdAt})` // Use placedAt if available, otherwise createdAt
-          : sortBy === "total"
-            ? orders.totalAmount
-            : sortBy === "paymentStatus"
-              ? orders.paymentStatus
-              : sortBy === "fulfillmentStatus"
-                ? orders.fulfillmentStatus
-                : sql`COALESCE(${orders.placedAt}, ${orders.createdAt})`; // Default to date sorting
-
-    const orderBy =
-      sortDirection === "asc" ? asc(sortColumn) : desc(sortColumn);
-
-    // Get paginated data
-    const page = filters.page || 1;
-    const pageSize = filters.pageSize || 50;
-    const offset = (page - 1) * pageSize;
-
-    // For stores, we need to count only items from their listings
-    // For admins and customers, count all items
-    let itemsCountExpression: ReturnType<typeof sql<number>>;
-
-    if (!isAdmin && !isCustomer && storeId) {
-      // Count only items from this store's listings
-      itemsCountExpression = sql<number>`COUNT(CASE WHEN ${listing.storeId} = ${storeId} THEN ${orderItems.id} END)::int`;
-    } else {
-      // Count all items
-      itemsCountExpression = sql<number>`COUNT(${orderItems.id})::int`;
-    }
-
-    let data: OrderRow[];
-
-    if (isAdmin) {
-      // For admins: Group orders by checkout session ID
-      // First, get all orders with their session IDs
-      const ordersWithSessions = await db
-        .select({
-          id: orders.id,
-          orderNumber: orders.orderNumber,
-          customerFirstName: orders.customerFirstName,
-          customerLastName: orders.customerLastName,
-          customerEmail: orders.customerEmail,
-          totalAmount: orders.totalAmount,
-          currency: orders.currency,
-          paymentStatus: orders.paymentStatus,
-          fulfillmentStatus: orders.fulfillmentStatus,
-          workflowStatus: orders.workflowStatus,
-          holdReason: orders.holdReason,
-          status: orders.status,
-          placedAt: orders.placedAt,
-          createdAt: orders.createdAt,
-          shippingMethod: orders.shippingMethod,
-          archivedAt: orders.archivedAt,
-          shippingAddressLine1: orders.shippingAddressLine1,
-          shippingCity: orders.shippingCity,
-          shippingCountry: orders.shippingCountry,
-          refundRequestStatus: orders.refundRequestStatus,
-          refundRequestReason: refundRequests.rejectionReason,
-          storeName: store.storeName,
-          sessionId: orderPayments.stripeCheckoutSessionId,
-        })
-        .from(orders)
-        .leftJoin(orderPayments, eq(orders.id, orderPayments.orderId))
-        .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
-        .leftJoin(listing, eq(orderItems.listingId, listing.id))
-        .leftJoin(store, eq(orders.storeId, store.id))
-        .leftJoin(
-          refundRequests,
-          and(
-            eq(refundRequests.orderId, orders.id),
-            eq(refundRequests.status, "rejected")
-          )
-        )
-        .where(
-          conditions.length > 0
-            ? searchCondition
-              ? and(...conditions, searchCondition)
-              : and(...conditions)
-            : searchCondition || undefined
-        )
-        .groupBy(
-          orders.id,
-          orders.orderNumber,
-          orders.customerFirstName,
-          orders.customerLastName,
-          orders.customerEmail,
-          orders.totalAmount,
-          orders.currency,
-          orders.paymentStatus,
-          orders.fulfillmentStatus,
-          orders.workflowStatus,
-          orders.holdReason,
-          orders.status,
-          orders.placedAt,
-          orders.createdAt,
-          orders.shippingMethod,
-          orders.archivedAt,
-          orders.shippingAddressLine1,
-          orders.shippingCity,
-          orders.shippingCountry,
-          orders.refundRequestStatus,
-          refundRequests.rejectionReason,
-          store.storeName,
-          orderPayments.stripeCheckoutSessionId
-        );
-
-      // Get item counts for each order
-      const orderIds = [...new Set(ordersWithSessions.map((o) => o.id))];
-      const itemCounts = await db
-        .select({
-          orderId: orderItems.orderId,
-          count: sql<number>`COUNT(${orderItems.id})::int`,
-        })
-        .from(orderItems)
-        .where(inArray(orderItems.orderId, orderIds))
-        .groupBy(orderItems.orderId);
-
-      const itemCountMap = new Map(
-        itemCounts.map((ic) => [ic.orderId, ic.count])
-      );
-
-      // Group orders by session ID (or order ID if no session)
-      const groupedOrders = new Map<string, typeof ordersWithSessions>();
-      for (const order of ordersWithSessions) {
-        const groupKey = order.sessionId || order.id;
-        if (!groupedOrders.has(groupKey)) {
-          groupedOrders.set(groupKey, []);
-        }
-        groupedOrders.get(groupKey)!.push(order);
-      }
-
-      // Aggregate grouped orders
-      data = Array.from(groupedOrders.values()).map((orderGroup) => {
-        // Use the first order as the base (most recent or primary)
-        const primaryOrder = orderGroup.sort(
-          (a, b) =>
-            (b.placedAt?.getTime() || b.createdAt.getTime()) -
-            (a.placedAt?.getTime() || a.createdAt.getTime())
-        )[0];
-
-        // Aggregate totals
-        const totalAmount = orderGroup.reduce(
-          (sum, o) => sum + parseFloat(o.totalAmount || "0"),
-          0
-        );
-        const totalItems = orderGroup.reduce(
-          (sum, o) => sum + (itemCountMap.get(o.id) || 0),
-          0
-        );
-
-        // Determine overall status (worst case)
-        const statuses = orderGroup.map((o) => o.status);
-        const paymentStatuses = orderGroup.map((o) => o.paymentStatus);
-        const fulfillmentStatuses = orderGroup.map((o) => o.fulfillmentStatus);
-
-        const overallStatus = statuses.includes("canceled")
-          ? "canceled"
-          : statuses.includes("archived")
-            ? "archived"
-            : "open";
-        const overallPaymentStatus = paymentStatuses.includes("paid")
-          ? "paid"
-          : paymentStatuses.includes("failed")
-            ? "failed"
-            : paymentStatuses.includes("refunded")
-              ? "refunded"
-              : "pending";
-        const overallFulfillmentStatus = fulfillmentStatuses.every(
-          (s) => s === "fulfilled"
-        )
-          ? "fulfilled"
-          : fulfillmentStatuses.some(
-                (s) => s === "fulfilled" || s === "partial"
-              )
-            ? "partial"
-            : "unfulfilled";
-
-        return {
-          ...primaryOrder,
-          id: primaryOrder.id, // Use primary order ID
-          orderNumber: primaryOrder.orderNumber, // Use primary order number
-          totalAmount: totalAmount.toFixed(2),
-          itemsCount: totalItems,
-          paymentStatus: overallPaymentStatus,
-          fulfillmentStatus: overallFulfillmentStatus,
-          status: overallStatus,
-          storeName: primaryOrder.storeName, // Include storeName from primary order
-          refundRequestReason: primaryOrder.refundRequestReason, // Include rejection reason from primary order
-          // Mark as grouped order
-          isGrouped: orderGroup.length > 1,
-          groupedOrderIds: orderGroup.map((o) => o.id),
-        };
-      });
-
-      // Sort the grouped data
-      data.sort((a, b) => {
-        const aDate = a.placedAt?.getTime() || a.createdAt.getTime();
-        const bDate = b.placedAt?.getTime() || b.createdAt.getTime();
-        return sortDirection === "asc" ? aDate - bDate : bDate - aDate;
-      });
-
-      // Apply pagination
-      data = data.slice(offset, offset + pageSize);
-    } else {
-      // For stores: Show individual orders (existing logic)
-      data = await db
-        .select({
-          id: orders.id,
-          orderNumber: orders.orderNumber,
-          customerFirstName: orders.customerFirstName,
-          customerLastName: orders.customerLastName,
-          customerEmail: orders.customerEmail,
-          totalAmount: orders.totalAmount,
-          currency: orders.currency,
-          paymentStatus: orders.paymentStatus,
-          fulfillmentStatus: orders.fulfillmentStatus,
-          workflowStatus: orders.workflowStatus,
-          holdReason: orders.holdReason,
-          status: orders.status,
-          placedAt: orders.placedAt,
-          createdAt: orders.createdAt,
-          shippingMethod: orders.shippingMethod,
-          archivedAt: orders.archivedAt,
-          shippingAddressLine1: orders.shippingAddressLine1,
-          shippingCity: orders.shippingCity,
-          shippingCountry: orders.shippingCountry,
-          refundRequestStatus: orders.refundRequestStatus,
-          refundRequestReason: refundRequests.rejectionReason,
-          storeName: store.storeName,
-          itemsCount: itemsCountExpression,
-        })
-        .from(orders)
-        .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
-        .leftJoin(listing, eq(orderItems.listingId, listing.id))
-        .leftJoin(store, eq(orders.storeId, store.id))
-        .leftJoin(
-          refundRequests,
-          and(
-            eq(refundRequests.orderId, orders.id),
-            eq(refundRequests.status, "rejected")
-          )
-        )
-        .where(
-          conditions.length > 0
-            ? searchCondition
-              ? and(...conditions, searchCondition)
-              : and(...conditions)
-            : searchCondition || undefined
-        )
-        .groupBy(
-          orders.id,
-          orders.orderNumber,
-          orders.customerFirstName,
-          orders.customerLastName,
-          orders.customerEmail,
-          orders.totalAmount,
-          orders.currency,
-          orders.paymentStatus,
-          orders.fulfillmentStatus,
-          orders.workflowStatus,
-          orders.holdReason,
-          orders.status,
-          orders.placedAt,
-          orders.createdAt,
-          orders.shippingMethod,
-          orders.archivedAt,
-          orders.shippingAddressLine1,
-          orders.shippingCity,
-          orders.shippingCountry,
-          orders.refundRequestStatus,
-          refundRequests.rejectionReason,
-          store.storeName
-        )
-        .orderBy(orderBy)
-        .limit(pageSize)
-        .offset(offset);
-    }
-
-    return {
-      success: true,
-      data: data.map((row) => {
-        // Derive warning flags
-        // Access shipping fields directly from row (they exist in the query result but not in OrderRow type)
-        const shippingAddressLine1 = (
-          row as unknown as { shippingAddressLine1?: string | null }
-        ).shippingAddressLine1;
-        const shippingCity = (
-          row as unknown as { shippingCity?: string | null }
-        ).shippingCity;
-        const shippingCountry = (
-          row as unknown as { shippingCountry?: string | null }
-        ).shippingCountry;
-        const hasAddressWarning =
-          !shippingAddressLine1 || !shippingCity || !shippingCountry;
-        const hasRiskWarning = false; // TODO: Implement risk detection logic
-
-        return {
-          ...row,
-          itemsCount: Number(row.itemsCount) || 0,
-          hasAddressWarning,
-          hasRiskWarning,
-        } as OrderRow;
-      }),
-      totalCount,
-    };
-  } catch (error) {
-    console.error("Error listing orders:", error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to list orders",
     };
   }
 }
@@ -3164,213 +2596,6 @@ export async function getOrderWithItems(orderId: string): Promise<{
     return {
       success: false,
       error: "Failed to fetch order",
-    };
-  }
-}
-
-/**
- * Archive multiple orders
- */
-export async function archiveOrders(
-  orderIds: string[]
-): Promise<{ success: boolean; archivedCount?: number; error?: string }> {
-  try {
-    const session = await auth.api.getSession({
-      headers: await headers(),
-    });
-
-    if (!session?.user?.id) {
-      return { success: false, error: "Unauthorized" };
-    }
-
-    if (!orderIds || orderIds.length === 0) {
-      return { success: false, error: "No orders selected" };
-    }
-
-    const { storeId, isAdmin } = await getStoreIdForUser();
-
-    // Get orders to check permissions and state
-    const ordersData = await db
-      .select({
-        id: orders.id,
-        storeId: orders.storeId,
-        archivedAt: orders.archivedAt,
-        status: orders.status,
-      })
-      .from(orders)
-      .where(inArray(orders.id, orderIds));
-
-    if (ordersData.length === 0) {
-      return { success: false, error: "No orders found" };
-    }
-
-    // Filter orders that can be archived (not already archived)
-    const ordersToArchive = ordersData.filter(
-      (order) => !order.archivedAt && order.status !== "archived"
-    );
-
-    if (ordersToArchive.length === 0) {
-      return {
-        success: false,
-        error: "No orders can be archived (already archived or invalid status)",
-      };
-    }
-
-    // Check permissions for each order
-    const validOrderIds: string[] = [];
-    for (const order of ordersToArchive) {
-      if (isAdmin) {
-        validOrderIds.push(order.id);
-      } else if (storeId && order.storeId === storeId) {
-        validOrderIds.push(order.id);
-      }
-    }
-
-    if (validOrderIds.length === 0) {
-      return {
-        success: false,
-        error: "You don't have permission to archive these orders",
-      };
-    }
-
-    // Archive orders and create timeline events
-    const userId = session.user.id;
-
-    await db.transaction(async (tx) => {
-      await tx
-        .update(orders)
-        .set({
-          archivedAt: new Date(),
-          status: "archived",
-          updatedAt: new Date(),
-        })
-        .where(inArray(orders.id, validOrderIds));
-
-      // Create timeline events for each archived order
-      for (const orderId of validOrderIds) {
-        await tx.insert(orderEvents).values({
-          orderId: orderId,
-          type: "system",
-          visibility: "internal",
-          message: "Order archived",
-          createdBy: userId,
-          metadata: {} as Record<string, unknown>,
-        });
-      }
-    });
-
-    return {
-      success: true,
-      archivedCount: validOrderIds.length,
-    };
-  } catch (error) {
-    console.error("Error archiving orders:", error);
-    return {
-      success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to archive orders",
-    };
-  }
-}
-
-/**
- * Unarchive multiple orders
- */
-export async function unarchiveOrders(
-  orderIds: string[]
-): Promise<{ success: boolean; unarchivedCount?: number; error?: string }> {
-  try {
-    const session = await auth.api.getSession({
-      headers: await headers(),
-    });
-
-    if (!session?.user?.id) {
-      return { success: false, error: "Unauthorized" };
-    }
-
-    if (!orderIds || orderIds.length === 0) {
-      return { success: false, error: "No orders selected" };
-    }
-
-    const { storeId, isAdmin } = await getStoreIdForUser();
-
-    // Get orders to check permissions and state
-    const ordersData = await db
-      .select({
-        id: orders.id,
-        storeId: orders.storeId,
-        archivedAt: orders.archivedAt,
-      })
-      .from(orders)
-      .where(inArray(orders.id, orderIds));
-
-    if (ordersData.length === 0) {
-      return { success: false, error: "No orders found" };
-    }
-
-    // Filter orders that can be unarchived (already archived)
-    const ordersToUnarchive = ordersData.filter((order) => order.archivedAt);
-
-    if (ordersToUnarchive.length === 0) {
-      return {
-        success: false,
-        error: "No orders can be unarchived (not archived)",
-      };
-    }
-
-    // Check permissions for each order
-    const validOrderIds: string[] = [];
-    for (const order of ordersToUnarchive) {
-      if (isAdmin) {
-        validOrderIds.push(order.id);
-      } else if (storeId && order.storeId === storeId) {
-        validOrderIds.push(order.id);
-      }
-    }
-
-    if (validOrderIds.length === 0) {
-      return {
-        success: false,
-        error: "You don't have permission to unarchive these orders",
-      };
-    }
-
-    // Unarchive orders and create timeline events
-    const userId = session.user.id;
-
-    await db.transaction(async (tx) => {
-      await tx
-        .update(orders)
-        .set({
-          archivedAt: null,
-          status: "open",
-          updatedAt: new Date(),
-        })
-        .where(inArray(orders.id, validOrderIds));
-
-      // Create timeline events for each unarchived order
-      for (const orderId of validOrderIds) {
-        await tx.insert(orderEvents).values({
-          orderId: orderId,
-          type: "system",
-          visibility: "internal",
-          message: "Order unarchived",
-          createdBy: userId,
-          metadata: {} as Record<string, unknown>,
-        });
-      }
-    });
-
-    return {
-      success: true,
-      unarchivedCount: validOrderIds.length,
-    };
-  } catch (error) {
-    console.error("Error unarchiving orders:", error);
-    return {
-      success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to unarchive orders",
     };
   }
 }
@@ -5495,8 +4720,11 @@ export async function captureOrderPayment(orderId: string): Promise<{
       };
     }
 
+    // Import Stripe
+    const { stripe } = await import("@/lib/stripe");
+
     // Get payment intent ID and payment details from orderPayments
-    const paymentData = await db
+    let paymentData = await db
       .select({
         id: orderPayments.id,
         stripePaymentIntentId: orderPayments.stripePaymentIntentId,
@@ -5508,19 +4736,70 @@ export async function captureOrderPayment(orderId: string): Promise<{
       .where(eq(orderPayments.orderId, orderId))
       .limit(1);
 
+    // Fallback: if webhook never ran (e.g. local dev without Stripe CLI), look up PaymentIntent by metadata
     if (paymentData.length === 0 || !paymentData[0].stripePaymentIntentId) {
-      return { success: false, error: "Payment intent not found" };
+      let match: { id: string } | null = null;
+      try {
+        const list = await stripe.paymentIntents.list({ limit: 100 });
+        match =
+          list.data.find(
+            (pi) =>
+              pi.metadata?.orderId === orderId &&
+              (pi.status === "requires_capture" || pi.status === "succeeded")
+          ) ?? null;
+      } catch (e) {
+        console.warn("Fallback: could not list payment intents:", e);
+      }
+      if (match) {
+        const orderRow = await db
+          .select({
+            totalAmount: orders.totalAmount,
+            currency: orders.currency,
+          })
+          .from(orders)
+          .where(eq(orders.id, orderId))
+          .limit(1);
+        if (orderRow.length > 0) {
+          const totalAmount = parseFloat(orderRow[0].totalAmount || "0");
+          const platformFee = totalAmount * 0.05;
+          const [inserted] = await db
+            .insert(orderPayments)
+            .values({
+              orderId,
+              amount: totalAmount.toFixed(2),
+              currency: orderRow[0].currency,
+              provider: "stripe",
+              providerPaymentId: match.id,
+              platformFeeAmount: platformFee.toFixed(2),
+              netAmountToStore: (totalAmount - platformFee).toFixed(2),
+              stripePaymentIntentId: match.id,
+              status: "completed",
+              transferStatus: "held",
+            })
+            .returning();
+          paymentData = [
+            {
+              id: inserted.id,
+              stripePaymentIntentId: match.id,
+              amount: totalAmount.toFixed(2),
+              currency: orderRow[0].currency,
+              platformFeeAmount: platformFee.toFixed(2),
+            },
+          ];
+        }
+      }
+    }
+
+    if (paymentData.length === 0 || !paymentData[0].stripePaymentIntentId) {
+      return {
+        success: false,
+        error:
+          "Payment intent not found. If you just paid, ensure the Stripe webhook is running (e.g. use Stripe CLI: stripe listen --forward-to localhost:3000/api/webhooks/stripe).",
+      };
     }
 
     const paymentRecord = paymentData[0];
-    const paymentIntentId = paymentRecord.stripePaymentIntentId;
-
-    if (!paymentIntentId) {
-      return { success: false, error: "Payment intent ID is missing" };
-    }
-
-    // Import Stripe
-    const { stripe } = await import("@/lib/stripe");
+    const paymentIntentId = paymentRecord.stripePaymentIntentId!;
 
     // First, retrieve the payment intent to check its current status
     let paymentIntentBefore;

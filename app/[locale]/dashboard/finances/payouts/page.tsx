@@ -7,9 +7,8 @@ import {
   getRecentActivity,
   getPayoutSettings,
 } from "@/app/[locale]/actions/finances";
-import { getStoreIdForUser } from "@/app/[locale]/actions/orders";
+import { getStoreIdForUser } from "@/app/[locale]/actions/store-id";
 import { getPayouts } from "@/app/[locale]/actions/seller-payouts";
-
 export default async function PayoutsPage() {
   const result = await protectDashboardRoute({
     allowedRoles: ["admin", "seller"],

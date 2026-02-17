@@ -9,7 +9,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import type { OrderRow } from "@/app/[locale]/actions/orders";
+import type { OrderRow } from "@/app/[locale]/actions/orders-list";
 import { Button } from "@/components/ui/button";
 import {
   Table,

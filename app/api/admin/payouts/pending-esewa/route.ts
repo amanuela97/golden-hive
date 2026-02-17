@@ -3,7 +3,9 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { db } from "@/db";
 import { sellerPayouts, store, userRoles, roles } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
+import { decryptEsewaId } from "@/lib/esewa-encrypt";
+import { decryptBankDetails, maskAccountNumber } from "@/lib/bank-encrypt";
 
 async function requireAdmin() {
   const session = await auth.api.getSession({
@@ -49,6 +51,7 @@ export async function GET() {
       requestedAt: sellerPayouts.requestedAt,
       storeName: store.storeName,
       esewaId: store.esewaId,
+      bankDetailsEncrypted: store.bankDetailsEncrypted,
     })
     .from(sellerPayouts)
     .innerJoin(store, eq(sellerPayouts.storeId, store.id))
@@ -58,18 +61,29 @@ export async function GET() {
         eq(sellerPayouts.status, "pending")
       )
     )
-    .orderBy(sellerPayouts.requestedAt);
+    .orderBy(desc(sellerPayouts.requestedAt));
 
   return NextResponse.json({
     success: true,
-    payouts: pending.map((p) => ({
-      id: p.id,
-      storeId: p.storeId,
-      storeName: p.storeName,
-      amount: parseFloat(p.amount),
-      currency: p.currency,
-      esewaId: p.esewaId,
-      requestedAt: p.requestedAt,
-    })),
+    payouts: pending.map((p) => {
+      const esewaDecrypted = decryptEsewaId(p.esewaId);
+      const bankDecrypted = decryptBankDetails(p.bankDetailsEncrypted);
+      return {
+        id: p.id,
+        storeId: p.storeId,
+        storeName: p.storeName,
+        amount: parseFloat(p.amount),
+        currency: p.currency,
+        esewaIdMasked: esewaDecrypted
+          ? "*".repeat(Math.min(esewaDecrypted.length, 8)) + esewaDecrypted.slice(-4)
+          : null,
+        hasEsewaId: !!esewaDecrypted?.trim(),
+        bankAccountMasked: bankDecrypted
+          ? maskAccountNumber(bankDecrypted.accountNumber)
+          : null,
+        hasBankDetails: !!bankDecrypted,
+        requestedAt: p.requestedAt,
+      };
+    }),
   });
 }

@@ -26,6 +26,7 @@ const transactionTypes = [
   { value: "all", label: "All Types" },
   { value: "order_payment", label: "Sale" },
   { value: "platform_fee", label: "Platform Fee" },
+  { value: "esewa_fee", label: "eSewa Fee" },
   { value: "stripe_fee", label: "Stripe Fee" },
   { value: "shipping_label", label: "Shipping" },
   { value: "refund", label: "Refund" },

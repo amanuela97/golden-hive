@@ -33,11 +33,46 @@ import { Separator } from "@/components/ui/separator";
 import { kilogramsToOunces, centimetersToInches } from "@/lib/shipping-utils";
 import toast from "react-hot-toast";
 
+/** Default package options when store has no custom packages (dimensions in inches, weight in oz) */
+const DEFAULT_PACKAGES: Array<{
+  id: string;
+  name: string;
+  lengthIn: number;
+  widthIn: number;
+  heightIn: number;
+  weightOz: number;
+}> = [
+  { id: "__default_small__", name: "Small box", lengthIn: 8, widthIn: 6, heightIn: 4, weightOz: 16 },
+  { id: "__default_medium__", name: "Medium box", lengthIn: 12, widthIn: 9, heightIn: 6, weightOz: 32 },
+  { id: "__default_large__", name: "Large box", lengthIn: 18, widthIn: 14, heightIn: 10, weightOz: 48 },
+];
+
+interface AddressInput {
+  street1: string;
+  street2?: string;
+  city: string;
+  state?: string;
+  zip: string;
+  country: string;
+  phone?: string;
+}
+
 interface BuyShippingLabelDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orderId: string;
   storeId: string;
+  /** Prefetched addresses; when provided, no fetch on open */
+  initialAddresses?: { fromAddress: AddressInput; toAddress: AddressInput } | null;
+  /** Prefetched store packages; when provided, no fetch on open */
+  initialPackages?: Array<{
+    id: string;
+    name: string;
+    lengthIn: number;
+    widthIn: number;
+    heightIn: number;
+    weightOz: number;
+  }>;
   onSuccess: () => void;
 }
 
@@ -46,6 +81,8 @@ export function BuyShippingLabelDialog({
   onOpenChange,
   orderId,
   storeId,
+  initialAddresses,
+  initialPackages,
   onSuccess,
 }: BuyShippingLabelDialogProps) {
   const [step, setStep] = useState<"package" | "rates" | "confirm">("package");
@@ -82,6 +119,7 @@ export function BuyShippingLabelDialog({
     service: string;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dataLoading, setDataLoading] = useState(false);
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [unitSystem, setUnitSystem] = useState<"imperial" | "metric">(
@@ -108,13 +146,55 @@ export function BuyShippingLabelDialog({
     phone: "",
   });
 
-  // Load packages and addresses on mount
+  // Apply initial data when dialog opens with prefetched data
   useEffect(() => {
-    if (open && step === "package") {
-      loadPackages();
-      loadAddresses();
+    if (!open) return;
+    if (initialAddresses) {
+      setFromAddress({
+        street1: initialAddresses.fromAddress.street1 || "",
+        street2: initialAddresses.fromAddress.street2 || "",
+        city: initialAddresses.fromAddress.city || "",
+        state: initialAddresses.fromAddress.state || "",
+        zip: initialAddresses.fromAddress.zip || "",
+        country: initialAddresses.fromAddress.country || "",
+        phone: initialAddresses.fromAddress.phone || "",
+      });
+      setToAddress({
+        street1: initialAddresses.toAddress.street1 || "",
+        street2: initialAddresses.toAddress.street2 || "",
+        city: initialAddresses.toAddress.city || "",
+        state: initialAddresses.toAddress.state || "",
+        zip: initialAddresses.toAddress.zip || "",
+        country: initialAddresses.toAddress.country || "",
+        phone: initialAddresses.toAddress.phone || "",
+      });
     }
-  }, [open, step]);
+    if (initialPackages && initialPackages.length > 0) {
+      setPackages(initialPackages);
+    }
+  }, [open, initialAddresses, initialPackages]);
+
+  // Fetch packages and addresses only when open and not provided (e.g. dialog used without prefetch)
+  useEffect(() => {
+    if (!open || step !== "package") return;
+    const hasAddresses = initialAddresses != null;
+    const hasPackages = initialPackages != null && initialPackages.length > 0;
+    if (hasAddresses && hasPackages) {
+      setDataLoading(false);
+      return;
+    }
+    setDataLoading(true);
+    const run = async () => {
+      try {
+        if (!hasAddresses) await loadAddresses();
+        if (!hasPackages) await loadPackages();
+      } finally {
+        setDataLoading(false);
+      }
+    };
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadAddresses/loadPackages are stable
+  }, [open, step, initialAddresses, initialPackages]);
 
   const loadPackages = async () => {
     try {
@@ -122,8 +202,8 @@ export function BuyShippingLabelDialog({
       if (result.success && result.data) {
         setPackages(result.data);
       }
-    } catch (error) {
-      console.error("Error loading packages:", error);
+    } catch (err) {
+      console.error("Error loading packages:", err);
     }
   };
 
@@ -150,10 +230,13 @@ export function BuyShippingLabelDialog({
           phone: result.toAddress.phone || "",
         });
       }
-    } catch (error) {
-      console.error("Error loading addresses:", error);
+    } catch (err) {
+      console.error("Error loading addresses:", err);
     }
   };
+
+  // Package options: store packages, or default packages when store has none
+  const packageOptions = packages.length > 0 ? packages : DEFAULT_PACKAGES;
 
   // Validate parcel dimensions
   const validateParcel = () => {
@@ -232,7 +315,7 @@ export function BuyShippingLabelDialog({
     let parcelHeightIn: number;
 
     if (selectedPackage && selectedPackage !== "__manual__") {
-      const pkg = packages.find((p) => p.id === selectedPackage);
+      const pkg = packageOptions.find((p) => p.id === selectedPackage);
       if (!pkg) {
         setError("Please select a package or enter dimensions");
         setLoading(false);
@@ -489,12 +572,33 @@ export function BuyShippingLabelDialog({
         <DialogHeader>
           <DialogTitle>Buy Shipping Label</DialogTitle>
           <DialogDescription>
-            Purchase a shipping label via EasyPost (international shipping only)
+            Purchase a shipping label via EasyShip (Phase 1: Finland & Nepal domestic)
           </DialogDescription>
         </DialogHeader>
 
         {step === "package" && (
           <div className="space-y-6">
+            {dataLoading ? (
+              <div className="space-y-4 animate-pulse">
+                <div className="h-4 bg-muted rounded w-1/3" />
+                <div className="space-y-2">
+                  <div className="h-9 bg-muted rounded" />
+                  <div className="h-9 bg-muted rounded" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="h-9 bg-muted rounded" />
+                    <div className="h-9 bg-muted rounded" />
+                  </div>
+                </div>
+                <div className="h-4 bg-muted rounded w-1/3 mt-6" />
+                <div className="space-y-2">
+                  <div className="h-9 bg-muted rounded" />
+                  <div className="h-9 bg-muted rounded" />
+                </div>
+                <div className="h-10 bg-muted rounded w-32 mt-4" />
+                <p className="text-sm text-muted-foreground">Loading addresses and packages…</p>
+              </div>
+            ) : (
+              <>
             {/* From Address Section */}
             <div className="space-y-4">
               <div>
@@ -709,7 +813,7 @@ export function BuyShippingLabelDialog({
                   onValueChange={(value) => {
                     setSelectedPackage(value);
                     if (value && value !== "__manual__") {
-                      const pkg = packages.find((p) => p.id === value);
+                      const pkg = packageOptions.find((p) => p.id === value);
                       if (pkg) {
                         // Convert package dimensions to selected unit system for display
                         if (unitSystem === "metric") {
@@ -736,7 +840,7 @@ export function BuyShippingLabelDialog({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__manual__">Enter manually</SelectItem>
-                    {packages.map((pkg) => (
+                    {packageOptions.map((pkg) => (
                       <SelectItem key={pkg.id} value={pkg.id}>
                         {pkg.name} ({pkg.lengthIn}&quot; × {pkg.widthIn}&quot; ×{" "}
                         {pkg.heightIn}&quot;, {pkg.weightOz} oz)
@@ -885,6 +989,8 @@ export function BuyShippingLabelDialog({
                 "Get Shipping Rates"
               )}
             </Button>
+              </>
+            )}
           </div>
         )}
 

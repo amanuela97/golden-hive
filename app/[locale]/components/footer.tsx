@@ -12,7 +12,7 @@ export function Footer() {
             <div className="space-y-3 text-sm">
               <div className="flex items-start gap-2">
                 <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                <p>Nandan, Kc, Finland</p>
+                <p>Musikot-1, Rukum West, Nepal</p>
               </div>
               <div className="flex items-center gap-2">
                 <Phone className="h-4 w-4 shrink-0 text-primary" />
@@ -20,7 +20,7 @@ export function Footer() {
                   href="tel:+9779845033773"
                   className="hover:text-white transition-colors"
                 >
-                  (+977) 9845033773
+                  (+977) 9848781338
                 </a>
               </div>
               <div className="flex items-center gap-2">
@@ -29,7 +29,7 @@ export function Footer() {
                   href="tel:+9779841520033"
                   className="hover:text-white transition-colors"
                 >
-                  9841520033
+                  9848781338
                 </a>
               </div>
               <div className="flex items-center gap-2">
@@ -38,7 +38,7 @@ export function Footer() {
                   href="mailto:kcnandan090@gmail.com"
                   className="hover:text-white transition-colors"
                 >
-                  kcnandan090@gmail.com
+                  groupsmartin@gmail.com
                 </a>
               </div>
             </div>
@@ -104,7 +104,7 @@ export function Footer() {
 
         {/* Copyright */}
         <div className="mt-12 border-t border-neutral-800 pt-8 text-center text-sm">
-          <p>© {new Date().getFullYear()} Golden Market</p>
+          <p>© {new Date().getFullYear()} Martin Group</p>
         </div>
       </div>
     </footer>

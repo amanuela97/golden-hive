@@ -62,6 +62,7 @@ export const balanceTransactionTypeEnum = pgEnum("balance_transaction_type", [
   "order_payment",
   "platform_fee",
   "stripe_fee",
+  "esewa_fee",
   "shipping_label",
   "refund",
   "dispute",
@@ -504,6 +505,8 @@ export const store = pgTable(
     // eSewa (Nepal) payout
     payoutProvider: text("payout_provider").default("stripe"), // "stripe" | "esewa"
     esewaId: text("esewa_id"), // Seller's eSewa ID for receiving payouts (when payoutProvider is esewa)
+    // Bank (Nepal) payout — encrypted at rest; alternative to eSewa for NPR
+    bankDetailsEncrypted: text("bank_details_encrypted"),
     // Admin moderation
     isApproved: boolean("is_approved").default(false).notNull(),
     approvedAt: timestamp("approved_at"),
@@ -1164,7 +1167,7 @@ export const shippingServices = pgTable("shipping_services", {
     .notNull()
     .references(() => shippingProfiles.id, { onDelete: "cascade" }),
 
-  carrier: text("carrier").notNull(), // "usps", "dhl", "posti", "easypost"
+  carrier: text("carrier").notNull(), // "usps", "dhl", "posti", "easyship"
   serviceCode: text("service_code").notNull(), // API service code
   displayName: text("display_name").notNull(), // "Standard Shipping"
 
@@ -1525,7 +1528,7 @@ export const fulfillments = pgTable("fulfillments", {
   trackingStatus: text("tracking_status"), // Latest status from EasyPost
   trackingData: jsonb("tracking_data"), // Full tracking response from EasyPost
   lastTrackedAt: timestamp("last_tracked_at"), // When tracking was last updated
-  easypostShipmentId: text("easypost_shipment_id"), // EasyPost shipment ID
+  easypostShipmentId: text("easypost_shipment_id"), // External shipment ID (EasyShip easyship_shipment_id)
   labelUrl: text("label_url"), // URL to shipping label PDF
   labelFileType: text("label_file_type"), // "application/pdf", "image/png", "application/zpl"
   fulfilledBy: text("fulfilled_by"), // seller / warehouse / automation
@@ -2079,45 +2082,53 @@ export type ProductReview = InferSelectModel<typeof productReview>;
 export type StoreReview = InferSelectModel<typeof storeReview>;
 
 // ===================================
-// SELLER BALANCES (Ledger System)
+// SELLER BALANCES (Ledger System) — one row per (store, currency): EUR (Stripe) and NPR (eSewa)
 // ===================================
-export const sellerBalances = pgTable("seller_balances", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  storeId: uuid("store_id")
-    .notNull()
-    .references(() => store.id, { onDelete: "cascade" })
-    .unique(), // One balance per store
+export const sellerBalances = pgTable(
+  "seller_balances",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => store.id, { onDelete: "cascade" }),
 
-  // Current balance (can be negative)
-  availableBalance: numeric("available_balance", {
-    precision: 10,
-    scale: 2,
-  })
-    .default("0")
-    .notNull(), // Funds available for payout
+    // Current balance (can be negative)
+    availableBalance: numeric("available_balance", {
+      precision: 10,
+      scale: 2,
+    })
+      .default("0")
+      .notNull(), // Funds available for payout
 
-  pendingBalance: numeric("pending_balance", {
-    precision: 10,
-    scale: 2,
-  })
-    .default("0")
-    .notNull(), // Funds pending (e.g., in dispute period)
+    pendingBalance: numeric("pending_balance", {
+      precision: 10,
+      scale: 2,
+    })
+      .default("0")
+      .notNull(), // Funds pending (e.g., in dispute period)
 
-  currency: text("currency").default("EUR").notNull(),
+    currency: text("currency").default("EUR").notNull(), // EUR | NPR
 
-  // Metadata
-  lastPayoutAt: timestamp("last_payout_at"),
-  lastPayoutAmount: numeric("last_payout_amount", {
-    precision: 10,
-    scale: 2,
-  }),
+    // Metadata
+    lastPayoutAt: timestamp("last_payout_at"),
+    lastPayoutAmount: numeric("last_payout_amount", {
+      precision: 10,
+      scale: 2,
+    }),
 
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at")
-    .defaultNow()
-    .$onUpdate(() => new Date())
-    .notNull(),
-});
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("seller_balances_store_currency_unique").on(
+      t.storeId,
+      t.currency
+    ),
+  ]
+);
 
 // ===================================
 // SELLER BALANCE TRANSACTIONS (Immutable Ledger)
@@ -2210,6 +2221,9 @@ export const sellerPayouts = pgTable("seller_payouts", {
   processedAt: timestamp("processed_at"),
   completedAt: timestamp("completed_at"),
 
+  /** When admin completes NPR payout: "esewa" | "bank" (which method was used) */
+  payoutDeliveryMethodUsed: text("payout_delivery_method_used"),
+
   failureReason: text("failure_reason"),
   metadata: jsonb("metadata").$type<Record<string, unknown>>(),
 
@@ -2218,6 +2232,19 @@ export const sellerPayouts = pgTable("seller_payouts", {
     .defaultNow()
     .$onUpdate(() => new Date())
     .notNull(),
+});
+
+// ===================================
+// AUDIT LOG (e.g. bank details viewed)
+// ===================================
+export const auditLog = pgTable("audit_log", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  action: text("action").notNull(), // e.g. "bank_details_viewed"
+  entityType: text("entity_type").notNull(), // e.g. "store"
+  entityId: text("entity_id").notNull(),
+  userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // ===================================

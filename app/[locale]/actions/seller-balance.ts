@@ -5,7 +5,7 @@ import {
   sellerBalances,
   sellerBalanceTransactions,
 } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { InferSelectModel } from "drizzle-orm";
 
@@ -67,11 +67,16 @@ export async function updateSellerBalance(
     const amountChange =
       isCredit || (type === "adjustment" && amount > 0) ? amount : -amount;
 
-    // Get or create seller balance
+    // Get or create seller balance for this (store, currency) wallet
     const [existingBalance] = await db
       .select()
       .from(sellerBalances)
-      .where(eq(sellerBalances.storeId, storeId))
+      .where(
+        and(
+          eq(sellerBalances.storeId, storeId),
+          eq(sellerBalances.currency, currency)
+        )
+      )
       .limit(1);
 
     let balanceBefore: number;
@@ -94,7 +99,12 @@ export async function updateSellerBalance(
             pendingBalance: balanceAfter.toFixed(2),
             updatedAt: new Date(),
           })
-          .where(eq(sellerBalances.storeId, storeId));
+          .where(
+            and(
+              eq(sellerBalances.storeId, storeId),
+              eq(sellerBalances.currency, currency)
+            )
+          );
       } else {
         // Add to available balance (or subtract for debits)
         balanceBefore = currentAvailable;
@@ -105,7 +115,12 @@ export async function updateSellerBalance(
             availableBalance: balanceAfter.toFixed(2),
             updatedAt: new Date(),
           })
-          .where(eq(sellerBalances.storeId, storeId));
+          .where(
+            and(
+              eq(sellerBalances.storeId, storeId),
+              eq(sellerBalances.currency, currency)
+            )
+          );
       }
     } else {
       // Create new balance record
@@ -171,40 +186,84 @@ export async function updateSellerBalance(
 }
 
 /**
- * Get current seller balance
+ * Get current seller balance for a currency, or all wallets (EUR, NPR)
  */
-export async function getSellerBalance(storeId: string) {
+export async function getSellerBalance(
+  storeId: string,
+  currency?: string
+): Promise<
+  | { success: true; data: { availableBalance: number; pendingBalance: number; currency: string; lastPayoutAt: Date | null; lastPayoutAmount: number | null } }
+  | { success: true; data: Record<string, { availableBalance: number; pendingBalance: number; currency: string; lastPayoutAt: Date | null; lastPayoutAmount: number | null }> }
+  | { success: false; error: string }
+> {
   try {
-    const [balance] = await db
-      .select()
-      .from(sellerBalances)
-      .where(eq(sellerBalances.storeId, storeId))
-      .limit(1);
+    if (currency) {
+      const [balance] = await db
+        .select()
+        .from(sellerBalances)
+        .where(
+          and(
+            eq(sellerBalances.storeId, storeId),
+            eq(sellerBalances.currency, currency)
+          )
+        )
+        .limit(1);
 
-    if (!balance) {
-      // Return zero balance if not found
+      if (!balance) {
+        return {
+          success: true,
+          data: {
+            availableBalance: 0,
+            pendingBalance: 0,
+            currency,
+            lastPayoutAt: null,
+            lastPayoutAmount: null,
+          },
+        };
+      }
+
       return {
         success: true,
         data: {
-          availableBalance: 0,
-          pendingBalance: 0,
-          currency: "EUR",
+          availableBalance: parseFloat(balance.availableBalance),
+          pendingBalance: parseFloat(balance.pendingBalance),
+          currency: balance.currency,
+          lastPayoutAt: balance.lastPayoutAt,
+          lastPayoutAmount: balance.lastPayoutAmount
+            ? parseFloat(balance.lastPayoutAmount)
+            : null,
         },
       };
     }
 
-    return {
-      success: true,
-      data: {
-        availableBalance: parseFloat(balance.availableBalance),
-        pendingBalance: parseFloat(balance.pendingBalance),
-        currency: balance.currency,
-        lastPayoutAt: balance.lastPayoutAt,
-        lastPayoutAmount: balance.lastPayoutAmount
-          ? parseFloat(balance.lastPayoutAmount)
+    // All wallets (EUR, NPR)
+    const rows = await db
+      .select()
+      .from(sellerBalances)
+      .where(eq(sellerBalances.storeId, storeId));
+
+    const data: Record<
+      string,
+      {
+        availableBalance: number;
+        pendingBalance: number;
+        currency: string;
+        lastPayoutAt: Date | null;
+        lastPayoutAmount: number | null;
+      }
+    > = {};
+    for (const row of rows) {
+      data[row.currency] = {
+        availableBalance: parseFloat(row.availableBalance),
+        pendingBalance: parseFloat(row.pendingBalance),
+        currency: row.currency,
+        lastPayoutAt: row.lastPayoutAt,
+        lastPayoutAmount: row.lastPayoutAmount
+          ? parseFloat(row.lastPayoutAmount)
           : null,
-      },
-    };
+      };
+    }
+    return { success: true, data };
   } catch (error) {
     console.error("Error getting seller balance:", error);
     return {

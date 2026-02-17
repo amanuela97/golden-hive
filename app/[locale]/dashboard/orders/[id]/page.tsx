@@ -1,5 +1,5 @@
 import { protectDashboardRoute } from "@/app/[locale]/lib/dashboard-auth";
-import { getOrderWithItems } from "@/app/[locale]/actions/orders";
+import { getOrderWithItems } from "@/app/[locale]/actions/orders-get";
 import { DashboardWrapper } from "@/app/[locale]/dashboard/components/shared/DashboardWrapper";
 import OrderDetailsPageClient from "./OrderDetailsPageClient";
 import { Button } from "@/components/ui/button";

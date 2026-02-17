@@ -820,7 +820,7 @@ async function fetchProductVariants(listingId: string): Promise<
   }
 > {
   try {
-    const variants = await db
+    const variantRows = await db
       .select({
         id: listingVariants.id,
         title: listingVariants.title,
@@ -844,9 +844,24 @@ async function fetchProductVariants(listingId: string): Promise<
       .where(eq(listingVariants.listingId, listingId))
       .orderBy(listingVariants.createdAt);
 
+    // Aggregate available across locations (one variant can have multiple inventory levels)
+    const variantMap = new Map<
+      string,
+      (typeof variantRows)[0] & { availableSum: number }
+    >();
+    for (const v of variantRows) {
+      const avail = v.available ?? 0;
+      const existing = variantMap.get(v.id);
+      if (!existing) {
+        variantMap.set(v.id, { ...v, availableSum: avail });
+      } else {
+        existing.availableSum += avail;
+      }
+    }
+
     return {
       success: true,
-      result: variants.map((v) => ({
+      result: Array.from(variantMap.values()).map((v) => ({
         id: v.id,
         title: v.title,
         sku: v.sku,
@@ -855,7 +870,7 @@ async function fetchProductVariants(listingId: string): Promise<
         compareAtPrice: v.compareAtPrice,
         imageUrl: v.imageUrl,
         options: (v.options as Record<string, string> | null) || null,
-        available: v.available,
+        available: v.availableSum,
       })),
     };
   } catch (error) {
@@ -864,6 +879,82 @@ async function fetchProductVariants(listingId: string): Promise<
       success: false,
       error:
         error instanceof Error ? error.message : "Failed to fetch variants",
+    };
+  }
+}
+
+/**
+ * Validate inventory before adding to cart. Returns current available so we don't rely on stale cache.
+ */
+export async function validateInventoryForCartItem(
+  listingId: string,
+  variantId: string | null,
+  quantity: number
+): Promise<{
+  success: boolean;
+  allowed: boolean;
+  available?: number;
+  error?: string;
+}> {
+  try {
+    if (!listingId || quantity < 1) {
+      return { success: true, allowed: false, available: 0, error: "Invalid request" };
+    }
+
+    const whereVariant = variantId
+      ? and(
+          eq(listingVariants.listingId, listingId),
+          eq(listingVariants.id, variantId)
+        )
+      : eq(listingVariants.listingId, listingId);
+
+    const rows = await db
+      .select({
+        variantId: listingVariants.id,
+        available: inventoryLevels.available,
+      })
+      .from(listingVariants)
+      .leftJoin(
+        inventoryItems,
+        eq(inventoryItems.variantId, listingVariants.id)
+      )
+      .leftJoin(
+        inventoryLevels,
+        eq(inventoryLevels.inventoryItemId, inventoryItems.id)
+      )
+      .where(whereVariant);
+
+    // Sum available per variant (same variant can have multiple locations)
+    const variantSums = new Map<string, number>();
+    for (const r of rows) {
+      const avail = r.available ?? 0;
+      const id = r.variantId ?? "";
+      variantSums.set(id, (variantSums.get(id) ?? 0) + avail);
+    }
+
+    // Total available: if specific variant, use that; else sum all variants for listing
+    let totalAvailable = 0;
+    if (variantId) {
+      totalAvailable = variantSums.get(variantId) ?? 0;
+    } else {
+      for (const sum of variantSums.values()) {
+        totalAvailable += sum;
+      }
+    }
+
+    const allowed = totalAvailable >= quantity;
+    return {
+      success: true,
+      allowed,
+      available: totalAvailable,
+      error: allowed ? undefined : "Insufficient stock",
+    };
+  } catch (error) {
+    console.error("Error validating inventory:", error);
+    return {
+      success: false,
+      allowed: false,
+      error: error instanceof Error ? error.message : "Failed to check inventory",
     };
   }
 }

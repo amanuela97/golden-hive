@@ -18,23 +18,15 @@ import {
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useRouter } from "@/i18n/navigation";
+import { formatCurrency } from "@/lib/utils";
 import {
   getRecentActivity,
   getBalanceSummary,
+  type WalletSummary,
 } from "@/app/[locale]/actions/finances";
 
 interface BalanceData {
-  availableBalance: number;
-  pendingBalance: number;
-  amountDue: number;
-  reservedFeesFromPending?: number;
-  currentBalance: number;
-  currency: string;
-  lastPayoutAt: Date | null;
-  lastPayoutAmount: number | null;
-  /** Connected account Stripe available balance (null if no connected account or error) */
-  stripeConnectedAvailable?: number | null;
-  stripeConnectedPending?: number | null;
+  wallets: { EUR: WalletSummary; NPR: WalletSummary };
 }
 
 interface ActivityItem {
@@ -145,7 +137,7 @@ export default function PayoutsPageClient({
     }
   };
 
-  if (!balanceData) {
+  if (!balanceData?.wallets) {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -163,18 +155,17 @@ export default function PayoutsPageClient({
     );
   }
 
+  const { wallets } = balanceData;
   const minimumAmount = payoutSettings?.minimumAmount || 20.0;
 
-  // When ledger shows available but Stripe connected account has 0 available (funds settling), disable payout and show message
-  const stripeConnectedAvailable = balanceData.stripeConnectedAvailable ?? null;
-  const fundsSettling =
-    balanceData.availableBalance > 0 &&
-    stripeConnectedAvailable !== null &&
-    stripeConnectedAvailable === 0;
-  const effectivePayoutAvailable =
-    stripeConnectedAvailable !== null
-      ? Math.min(balanceData.availableBalance, stripeConnectedAvailable)
-      : balanceData.availableBalance;
+  const effectiveEur =
+    wallets.EUR.stripeConnectedAvailable !== null
+      ? Math.min(wallets.EUR.availableBalance, wallets.EUR.stripeConnectedAvailable)
+      : wallets.EUR.availableBalance;
+  const fundsSettlingEur =
+    wallets.EUR.availableBalance > 0 &&
+    wallets.EUR.stripeConnectedAvailable !== null &&
+    wallets.EUR.stripeConnectedAvailable === 0;
 
   return (
     <div className="space-y-6">
@@ -182,46 +173,49 @@ export default function PayoutsPageClient({
         <div>
           <h1 className="text-3xl font-bold">Balance & Payouts</h1>
           <p className="text-muted-foreground mt-2">
-            Manage your earnings and request payouts
+            Manage your earnings and request payouts. EUR → Stripe; NPR → eSewa.
           </p>
         </div>
-        <div className="flex flex-col items-end w-[50%] gap-2">
-    
-          <RequestPayoutButton
-            availableBalance={effectivePayoutAvailable}
-            currency={balanceData.currency}
-            minimumAmount={minimumAmount}
-            onSuccess={handleRefresh}
-          />    
-          {fundsSettling && (
+        <div className="flex flex-col items-end gap-2">
+          <div className="text-sm font-medium">
+            Available balance: {formatCurrency(wallets.EUR.availableBalance, "EUR")} · {formatCurrency(wallets.NPR.availableBalance, "NPR")}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <RequestPayoutButton
+              availableBalance={effectiveEur}
+              currency="EUR"
+              minimumAmount={minimumAmount}
+              onSuccess={handleRefresh}
+              payoutMethodLabel="Stripe"
+            />
+            <RequestPayoutButton
+              availableBalance={wallets.NPR.availableBalance}
+              currency="NPR"
+              minimumAmount={minimumAmount}
+              onSuccess={handleRefresh}
+              payoutMethodLabel="eSewa (Nepal)"
+            />
+          </div>
+          {fundsSettlingEur && (
             <p className="text-sm text-amber-600 dark:text-amber-500 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
-              Your funds have been transferred and are settling with our payment
-              provider. They usually become available for payout within 2–7
-              business days. You can request a payout once they&apos;re
-              available.
+              Your EUR funds are settling. They usually become available within 2–7 business days.
             </p>
           )}
         </div>
-    
       </div>
       <BalanceSummary
-        availableBalance={balanceData.availableBalance}
-        pendingBalance={balanceData.pendingBalance}
-        amountDue={balanceData.amountDue}
-        reservedFeesFromPending={balanceData.reservedFeesFromPending}
-        currentBalance={balanceData.currentBalance}
-        currency={balanceData.currency}
+        wallets={wallets}
         holdPeriodDays={payoutSettings?.holdPeriodDays}
       />
 
-      {/* Payout Schedule Info */}
+      {/* Payout Schedule Info (Stripe/EUR) */}
       {payoutSettings && (
         <PayoutScheduleInfo
           nextPayoutAt={payoutSettings.nextPayoutAt || null}
-          lastPayoutAt={balanceData.lastPayoutAt}
-          lastPayoutAmount={balanceData.lastPayoutAmount}
+          lastPayoutAt={wallets.EUR.lastPayoutAt}
+          lastPayoutAmount={wallets.EUR.lastPayoutAmount}
           schedule={payoutSettings.schedule || null}
-          currency={balanceData.currency}
+          currency="EUR"
         />
       )}
 

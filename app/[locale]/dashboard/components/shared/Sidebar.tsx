@@ -46,6 +46,10 @@ export function Sidebar({ onSettingsClick, userRole }: SidebarProps) {
           if (child.href === "/dashboard/orders/refund-requests") {
             return userRole === "admin" || userRole === "seller";
           }
+          // eSewa Payouts (Admin) is only for admin
+          if (child.href === "/dashboard/finances/esewa-payouts") {
+            return userRole === "admin";
+          }
           return true;
         });
         return {

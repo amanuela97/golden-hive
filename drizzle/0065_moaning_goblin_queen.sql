@@ -1,0 +1,2 @@
+ALTER TABLE "seller_balances" DROP CONSTRAINT "seller_balances_store_id_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "seller_balances_store_currency_unique" ON "seller_balances" USING btree ("store_id","currency");

@@ -15,12 +15,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { getDefaultInventoryLocation } from "./orders";
-import {
-  createShipment,
-  generateTrackingUrl,
-  type Address,
-  type Parcel,
-} from "@/lib/easypost";
+import { generateTrackingUrl } from "@/lib/easyship";
 import { nanoid } from "nanoid";
 import { updateOrderFulfillmentStatus } from "./orders-fulfillment-utils";
 
@@ -361,15 +356,9 @@ export async function fulfillOrder(input: {
 export async function fulfillOrderVendor(input: {
   orderId: string;
   storeId: string; // Vendor's store ID
-  // Option 1: Manual tracking entry
-  trackingNumber?: string;
-  carrier?: string; // Display name: "UPS", "FedEx", etc.
+  trackingNumber: string;
+  carrier: string; // Display name: "UPS", "FedEx", "Posti", etc.
   trackingUrl?: string;
-  // Option 2: EasyPost shipment creation
-  createShipment?: boolean;
-  toAddress?: Address;
-  fromAddress?: Address;
-  parcel?: Parcel;
   fulfilledBy?: string;
 }): Promise<{ success: boolean; error?: string; fulfillment?: unknown }> {
   return await db.transaction(async (tx) => {
@@ -395,75 +384,24 @@ export async function fulfillOrderVendor(input: {
       };
     }
 
-    // 2. Handle shipment creation or manual tracking entry
-    let trackingNumber: string;
-    let carrier: string;
-    let carrierCode: string;
-    let trackingUrl: string | undefined;
-    let easypostShipmentId: string | undefined;
-    let labelUrl: string | undefined;
-
-    let labelCostCents: number | null = null;
-
-    if (
-      input.createShipment &&
-      input.toAddress &&
-      input.fromAddress &&
-      input.parcel
-    ) {
-      // Create shipment via EasyPost and purchase label
-      const shipmentInfo = await createShipment(
-        input.toAddress,
-        input.fromAddress,
-        input.parcel
-      );
-
-      if (!shipmentInfo) {
-        return {
-          success: false,
-          error: "Failed to create shipment in EasyPost",
-        };
-      }
-
-      trackingNumber = shipmentInfo.tracking_code;
-      carrier = shipmentInfo.carrier;
-      carrierCode = shipmentInfo.carrier.toLowerCase();
-      trackingUrl = shipmentInfo.tracking_url || shipmentInfo.public_url;
-      easypostShipmentId = shipmentInfo.id;
-      labelUrl = shipmentInfo.label_url;
-      
-      // Capture label cost (rate is in currency units, convert to cents)
-      labelCostCents = Math.round(shipmentInfo.rate * 100);
-    } else {
-      // Manual tracking entry
-      if (!input.trackingNumber || !input.carrier) {
-        return {
-          success: false,
-          error: "Tracking number and carrier are required for manual entry",
-        };
-      }
-
-      trackingNumber = input.trackingNumber;
-      carrier = input.carrier;
-
-      // Map carrier name to EasyPost carrier code
-      const carrierCodeMap: Record<string, string> = {
-        USPS: "usps",
-        FedEx: "fedex",
-        UPS: "ups",
-        DHL: "dhl",
-        "Canada Post": "canada_post",
-        "Royal Mail": "royal_mail",
-      };
-
-      carrierCode =
-        carrierCodeMap[input.carrier] || input.carrier.toLowerCase();
-
-      // Generate tracking URL if not provided
-      trackingUrl =
-        input.trackingUrl ||
-        generateTrackingUrl(input.carrier, input.trackingNumber);
-    }
+    // 2. Manual tracking entry (labels are purchased via Buy Shipping Label / EasyShip flow)
+    const trackingNumber = input.trackingNumber;
+    const carrier = input.carrier;
+    const carrierCodeMap: Record<string, string> = {
+      USPS: "usps",
+      FedEx: "fedex",
+      UPS: "ups",
+      DHL: "dhl",
+      Posti: "posti",
+      "Canada Post": "canada_post",
+      "Royal Mail": "royal_mail",
+    };
+    const carrierCode =
+      carrierCodeMap[input.carrier] || input.carrier.toLowerCase();
+    const trackingUrl =
+      input.trackingUrl ||
+      generateTrackingUrl(input.carrier, input.trackingNumber);
+    const labelCostCents: number | null = null;
 
     // 3. Check existing fulfillments for this vendor
     const existingFulfillments = await tx
@@ -489,12 +427,10 @@ export async function fulfillOrderVendor(input: {
         orderId: input.orderId,
         storeId: input.storeId,
         vendorFulfillmentStatus: vendorFulfillmentStatus,
-        trackingNumber: trackingNumber,
-        trackingUrl: trackingUrl,
-        carrier: carrier,
-        carrierCode: carrierCode,
-        easypostShipmentId: easypostShipmentId,
-        labelUrl: labelUrl,
+        trackingNumber,
+        trackingUrl,
+        carrier,
+        carrierCode,
         fulfilledBy: input.fulfilledBy || "vendor",
         fulfilledAt: new Date(),
       })

@@ -442,6 +442,27 @@
       "when": 1770758687023,
       "tag": "0062_happy_bloodstorm",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1770760000000,
+      "tag": "0063_esewa_fee_balance_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1771000830215,
+      "tag": "0064_rapid_speed",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1771350678716,
+      "tag": "0065_moaning_goblin_queen",
+      "breakpoints": true
     }
   ]
 }
